@@ -1,0 +1,160 @@
+# rapidraw-web release. Tag = rapidraw-v<RapidRAW>-web-v<web> (npr. rapidraw-v1.6.4-web-v1.1.0),
+# kreira ga rrweb-sync.yml (nova web verzija u rrweb/VERSION ili novi RapidRAW release).
+# Paketi dobiju verziju <RapidRAW>+web.<web> (rrweb/version.mjs), imena fajlova nose tag.
+name: rapidraw-web release
+
+on:
+  push:
+    tags: ['rapidraw-v*-web-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Postojeći tag, npr. rapidraw-v1.6.4-web-v1.1.0'
+        required: true
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  server:
+    name: Server bundle (web UI + relay)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ env.TAG }}' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: node rrweb/version.mjs --check "$TAG"
+      - run: node rrweb/check-shims.mjs
+      - run: npm ci --no-audit --no-fund
+      - run: npx vite build --config rrweb/vite.web.config.mjs
+      - run: npm ci --omit=dev --no-audit --no-fund
+        working-directory: rrweb/relay
+      - name: Package
+        run: |
+          mkdir -p "out/$TAG"
+          cp -r rrweb/dist-web rrweb/relay rrweb/run.sh rrweb/run.ps1 rrweb/README.md LICENSE "out/$TAG/"
+          chmod +x "out/$TAG/run.sh"
+          tar -C out -czf "${TAG}_server.tar.gz" "$TAG"
+          (cd out && zip -qr "../${TAG}_server.zip" "$TAG")
+      - uses: actions/upload-artifact@v4
+        with: { name: server, path: '*_server.*' }
+
+  bridge-linux:
+    name: Bridge Linux ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: x86_64 }
+          - { runner: ubuntu-22.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: 1
+      NO_STRIP: true   # kao upstream build.yml: linuxdeploy-ov strip ne zna nove ELF sekcije
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ env.TAG }}' }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: rrweb-${{ matrix.runner }}
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - name: System deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf pkg-config xdg-utils
+      - run: npm ci --no-audit --no-fund
+      - run: node rrweb/version.mjs --check "$TAG"
+      - run: npx tauri build --bundles deb,rpm,appimage --config rrweb/tauri.bridge.json --config rrweb/tauri.version.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-linux-${{ matrix.arch }}
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+
+  bridge-windows:
+    name: Bridge Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ env.TAG }}' }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: src-tauri, key: rrweb-windows }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci --no-audit --no-fund
+      # all-in-one installer: bridge sam pokreće ugrađeni relay (node.exe + relay + web UI)
+      - run: npx vite build --config rrweb/vite.web.config.mjs
+      - run: npm ci --omit=dev --no-audit --no-fund
+        working-directory: rrweb/relay
+      - run: node rrweb/win/prepare.mjs
+      - run: node rrweb/version.mjs --check "$TAG"
+        shell: bash
+      - run: npx tauri build --bundles nsis --config rrweb/tauri.bridge.json --config rrweb/tauri.version.json --config rrweb/win/tauri.windows.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-windows-x64
+          path: src-tauri/target/release/bundle/nsis/*.exe
+
+  release:
+    needs: [server, bridge-linux, bridge-windows]
+    if: ${{ !cancelled() && needs.server.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ env.TAG }}', fetch-depth: 0 }   # povijest + origin/main za popis promjena
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: Release notes
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          node rrweb/release-notes.mjs "$TAG" > notes.md
+          missing=""
+          [ "${{ needs.bridge-linux.result }}" = success ] || missing="$missing Linux"
+          [ "${{ needs.bridge-windows.result }}" = success ] || missing="$missing Windows"
+          [ -n "$missing" ] && printf '\n> ⚠️ Bridge build failed for:%s — not included in this release.\n' "$missing" >> notes.md
+          # Linux artifakti zadržavaju deb/, rpm/, appimage/ poddirektorije, a files: dist/* ih ne vidi
+          find dist -mindepth 2 -type f -exec mv -t dist {} +
+          find dist -mindepth 1 -type d -empty -delete
+          # imena fajlova nose tag: rapidraw-v1.6.4-web-v1.1.0_bridge_amd64.deb, …_windows_x64-setup.exe
+          for f in dist/*; do
+            b=$(basename "$f")
+            case "$b" in
+              *.deb)      a=${b##*_}; n="${TAG}_bridge_${a%.deb}.deb" ;;
+              *.rpm)      a=${b%.rpm}; n="${TAG}_bridge_${a##*.}.rpm" ;;
+              *.AppImage) a=${b%.AppImage}; n="${TAG}_bridge_${a##*_}.AppImage" ;;
+              *-setup.exe) n="${TAG}_windows_x64-setup.exe" ;;
+              *) continue ;;
+            esac
+            mv "$f" "dist/$n"
+          done
+          ls -la dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.TAG }}
+          body_path: notes.md
+          files: dist/*
+          make_latest: true
+
+  report-failure:
+    needs: [server, bridge-linux, bridge-windows, release]
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          gh issue create -R "$GITHUB_REPOSITORY" \
+            -t "Release $TAG: build nije uspio" \
+            -b "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+        env: { GH_TOKEN: '${{ github.token }}' }
