@@ -114,6 +114,9 @@ jobs:
           [ "${{ needs.bridge-linux.result }}" = success ] || missing="$missing Linux"
           [ "${{ needs.bridge-windows.result }}" = success ] || missing="$missing Windows"
           [ -n "$missing" ] && printf '\n> ⚠️ Bridge build failed for:%s — not included in this release.\n' "$missing" >> notes.md
+          # Linux artifakti zadržavaju deb/, rpm/, appimage/ poddirektorije, a files: dist/* ih ne vidi
+          find dist -mindepth 2 -type f -exec mv -t dist {} +
+          find dist -mindepth 1 -type d -empty -delete
           ls -la dist
       - uses: softprops/action-gh-release@v2
         with:
