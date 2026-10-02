@@ -1,14 +1,15 @@
-# rapidraw-web release. Tag = RapidRAW verzija + "-web" (npr. v1.6.4-web).
-# Tag obično kreira rrweb-sync.yml automatski kad izađe novi RapidRAW release.
+# rapidraw-web release. Tag = rapidraw-v<RapidRAW>-web-v<web> (npr. rapidraw-v1.6.4-web-v1.1.0),
+# kreira ga rrweb-sync.yml (nova web verzija u rrweb/VERSION ili novi RapidRAW release).
+# Paketi dobiju verziju <RapidRAW>+web.<web> (rrweb/version.mjs), imena fajlova nose tag.
 name: rapidraw-web release
 
 on:
   push:
-    tags: ['v*-web']
+    tags: ['rapidraw-v*-web-v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Postojeći tag, npr. v1.6.4-web'
+        description: 'Postojeći tag, npr. rapidraw-v1.6.4-web-v1.1.0'
         required: true
 
 permissions:
@@ -27,21 +28,21 @@ jobs:
         with: { ref: '${{ env.TAG }}' }
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: npm }
+      - run: node rrweb/version.mjs --check "$TAG"
       - run: node rrweb/check-shims.mjs
       - run: npm ci --no-audit --no-fund
       - run: npx vite build --config rrweb/vite.web.config.mjs
-      - run: npm install --omit=dev --no-audit --no-fund
+      - run: npm ci --omit=dev --no-audit --no-fund
         working-directory: rrweb/relay
       - name: Package
         run: |
-          UP="${TAG%-web}"; UP="${UP#v}"; D="rapidraw-web-server-$UP"
-          mkdir -p "out/$D"
-          cp -r rrweb/dist-web rrweb/relay rrweb/run.sh rrweb/run.ps1 rrweb/README.md LICENSE "out/$D/"
-          chmod +x "out/$D/run.sh"
-          tar -C out -czf "$D.tar.gz" "$D"
-          (cd out && zip -qr "../$D.zip" "$D")
+          mkdir -p "out/$TAG"
+          cp -r rrweb/dist-web rrweb/relay rrweb/run.sh rrweb/run.ps1 rrweb/README.md LICENSE "out/$TAG/"
+          chmod +x "out/$TAG/run.sh"
+          tar -C out -czf "${TAG}_server.tar.gz" "$TAG"
+          (cd out && zip -qr "../${TAG}_server.zip" "$TAG")
       - uses: actions/upload-artifact@v4
-        with: { name: server, path: 'rapidraw-web-server-*' }
+        with: { name: server, path: '*_server.*' }
 
   bridge-linux:
     name: Bridge Linux ${{ matrix.arch }}
@@ -71,7 +72,8 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
             libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf pkg-config xdg-utils
       - run: npm ci --no-audit --no-fund
-      - run: npx tauri build --bundles deb,rpm,appimage --config rrweb/tauri.bridge.json
+      - run: node rrweb/version.mjs --check "$TAG"
+      - run: npx tauri build --bundles deb,rpm,appimage --config rrweb/tauri.bridge.json --config rrweb/tauri.version.json
       - uses: actions/upload-artifact@v4
         with:
           name: bridge-linux-${{ matrix.arch }}
@@ -97,7 +99,9 @@ jobs:
       - run: npm ci --omit=dev --no-audit --no-fund
         working-directory: rrweb/relay
       - run: node rrweb/win/prepare.mjs
-      - run: npx tauri build --bundles nsis --config rrweb/tauri.bridge.json --config rrweb/win/tauri.windows.json
+      - run: node rrweb/version.mjs --check "$TAG"
+        shell: bash
+      - run: npx tauri build --bundles nsis --config rrweb/tauri.bridge.json --config rrweb/tauri.version.json --config rrweb/win/tauri.windows.json
       - uses: actions/upload-artifact@v4
         with:
           name: bridge-windows-x64
@@ -123,11 +127,23 @@ jobs:
           # Linux artifakti zadržavaju deb/, rpm/, appimage/ poddirektorije, a files: dist/* ih ne vidi
           find dist -mindepth 2 -type f -exec mv -t dist {} +
           find dist -mindepth 1 -type d -empty -delete
+          # imena fajlova nose tag: rapidraw-v1.6.4-web-v1.1.0_bridge_amd64.deb, …_windows_x64-setup.exe
+          for f in dist/*; do
+            b=$(basename "$f")
+            case "$b" in
+              *.deb)      a=${b##*_}; n="${TAG}_bridge_${a%.deb}.deb" ;;
+              *.rpm)      a=${b%.rpm}; n="${TAG}_bridge_${a##*.}.rpm" ;;
+              *.AppImage) a=${b%.AppImage}; n="${TAG}_bridge_${a##*_}.AppImage" ;;
+              *-setup.exe) n="${TAG}_windows_x64-setup.exe" ;;
+              *) continue ;;
+            esac
+            mv "$f" "dist/$n"
+          done
           ls -la dist
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
-          name: RapidRAW ${{ env.TAG }}
+          name: ${{ env.TAG }}
           body_path: notes.md
           files: dist/*
           make_latest: true

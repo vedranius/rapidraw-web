@@ -33,7 +33,7 @@ Download from the [Releases](https://github.com/vedranius/rapidraw-web/releases)
 
 ### Windows x64: all-in-one installer
 
-1. Run `RapidRAW.Web.Bridge_*_x64-setup.exe`. It contains everything (RapidRAW, the web UI and Node.js), nothing else to install.
+1. Run `rapidraw-v*-web-v*_windows_x64-setup.exe`. It contains everything (RapidRAW, the web UI and Node.js), nothing else to install.
 2. Start **RapidRAW Web Bridge** from the Start menu. It starts the server and opens RapidRAW in your browser.
 3. The small RapidRAW Web window lists the addresses for other devices on your network (`http://<this-pc>:8780`). Closing it stops the server.
 
@@ -41,18 +41,20 @@ The first time, Windows Firewall asks about *Node.js JavaScript Runtime*: allow 
 
 ### Linux
 
-On the server you need **Node.js 20+**, one **bridge** package and the **server bundle** (`rapidraw-web-server-*.tar.gz`).
+On the server you need **Node.js 20+**, one **bridge** package (`*_bridge_*`) and the **server bundle** (`*_server.tar.gz`).
 
 ```bash
 # 1. Bridge — pick one
-sudo apt install ./*.deb                                 # Debian / Ubuntu
-sudo dnf install ./*.rpm                                 # Fedora / openSUSE (zypper)
-chmod +x ./*.AppImage                                    # any distro: put it next to run.sh
+sudo apt install ./*_bridge_amd64.deb                    # Debian / Ubuntu (arm64: *_bridge_arm64.deb)
+sudo dnf install ./*_bridge_x86_64.rpm                   # Fedora / openSUSE (aarch64: *_bridge_aarch64.rpm)
+chmod +x ./*_bridge_*.AppImage                           # any distro: put it next to run.sh
 
 # 2. Server bundle
-tar xzf rapidraw-web-server-*.tar.gz && cd rapidraw-web-server-*
+tar xzf rapidraw-v*_server.tar.gz && cd rapidraw-v*-web-v*/
 RR_PHOTOS=/mnt/photos ./run.sh
 ```
+
+Updating: install the newer packages the same way. Their version is `<RapidRAW>+web.<web>` (e.g. `1.6.4+web.1.1.0`), so a new web release upgrades the bridge even when RapidRAW itself is unchanged.
 
 Open `http://<server>:8780`.
 
@@ -117,9 +119,13 @@ RR_PHOTOS=~/Pictures RR_VERBOSE=1 ./rrweb/run.sh
 
 ## Versioning and staying in sync with RapidRAW
 
-This repository is a GitHub fork of [CyberTimon/RapidRAW](https://github.com/CyberTimon/RapidRAW), and its releases follow RapidRAW's exactly: **RapidRAW `v1.6.4` → rapidraw-web `v1.6.4-web`**.
+This repository is a GitHub fork of [CyberTimon/RapidRAW](https://github.com/CyberTimon/RapidRAW). A release carries two versions: **`rapidraw-v<RapidRAW>-web-v<rapidraw-web>`**, e.g. `rapidraw-v1.6.4-web-v1.1.0` is the unmodified RapidRAW `v1.6.4` with version `1.1.0` of this web layer. The web layer has its own version in [`rrweb/VERSION`](../rrweb/VERSION), so it can ship several updates for the same RapidRAW release.
 
-A daily workflow (`rrweb-sync.yml`) merges upstream `main` and, when RapidRAW publishes a new release, tags `vX.Y.Z-web` on **exactly that upstream release's code** plus the `rrweb/` layer. That tag builds and publishes the matching rapidraw-web release. Because rapidraw-web only adds files, upstream changes merge without conflicts. Before every build, `rrweb/check-shims.mjs` verifies that every Tauri API the RapidRAW UI imports is covered by the browser shims, and the list of forwarded backend events is regenerated from RapidRAW's source. If something new appears upstream, the build fails loudly and opens an issue instead of shipping a broken release.
+Every release is **exactly an upstream release's code** plus one commit with the `rrweb/` layer, built and published by `rrweb-release.yml`. Releases come from two places (`rrweb-sync.yml`):
+- **A new web version**: raising `rrweb/VERSION` on `main` (e.g. `1.1.0` → `1.1.1`) releases the current web layer on the latest RapidRAW release right away. The release notes list the web-layer commits since the previous web version.
+- **A new RapidRAW release**: a daily job merges upstream `main` and, when RapidRAW publishes a release, releases it with the latest *published* web version (unreleased work on `main` waits for the next version bump).
+
+Because rapidraw-web only adds files, upstream changes merge without conflicts. Before every build, `rrweb/check-shims.mjs` verifies that every Tauri API the RapidRAW UI imports is covered by the browser shims, and the list of forwarded backend events is regenerated from RapidRAW's source. If something new appears upstream, the build fails loudly and opens an issue instead of shipping a broken release.
 
 ## Thank you, Timon
 

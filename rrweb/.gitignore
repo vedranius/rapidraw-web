@@ -4,3 +4,4 @@ relay/node_modules/
 bridge/events.ts
 win/bin/
 win/tauri.windows.json
+tauri.version.json

@@ -27,7 +27,10 @@ const filesTab = {
 export default defineConfig({
   root: r('..'),
   plugins: [tailwindcss(), react(), filesTab],
-  define: { __RR_VERSION__: JSON.stringify(pkg.version) },
+  define: {
+    __RR_VERSION__: JSON.stringify(pkg.version),
+    __RR_WEB_VERSION__: JSON.stringify(readFileSync(r('./VERSION'), 'utf8').trim()),
+  },
   resolve: {
     alias: Object.entries(shims).map(([m, f]) => ({
       find: new RegExp(`^${m.replace(/[/.]/g, '\\$&')}$`),

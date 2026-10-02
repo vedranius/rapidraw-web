@@ -14,5 +14,7 @@ Everything rapidraw-web adds to RapidRAW lives here. Full documentation: https:/
 | `vite.web.config.mjs` / `vite.bridge.config.mjs` | Builds for the browser UI and the bridge page |
 | `tauri.bridge.json` | Tauri config overlay: separate identifier/binary name, no file associations, bridge frontend |
 | `build.sh`, `run.sh`, `run.ps1` | Build and start scripts |
+| `VERSION`, `version.mjs` | Web-layer version (raise it on `main` to release); release tag `rapidraw-v<RapidRAW>-web-v<web>`, package version `<RapidRAW>+web.<web>` |
+| `release-notes.mjs`, `RELEASE_NOTES.md` | Release notes: upstream title + web-layer commits since the previous web version |
 
 Run: `RR_PHOTOS=/path/to/photos ./run.sh`, open `http://<host>:8780`.

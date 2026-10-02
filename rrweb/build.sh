@@ -8,7 +8,8 @@ node rrweb/check-shims.mjs
 npm ci --no-audit --no-fund
 npx vite build --config rrweb/vite.web.config.mjs
 (cd rrweb/relay && npm install --omit=dev --no-audit --no-fund)
-CONFIGS=(--config rrweb/tauri.bridge.json)
+echo "rrweb: $(node rrweb/version.mjs)"
+CONFIGS=(--config rrweb/tauri.bridge.json --config rrweb/tauri.version.json)
 if [ "${OS:-}" = Windows_NT ]; then
   node rrweb/win/prepare.mjs
   CONFIGS+=(--config rrweb/win/tauri.windows.json)

@@ -4,6 +4,9 @@
 import { call, emitLocal } from '../shim/transport';
 import './files.css';
 
+declare const __RR_VERSION__: string;
+declare const __RR_WEB_VERSION__: string;
+
 type Item = { name: string; dir: boolean; size: number; mtime: number; sidecar: boolean };
 type Listing = { path: string | null; roots: string[]; sep: string; crumbs: { name: string; path: string }[]; items: Item[] };
 type SortKey = 'name' | 'size' | 'mtime';
@@ -88,7 +91,8 @@ const message = el('span', { class: 'rrf-msg' });
 const drop = el('div', { class: 'rrf-drop' }, 'Drop files to upload them into this folder');
 const panel = el('div', { id: 'rrf', hidden: true },
   el('aside', {}, el('div', { class: 'rrf-h' }, 'Photo folders'), rootsBox,
-    el('p', { class: 'rrf-note' }, 'Folders you open in RapidRAW are listed here.')),
+    el('p', { class: 'rrf-note' }, 'Folders you open in RapidRAW are listed here.'),
+    el('p', { class: 'rrf-ver' }, `RapidRAW ${__RR_VERSION__} · web ${__RR_WEB_VERSION__}`)),
   el('section', {},
     crumbs,
     el('div', { class: 'rrf-bar' }, b.up, b.refresh, sep(), b.upload, b.mkdir, sep(), b.download, sep(),
