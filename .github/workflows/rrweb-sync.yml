@@ -1,0 +1,73 @@
+# Svaki dan: (1) merge upstream main → main, (2) ako RapidRAW ima novi release vX.Y.Z,
+# napravi tag vX.Y.Z-web = točno upstream vX.Y.Z + rrweb sloj, što pokreće rrweb-release.yml.
+# Treba secret RRWEB_PAT (fine-grained PAT: ovaj repo, Contents + Workflows: read/write),
+# jer GITHUB_TOKEN ne smije pushati commitove s workflow datotekama niti pokretati druge workflowe.
+name: rapidraw-web upstream sync
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: 'Ručno: upstream tag za koji napraviti -web release (npr. v1.6.4). Prazno = zadnji release.'
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency: rrweb-sync
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RRWEB_PAT }}
+
+      - name: Git setup
+        run: |
+          git config user.name  "rapidraw-web bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/CyberTimon/RapidRAW.git
+          git fetch upstream --tags --force --quiet
+
+      - name: Merge upstream main
+        run: |
+          if git merge --no-edit upstream/main; then
+            git push origin HEAD:main
+          else
+            git merge --abort
+            gh issue create -R "$GITHUB_REPOSITORY" -t "Upstream merge konflikt" \
+              -b "upstream/main se ne može automatski spojiti u main. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            exit 1
+          fi
+        env: { GH_TOKEN: '${{ github.token }}' }
+
+      - name: Find upstream release
+        id: up
+        run: |
+          T="${{ github.event.inputs.upstream_tag }}"
+          [ -n "$T" ] || T=$(gh api repos/CyberTimon/RapidRAW/releases/latest --jq .tag_name)
+          echo "tag=$T" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$T-web" >/dev/null; then
+            echo "new=false" >> "$GITHUB_OUTPUT"; echo "$T-web već postoji"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"; echo "Novi upstream release: $T"
+          fi
+        env: { GH_TOKEN: '${{ github.token }}' }
+
+      - name: Create vX.Y.Z-web tag
+        if: steps.up.outputs.new == 'true'
+        run: |
+          T="${{ steps.up.outputs.tag }}"
+          git checkout --quiet --detach "refs/tags/$T"
+          # rrweb sloj s maina preko točno upstream release koda
+          git checkout origin/main -- rrweb .github/README.md \
+            .github/workflows/rrweb-release.yml .github/workflows/rrweb-sync.yml
+          git commit --quiet -m "rapidraw-web layer on RapidRAW $T"
+          git tag -a "$T-web" -m "RapidRAW $T + rapidraw-web"
+          git push origin "refs/tags/$T-web"
