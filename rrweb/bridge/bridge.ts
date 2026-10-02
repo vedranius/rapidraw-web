@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { appCacheDir, appDataDir, delimiter, join, resourceDir } from '@tauri-apps/api/path';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { open as pickFolder } from '@tauri-apps/plugin-dialog';
 import { Command, open } from '@tauri-apps/plugin-shell';
 import { EVENTS } from './events';
 
@@ -20,6 +21,7 @@ let failures = 0;
 let relay: 'external' | 'bundled' | 'none' | undefined; // tko je pokrenuo relay
 let opened = false;
 let relayExited = false;
+let library: string | null | undefined; // undefined = relay još nije javio
 const urls = new Set<string>(); // "[relay] url …" linije ugrađenog relaya
 
 const send = (o: unknown) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o)); };
@@ -57,7 +59,11 @@ async function startBundledRelay() {
   status('Starting server…');
   try {
     const script = await join(await resourceDir(), '_up_', 'rrweb', 'relay', 'relay.mjs');
-    const env = { RR_ROOTS: [await appDataDir(), await appCacheDir()].join(delimiter()), RR_EXIT_WITH_PARENT: '1' };
+    const env = {
+      RR_ROOTS: [await appDataDir(), await appCacheDir()].join(delimiter()),
+      RR_CONFIG: await join(await appDataDir(), 'rrweb.json'),
+      RR_EXIT_WITH_PARENT: '1',
+    };
     const cmd = Command.sidecar(NODE, [script], { env });
     const line = (l: string) => {
       log(l);
@@ -93,7 +99,7 @@ function connect() {
     if (relay === 'bundled' && !opened) {
       opened = true;
       open([...urls][0] ?? DEFAULT_UI);
-      getCurrentWindow().minimize();
+      if (library) getCurrentWindow().minimize(); // bez librarya prozor ostaje otvoren da se odabere
     }
   };
   sock.onclose = () => {
@@ -102,7 +108,9 @@ function connect() {
     setTimeout(connect, 1000);
   };
   sock.onmessage = async (m) => {
-    const { id, cmd, args } = JSON.parse(m.data);
+    const msg = JSON.parse(m.data);
+    if (msg.rr === 'library') { showLibrary(msg.path ?? msg.env); return; }
+    const { id, cmd, args } = msg;
     if (cmd === 'save_settings' && args?.settings) args.settings.useWgpuRenderer = false;
     try {
       const result: unknown = await invoke(cmd, args);
@@ -120,6 +128,19 @@ function connect() {
     el('calls').textContent = `${++calls} calls · last: ${cmd}`;
   };
 }
+
+// Photo library: folder s fotografijama na OVOM računalu, uvijek prvi u Files tabu i dijalozima u browseru
+function showLibrary(path: string | null) {
+  const first = library === undefined;
+  library = path;
+  el('libpath').textContent = path ?? 'not chosen yet';
+  el('lib').className = path ? '' : 'todo';
+  if (first && path && relay === 'bundled' && opened) getCurrentWindow().minimize();
+}
+el('libpick').onclick = async () => {
+  const p = await pickFolder({ directory: true, title: 'Photo library folder', defaultPath: library ?? undefined });
+  if (typeof p === 'string') send({ rr: 'set-library', path: p });
+};
 
 el('ver').textContent = `RapidRAW ${__RR_VERSION__} · web ${__RR_WEB_VERSION__}`;
 el('min').onclick = () => getCurrentWindow().minimize();

@@ -1,6 +1,7 @@
 // rrweb Files tab (server): listanje, skidanje (fajl ili zip), upload, novi folder, preimenovanje, kopiranje,
-// premještanje i brisanje u koš (preko RapidRAW-a). Sve putanje moraju biti unutar foldera s fotografijama
-// koje RapidRAW koristi (rootFolders, pinnedFolders, lastRootPath) ili RR_PHOTOS.
+// premještanje i brisanje u koš (preko RapidRAW-a). Isti popis koriste i dijalozi za odabir foldera/fajlova u browseru.
+// Sve putanje moraju biti unutar foldera s fotografijama: photo library (odabran u RapidRAW Web prozoru na serveru),
+// RR_PHOTOS i folderi koje RapidRAW koristi (rootFolders, pinnedFolders, lastRootPath).
 // Fajl putuje sa svojim sidecarima kao u RapidRAW-u: <ime>.rrdata, <ime>.<id>.rrdata (virtualne kopije), <ime>.rrexif.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -54,15 +55,17 @@ async function addToZip(zip, p, name) {
   }
 }
 
-// settings(): RapidRAW postavke (preko bridgea), bridge(cmd, args): poziv RapidRAW komande
-export function createFiles({ settings, bridge, extraRoots = [] }) {
+// settings(): RapidRAW postavke (preko bridgea), bridge(cmd, args): poziv RapidRAW komande,
+// library(): photo library folder ili null, extraRoots(): dodatni folderi (RR_PHOTOS)
+export function createFiles({ settings, bridge, library = () => null, extraRoots = () => [] }) {
   let cached = { at: 0, roots: [] };
 
   async function roots() {
     if (Date.now() - cached.at < 3000) return cached.roots;
     const s = await settings().catch(() => ({}));
     const real = [];
-    for (const p of [...(s.rootFolders ?? []), ...(s.pinnedFolders ?? []), s.lastRootPath, ...extraRoots]) {
+    // library prvi, da je uvijek na vrhu popisa
+    for (const p of [library(), ...extraRoots(), ...(s.rootFolders ?? []), ...(s.pinnedFolders ?? []), s.lastRootPath]) {
       if (!p) continue;
       try {
         const r = await fsp.realpath(p);
@@ -86,7 +89,8 @@ export function createFiles({ settings, bridge, extraRoots = [] }) {
 
   async function ls({ path: dir }) {
     const rs = await roots();
-    if (!dir) return { path: null, roots: rs, sep: path.sep, crumbs: [], items: [] };
+    const lib = library() ? await fsp.realpath(library()).catch(() => null) : null;
+    if (!dir) return { path: null, roots: rs, library: lib, sep: path.sep, crumbs: [], items: [] };
     const real = await within(dir);
     const root = rs.find((r) => inside(real, r));
     const crumbs = [];
@@ -102,7 +106,7 @@ export function createFiles({ settings, bridge, extraRoots = [] }) {
         items.push({ name: e.name, dir, size: dir ? 0 : st.size, mtime: st.mtimeMs, sidecar: !dir && isSidecar(e.name) });
       } catch { /* pokvaren link, nema prava… */ }
     }
-    return { path: real, roots: rs, sep: path.sep, crumbs, items };
+    return { path: real, roots: rs, library: lib, sep: path.sep, crumbs, items };
   }
 
   async function mkdir({ dir, name }) {
@@ -221,5 +225,5 @@ export function createFiles({ settings, bridge, extraRoots = [] }) {
     return true;
   }
 
-  return { commands, http };
+  return { commands, http, invalidate: () => { cached.at = 0; } };
 }

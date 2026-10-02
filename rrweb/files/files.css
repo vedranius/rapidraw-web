@@ -62,3 +62,27 @@
   #rrf aside { display: none; }
   .rrf-list th.num:nth-child(3), .rrf-list td.num:nth-child(3) { display: none; }
 }
+
+/* picker.ts: odabir foldera/fajla na serveru za RapidRAW-ove dijaloge */
+.rrp-back { position: fixed; inset: 0; z-index: 2147483002; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .55); font-size: 13px; line-height: 1.4; }
+.rrp { display: flex; flex-direction: column; width: min(640px, calc(100vw - 32px)); height: min(560px, calc(100vh - 64px));
+  border-radius: 12px; background: #1d1d1d; color: #ddd; box-shadow: 0 12px 40px rgba(0, 0, 0, .5); overflow: hidden; }
+.rrp button { font: inherit; color: inherit; }
+.rrp-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px 4px; font-size: 15px; }
+.rrp-head b { flex: 1; color: #fff; }
+.rrp-roots { max-width: 45%; padding: 4px 6px; border: 0; border-radius: 6px; background: #2a2a2a; color: #ddd; font: inherit; }
+.rrp-crumbs { padding: 6px 12px; font-size: 13px; }
+.rrp-list { flex: 1; overflow: auto; border-top: 1px solid #2a2a2a; border-bottom: 1px solid #2a2a2a; user-select: none; }
+.rrp-row { display: flex; align-items: center; gap: 9px; padding: 6px 16px; cursor: default; white-space: nowrap; }
+.rrp-row span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.rrp-row:hover { background: #242424; }
+.rrp-row.sel { background: #34404f; color: #fff; }
+.rrp-msg:not(:empty) { padding: 8px 16px 0; color: #e0b05a; font-size: 12px; }
+.rrp-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; }
+.rrp-foot > button { padding: 7px 14px; border: 0; border-radius: 6px; background: #2a2a2a; cursor: pointer; }
+.rrp-foot > button:hover:not(:disabled) { background: #383838; }
+.rrp-foot > button.rrp-ok { background: #e9e9e9; color: #151515; font-weight: 600; }
+.rrp-foot > button.rrp-ok:disabled { opacity: .4; cursor: default; }
+.rrp-foot > button.rrp-link { padding: 7px 4px; background: none; color: #8bf; }
+.rrp-name { flex: 1 1 100%; padding: 7px 10px; border: 1px solid #333; border-radius: 6px; background: #151515; color: #eee; font: inherit; }

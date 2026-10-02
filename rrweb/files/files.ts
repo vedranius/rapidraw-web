@@ -2,16 +2,15 @@
 // kopiranje, premještanje, brisanje u koš) pored RapidRAW UI-ja. vite.web.config.mjs ga ubacuje u index.html.
 // Server dio: rrweb/relay/files.mjs.
 import { call, emitLocal } from '../shim/transport';
+import { baseName, collator, copyText, el, errText, fmtSize, icon, joinPath, ls, rootName, type Item, type Listing } from './ui';
 import './files.css';
 
 declare const __RR_VERSION__: string;
 declare const __RR_WEB_VERSION__: string;
 
-type Item = { name: string; dir: boolean; size: number; mtime: number; sidecar: boolean };
-type Listing = { path: string | null; roots: string[]; sep: string; crumbs: { name: string; path: string }[]; items: Item[] };
 type SortKey = 'name' | 'size' | 'mtime';
 
-let listing: Listing = { path: null, roots: [], sep: '/', crumbs: [], items: [] };
+let listing: Listing = { path: null, roots: [], library: null, sep: '/', crumbs: [], items: [] };
 let selected = new Set<string>();
 let anchor: string | null = null;
 let clipboard: { mode: 'copy' | 'move'; paths: string[] } | null = null;
@@ -21,31 +20,7 @@ let isOpen = false;
 let busy = false;
 let changed = false; // disk izmijenjen → RapidRAW library treba osvježiti
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...kids: (Node | string)[]) {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k.startsWith('on')) (e as unknown as Record<string, unknown>)[k] = v;
-    else if (v === true) e.setAttribute(k, '');
-    else if (v !== false && v != null) e.setAttribute(k, String(v));
-  }
-  e.append(...kids);
-  return e;
-}
-const ICONS = {
-  dir: '<svg viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2h8.4A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></svg>',
-  file: '<svg viewBox="0 0 24 24"><path d="M6.5 3H14l5 5v11.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19.5v-15A1.5 1.5 0 0 1 6.5 3zM14 3v5h5"/></svg>',
-};
-const icon = (dir: boolean) => { const s = el('span', { class: dir ? 'rrf-ico dir' : 'rrf-ico' }); s.innerHTML = dir ? ICONS.dir : ICONS.file; return s; };
-const errText = (e: unknown) => (typeof e === 'string' ? e : (e as Error)?.message ?? String(e));
-const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
-const join = (name: string) => (listing.path!.endsWith(listing.sep) ? listing.path! + name : listing.path! + listing.sep + name);
-const fmtSize = (n: number) => {
-  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0;
-  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-  return `${i ? n.toFixed(n < 10 ? 1 : 0) : n} ${u[i]}`;
-};
-const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const join = (name: string) => joinPath(listing, name);
 function visible() {
   return listing.items.filter((i) => showSidecars || !i.sidecar).sort((a, b) => {
     if (a.dir !== b.dir) return a.dir ? -1 : 1;
@@ -71,6 +46,7 @@ const b = {
   cut: btn('Cut', 'Cut (Ctrl+X), then Paste in another folder', () => toClipboard('move')),
   paste: btn('Paste', 'Paste here (Ctrl+V)', () => paste()),
   rename: btn('Rename', 'Rename (F2)', () => rename()),
+  path: btn('Copy path', 'Copy the server path of the selected item (or of this folder)', () => copyPath()),
   del: btn('Delete', 'Move to trash (Delete)', () => remove()),
 };
 const sep = () => el('span', { class: 'rrf-sep' });
@@ -91,12 +67,12 @@ const message = el('span', { class: 'rrf-msg' });
 const drop = el('div', { class: 'rrf-drop' }, 'Drop files to upload them into this folder');
 const panel = el('div', { id: 'rrf', hidden: true },
   el('aside', {}, el('div', { class: 'rrf-h' }, 'Photo folders'), rootsBox,
-    el('p', { class: 'rrf-note' }, 'Folders you open in RapidRAW are listed here.'),
+    el('p', { class: 'rrf-note' }, 'Your photo library and the folders you open in RapidRAW are listed here.'),
     el('p', { class: 'rrf-ver' }, `RapidRAW ${__RR_VERSION__} · web ${__RR_WEB_VERSION__}`)),
   el('section', {},
     crumbs,
     el('div', { class: 'rrf-bar' }, b.up, b.refresh, sep(), b.upload, b.mkdir, sep(), b.download, sep(),
-      b.copy, b.cut, b.paste, sep(), b.rename, b.del, el('span', { class: 'rrf-grow' }),
+      b.copy, b.cut, b.paste, sep(), b.rename, b.del, sep(), b.path, el('span', { class: 'rrf-grow' }),
       el('label', { class: 'rrf-check', title: 'RapidRAW stores edits in .rrdata files next to each photo; they are moved, copied and deleted together with it' },
         sidecarBox, 'Show edit files')),
     el('div', { class: 'rrf-list' }, el('table', {},
@@ -112,8 +88,10 @@ function setMessage(text = '', error = false) {
 
 function render() {
   rootsBox.replaceChildren(...listing.roots.map((r) =>
-    el('button', { class: listing.crumbs[0]?.path === r ? 'active' : '', title: r, onclick: () => load(r) }, icon(true), baseName(r))));
-  if (!listing.roots.length) rootsBox.append(el('p', { class: 'rrf-note' }, 'Nothing here yet: open a folder in RapidRAW (Editor tab) first.'));
+    el('button', { class: listing.crumbs[0]?.path === r ? 'active' : '', title: r, onclick: () => load(r) }, icon(true), rootName(listing, r))));
+  if (!listing.roots.length) {
+    rootsBox.append(el('p', { class: 'rrf-note' }, 'No photo folders yet: choose the photo library in the RapidRAW Web window on the server, or open a folder in RapidRAW.'));
+  }
   crumbs.replaceChildren(...listing.crumbs.flatMap((c, i) =>
     [...(i ? [el('span', { class: 'rrf-sep-char' }, '›')] : []), el('button', { onclick: () => load(c.path) }, c.name)]));
 
@@ -130,7 +108,7 @@ function render() {
   const n = selected.size;
   const inFolder = !!listing.path;
   b.up.disabled = listing.crumbs.length < 2;
-  b.refresh.disabled = b.upload.disabled = b.mkdir.disabled = !inFolder;
+  b.refresh.disabled = b.upload.disabled = b.mkdir.disabled = b.path.disabled = !inFolder;
   b.download.disabled = b.copy.disabled = b.cut.disabled = b.del.disabled = !n;
   b.rename.disabled = n !== 1;
   b.paste.disabled = !clipboard || !inFolder;
@@ -141,7 +119,7 @@ function render() {
 
 async function load(path: string | null, keep: string[] = []) {
   try {
-    const next = await call<Listing>('__rr_fs_ls', { path });
+    const next = await ls(path);
     if (!next.path && next.roots.length) return load(next.roots[0]);
     if (next.path !== listing.path) anchor = null;
     listing = next;
@@ -272,6 +250,14 @@ function rename() {
   if (!it || selected.size !== 1) return;
   const name = prompt(`Rename "${it.name}" to:`, it.name)?.trim();
   if (name && name !== it.name) act('Renaming', () => call('__rr_fs_rename', { path: join(it.name), name }), [name]);
+}
+
+async function copyPath() {
+  const [it] = selectedItems();
+  const p = it && selected.size === 1 ? join(it.name) : listing.path;
+  if (!p) return;
+  await copyText(p);
+  setMessage(`Copied: ${p}`);
 }
 
 function toClipboard(mode: 'copy' | 'move') {

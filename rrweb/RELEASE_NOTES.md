@@ -14,9 +14,9 @@ Package version: `{{PKG_VERSION}}`, so installing a newer web release over an ol
 Setup: [README → Quick start](https://github.com/vedranius/rapidraw-web#quick-start)
 
 ### Features
-**Editor**: the real RapidRAW interface, every slider rendered by the server's GPU. **Files**: download exports (several files as .zip), upload, create folders, rename, copy, move and delete (to the trash) inside your photo folders; RapidRAW edits travel with their photos.
+**Editor**: the real RapidRAW interface, every slider rendered by the server's GPU. **Photo library**: chosen once on the server; folder and file pickers in the browser start there. **Files**: download exports (several files as .zip), upload, create folders, rename, copy, move and delete (to the trash) inside your photo folders; RapidRAW edits travel with their photos.
 
 ### Known limitations
-One active editing session at a time · Open/Save dialogs are a path prompt · desktop-only window features and tethering are not available.
+One active editing session at a time · pickers only browse the photo folders (other paths can be typed) · desktop-only window features and tethering are not available.
 
 All credit for the editor goes to [Timon Käch (CyberTimon)](https://github.com/CyberTimon) and the RapidRAW contributors. If you like it, ⭐ [RapidRAW](https://github.com/CyberTimon/RapidRAW) and support it on [Ko-fi](https://ko-fi.com/cybertimon).

@@ -6,6 +6,7 @@
 //   RR_ROOTS  (obavezno)    path.delimiter-odvojeni (':' Linux, ';' Windows) direktoriji koje /files smije servirati
 //   RR_AUTH   (opcionalno)  "user:pass" → HTTP Basic za UI, /files, /fm i /ipc
 //   RR_PHOTOS (opcionalno)  dodatni folder za Files tab (uz foldere otvorene u RapidRAW-u)
+//   RR_CONFIG (opcionalno)  JSON s postavkama relaya ({"library": "<photo library folder>"}), piše ga bridge prozor
 //   RR_ORIGINS (opcionalno) zarezom odvojeni dodatni dopušteni Origin-i (npr. https://photos.example.com iza proxyja)
 //   RR_DIST   (../dist-web)
 import http from 'node:http';
@@ -78,10 +79,24 @@ let bridge = null;
 const clients = new Set();
 const inflight = new Map(); // relayId -> { client, id, cmd, t0 }
 let rid = 0;
+// Photo library folder: bira se u RapidRAW Web prozoru na serveru (nativni dijalog), sprema u RR_CONFIG
+const CONFIG = process.env.RR_CONFIG;
+let config = {};
+try { if (CONFIG && fs.existsSync(CONFIG)) config = JSON.parse(fs.readFileSync(CONFIG, 'utf8')); } catch (e) { console.warn(`[relay] ${CONFIG}: ${e.message}`); }
+function setLibrary(p) {
+  if (!fs.statSync(p).isDirectory()) throw new Error('not a folder');
+  config.library = fs.realpathSync(p);
+  if (CONFIG) fs.writeFileSync(CONFIG, JSON.stringify(config, null, 2));
+  files.invalidate();
+  console.log(`[relay] photo library: ${config.library}`);
+}
+const libraryState = () => ({ rr: 'library', path: config.library ?? null, env: process.env.RR_PHOTOS ?? null });
+
 const files = createFiles({
   settings: () => bridgeCall('load_settings', {}),
   bridge: bridgeCall,
-  extraRoots: process.env.RR_PHOTOS ? [process.env.RR_PHOTOS] : [],
+  library: () => config.library ?? null,
+  extraRoots: () => (process.env.RR_PHOTOS ? [process.env.RR_PHOTOS] : []),
 });
 const LOCAL = { __rr_home: () => os.homedir(), ...files.commands };
 
@@ -121,6 +136,7 @@ wssBridge.on('connection', (ws) => {
   if (bridge) bridge.close();
   bridge = ws;
   console.log('[relay] bridge connected');
+  ws.send(JSON.stringify(libraryState()));
   ws.on('message', (data, isBinary) => {
     if (isBinary) {
       const r = data.readUInt32LE(0);
@@ -132,6 +148,11 @@ wssBridge.on('connection', (ws) => {
       return;
     }
     const msg = JSON.parse(data);
+    if (msg.rr === 'set-library') {
+      try { setLibrary(msg.path); } catch (e) { console.error(`[relay] photo library ${msg.path}: ${e.message}`); }
+      ws.send(JSON.stringify(libraryState()));
+      return;
+    }
     if (msg.event !== undefined) { const s = JSON.stringify(msg); clients.forEach((c) => c.send(s)); return; }
     const f = inflight.get(msg.id); inflight.delete(msg.id);
     if (!f) return;

@@ -7,7 +7,7 @@ Everything rapidraw-web adds to RapidRAW lives here. Full documentation: https:/
 | `shim/` | Browser replacements for `@tauri-apps/*` (invoke/listen over WebSocket, dialogs, window stubs) |
 | `bridge/` | 3 KB page loaded by the real RapidRAW backend instead of its UI; forwards IPC + events to the relay |
 | `relay/relay.mjs` | Node server: serves the web UI and `/files`, routes browser ⇄ bridge |
-| `relay/files.mjs`, `files/` | Files tab: server side (list, zip download, upload, copy/move with sidecars) and the browser UI injected next to RapidRAW |
+| `relay/files.mjs`, `files/` | Files tab and server-side folder/file pickers (`files/picker.ts`, used by `shim/dialog.ts`): server side (list, zip download, upload, copy/move with sidecars) and the browser UI injected next to RapidRAW |
 | `win/prepare.mjs` | Windows all-in-one installer: fetches `node.exe` (SHA256-checked) and generates the Tauri overlay that bundles relay + web UI |
 | `gen-events.mjs` | Extracts every event name the UI listens to (runs on each bridge build) |
 | `check-shims.mjs` | Fails the build if the UI imports a Tauri module/function the shims don't cover |

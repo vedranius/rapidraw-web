@@ -35,7 +35,7 @@ Download from the [Releases](https://github.com/vedranius/rapidraw-web/releases)
 
 1. Run `rapidraw-v*-web-v*_windows_x64-setup.exe`. It contains everything (RapidRAW, the web UI and Node.js), nothing else to install.
 2. Start **RapidRAW Web Bridge** from the Start menu. It starts the server and opens RapidRAW in your browser.
-3. The small RapidRAW Web window lists the addresses for other devices on your network (`http://<this-pc>:8780`). Closing it stops the server.
+3. In the small RapidRAW Web window, choose your **photo library**: the folder on this computer that holds your photo folders. The window also lists the addresses for other devices on your network (`http://<this-pc>:8780`). Closing it stops the server.
 
 The first time, Windows Firewall asks about *Node.js JavaScript Runtime*: allow **Private networks** to reach it from other devices.
 
@@ -62,13 +62,20 @@ On a headless server (no `DISPLAY`/`WAYLAND_DISPLAY`) `run.sh` starts the bridge
 
 The server bundle and `run.ps1` also work on Windows (`powershell -ExecutionPolicy Bypass -File .\run.ps1`) if you prefer starting it with the variables below.
 
+## Photo library and folder pickers
+
+The **photo library** is the top folder of your photos on the server. Choose it in the RapidRAW Web window on the server (*Choose…*, a normal folder dialog of that computer); with `run.sh`/`run.ps1`, `RR_PHOTOS` does the same. You can change it any time.
+
+In the browser, every place where RapidRAW asks for a folder or file (*Add Folder*, export destination, import, LUTs, presets) opens a picker for the server that starts in the photo library, so you never need to know a server path. *Type a path…* in the picker still accepts any path.
+
 ## Files tab
 
 Next to the editor there is a **Files** tab (top centre): a file manager for the photo folders on the server, so you can get your exports out and organise shoots without another tool.
 
-- Browse the folders you opened in RapidRAW (plus `RR_PHOTOS`), with breadcrumbs, sorting and multi-select (Ctrl/Shift-click, Ctrl+A).
+- Browse the photo library and the folders you opened in RapidRAW, with breadcrumbs, sorting and multi-select (Ctrl/Shift-click, Ctrl+A).
 - **Download** a file, or several files and folders as one `.zip`; **Upload** files with the button or drag & drop.
 - **New folder**, **Rename** (F2), **Copy/Cut → Paste** (Ctrl+C/X/V) between folders, **Delete** to the server's trash.
+- **Copy path** copies the server path of the selected item or of the current folder.
 - A photo's RapidRAW edits (`.rrdata`, virtual copies, `.rrexif`) move, copy, rename and delete together with it. *Show edit files* reveals them.
 - When you switch back to **Editor**, RapidRAW reloads the current folder.
 
@@ -81,6 +88,7 @@ The Files tab only reaches inside those photo folders, and deleting goes to the 
 | `RR_PHOTOS` | — (required by `run.sh`/`run.ps1`) | Photo library root on the server, also shown in the Files tab |
 | `RR_PORT` / `RR_HOST` | `8780` / `0.0.0.0` | Listen address |
 | `RR_AUTH` | off | `user:pass` → HTTP Basic auth for UI, files and IPC |
+| `RR_CONFIG` | `<bridge data dir>/rrweb.json` | Where the photo library chosen in the RapidRAW Web window is stored |
 | `RR_ORIGINS` | — | Extra allowed browser origins, comma-separated, e.g. `https://photos.example.com` behind a reverse proxy that changes the `Host` header |
 | `RR_ROOTS` | photos + bridge data/cache dirs | Directories `/files` is allowed to serve |
 | `RR_BRIDGE_BIN` | auto-detect | Path to `rapidraw-web-bridge` |
@@ -104,7 +112,7 @@ The IPC channel can do everything RapidRAW can do on the server (browse and writ
 ## Limitations
 
 - One active editing session at a time: RapidRAW's backend state is global, so two browsers editing different photos at once will interfere.
-- Open/Save dialogs are currently a text prompt with a server path.
+- The folder/file pickers browse only the photo folders; other server paths can be typed in with *Type a path…*.
 - Desktop-only window features (window controls, native drag & drop from your OS) are no-ops. Tethering is not included.
 - RapidRAW's folder tree shows folders created in the Files tab after you reopen the parent folder. Uploading whole folders (as opposed to files) is not supported yet.
 

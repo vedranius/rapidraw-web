@@ -20,6 +20,7 @@ if (-not $Bin) { throw "Ne nalazim rapidraw-web-bridge.exe (postavi `$env:RR_BRI
 $Data = Join-Path $env:APPDATA $Id; $Cache = Join-Path $env:LOCALAPPDATA $Id
 New-Item -ItemType Directory -Force -Path $Data, $Cache | Out-Null
 if (-not $env:RR_ROOTS) { $env:RR_ROOTS = "$($env:RR_PHOTOS);$Data;$Cache" }
+if (-not $env:RR_CONFIG) { $env:RR_CONFIG = Join-Path $Data "rrweb.json" }
 
 $relay = Start-Process node -ArgumentList "`"$Here\relay\relay.mjs`"" -NoNewWindow -PassThru
 Start-Sleep -Milliseconds 500

@@ -17,6 +17,7 @@ done
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/$ID"; CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/$ID"
 mkdir -p "$DATA" "$CACHE"
 export RR_ROOTS="${RR_ROOTS:-$RR_PHOTOS:$DATA:$CACHE}"
+export RR_CONFIG="${RR_CONFIG:-$DATA/rrweb.json}"   # photo library folder iz RapidRAW Web prozora
 
 # Headless server bez ekrana → Xvfb (WebKitGTK treba display; wgpu/Vulkan ga ne treba)
 LAUNCH=()
