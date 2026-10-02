@@ -1,4 +1,7 @@
-**RapidRAW [{{UPSTREAM_TAG}}](https://github.com/CyberTimon/RapidRAW/releases/tag/{{UPSTREAM_TAG}})**, unmodified, served to your browser from a machine on your network. See the RapidRAW release for what's new in the editor itself.
+**[{{UPSTREAM_TITLE}}](https://github.com/CyberTimon/RapidRAW/releases/tag/{{UPSTREAM_TAG}})**, unmodified, running on a machine on your network and used from your browser. For what's new in the editor itself, see the RapidRAW release linked above.
+
+### What's new in rapidraw-web
+{{RRWEB_CHANGES}}
 
 ### Downloads
 - **Windows x64**: `RapidRAW.Web.Bridge_*_x64-setup.exe` is all-in-one (RapidRAW, web UI, Node.js). Install, start *RapidRAW Web Bridge* from the Start menu, and it opens in your browser.
@@ -8,8 +11,8 @@
 
 Setup: [README → Quick start](https://github.com/vedranius/rapidraw-web#quick-start)
 
-### Files tab
-Switch between **Editor** and **Files** at the top: download exports (several files as .zip), upload, create folders, rename, copy, move and delete (to the trash) inside your photo folders. RapidRAW edits travel with their photos.
+### Features
+**Editor**: the real RapidRAW interface, every slider rendered by the server's GPU. **Files**: download exports (several files as .zip), upload, create folders, rename, copy, move and delete (to the trash) inside your photo folders; RapidRAW edits travel with their photos.
 
 ### Known limitations
 One active editing session at a time · Open/Save dialogs are a path prompt · desktop-only window features and tethering are not available.

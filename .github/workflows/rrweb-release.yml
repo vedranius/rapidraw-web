@@ -109,13 +109,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { ref: '${{ env.TAG }}' }
+        with: { ref: '${{ env.TAG }}', fetch-depth: 0 }   # povijest + origin/main za popis promjena
       - uses: actions/download-artifact@v4
         with: { path: dist, merge-multiple: true }
       - name: Release notes
+        env: { GH_TOKEN: '${{ github.token }}' }
         run: |
-          UP="${TAG%-web}"
-          sed "s|{{UPSTREAM_TAG}}|$UP|g" rrweb/RELEASE_NOTES.md > notes.md
+          node rrweb/release-notes.mjs "$TAG" > notes.md
           missing=""
           [ "${{ needs.bridge-linux.result }}" = success ] || missing="$missing Linux"
           [ "${{ needs.bridge-windows.result }}" = success ] || missing="$missing Windows"
