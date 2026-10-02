@@ -29,11 +29,19 @@ GPU + photo storage
 
 ## Quick start
 
-On the server you need a GPU with Vulkan (or Metal/DX12 on other OSes), **Node.js 20+**, and from the [Releases](https://github.com/vedranius/rapidraw-web/releases) page:
-1. one **bridge** package for your OS, and
-2. the **server bundle** (`rapidraw-web-server-*.tar.gz`).
+Download from the [Releases](https://github.com/vedranius/rapidraw-web/releases) page. Any GPU with Vulkan, DX12 or Metal works, including integrated Intel graphics.
+
+### Windows x64: all-in-one installer
+
+1. Run `RapidRAW.Web.Bridge_*_x64-setup.exe`. It contains everything (RapidRAW, the web UI and Node.js), nothing else to install.
+2. Start **RapidRAW Web Bridge** from the Start menu. It starts the server and opens RapidRAW in your browser.
+3. The small RapidRAW Web window lists the addresses for other devices on your network (`http://<this-pc>:8780`). Closing it stops the server.
+
+The first time, Windows Firewall asks about *Node.js JavaScript Runtime*: allow **Private networks** to reach it from other devices.
 
 ### Linux
+
+On the server you need **Node.js 20+**, one **bridge** package and the **server bundle** (`rapidraw-web-server-*.tar.gz`).
 
 ```bash
 # 1. Bridge — pick one
@@ -50,21 +58,28 @@ Open `http://<server>:8780`.
 
 On a headless server (no `DISPLAY`/`WAYLAND_DISPLAY`) `run.sh` starts the bridge under `xvfb-run`, so install `xvfb`. The GPU is used through Vulkan and doesn't need a display.
 
-### Windows x64 (experimental)
+The server bundle and `run.ps1` also work on Windows (`powershell -ExecutionPolicy Bypass -File .\run.ps1`) if you prefer starting it with the variables below.
 
-Install the bridge with the NSIS installer, unzip the server bundle, then in PowerShell:
+## Files tab
 
-```powershell
-$env:RR_PHOTOS = "D:\Photos"; .\run.ps1
-```
+Next to the editor there is a **Files** tab (top centre): a file manager for the photo folders on the server, so you can get your exports out and organise shoots without another tool.
+
+- Browse the folders you opened in RapidRAW (plus `RR_PHOTOS`), with breadcrumbs, sorting and multi-select (Ctrl/Shift-click, Ctrl+A).
+- **Download** a file, or several files and folders as one `.zip`; **Upload** files with the button or drag & drop.
+- **New folder**, **Rename** (F2), **Copy/Cut → Paste** (Ctrl+C/X/V) between folders, **Delete** to the server's trash.
+- A photo's RapidRAW edits (`.rrdata`, virtual copies, `.rrexif`) move, copy, rename and delete together with it. *Show edit files* reveals them.
+- When you switch back to **Editor**, RapidRAW reloads the current folder.
+
+The Files tab only reaches inside those photo folders, and deleting goes to the trash, so it can be recovered.
 
 ### Configuration
 
 | Variable | Default | |
 |---|---|---|
-| `RR_PHOTOS` | — (required) | Photo library root on the server |
+| `RR_PHOTOS` | — (required by `run.sh`/`run.ps1`) | Photo library root on the server, also shown in the Files tab |
 | `RR_PORT` / `RR_HOST` | `8780` / `0.0.0.0` | Listen address |
 | `RR_AUTH` | off | `user:pass` → HTTP Basic auth for UI, files and IPC |
+| `RR_ORIGINS` | — | Extra allowed browser origins, comma-separated, e.g. `https://photos.example.com` behind a reverse proxy that changes the `Host` header |
 | `RR_ROOTS` | photos + bridge data/cache dirs | Directories `/files` is allowed to serve |
 | `RR_BRIDGE_BIN` | auto-detect | Path to `rapidraw-web-bridge` |
 | `RR_VERBOSE` | off | Log every IPC call with timing |
@@ -82,14 +97,14 @@ environment:
 
 ## Security
 
-The IPC channel can do everything RapidRAW can do on the server (browse and write files, export, delete). **Do not expose it to the internet without `RR_AUTH` and a TLS reverse proxy**, or keep it behind a VPN. The bridge port accepts loopback connections only, and `/files` serves only `RR_ROOTS`.
+The IPC channel can do everything RapidRAW can do on the server (browse and write files, export, delete). **Do not expose it to the internet without `RR_AUTH` and a TLS reverse proxy**, or keep it behind a VPN. The bridge port accepts loopback connections only, `/files` serves only `RR_ROOTS`, the Files tab stays inside the photo folders, and requests from other websites (a foreign `Origin`) are refused.
 
 ## Limitations
 
 - One active editing session at a time: RapidRAW's backend state is global, so two browsers editing different photos at once will interfere.
 - Open/Save dialogs are currently a text prompt with a server path.
 - Desktop-only window features (window controls, native drag & drop from your OS) are no-ops. Tethering is not included.
-- Windows build is untested.
+- RapidRAW's folder tree shows folders created in the Files tab after you reopen the parent folder. Uploading whole folders (as opposed to files) is not supported yet.
 
 ## Building from source
 

@@ -15,9 +15,18 @@ const shims = {
   '@tauri-apps/plugin-shell': 'shell',
 };
 
+// Files tab (rrweb/files) ide u upstream index.html kao dodatni script, bez diranja RapidRAW koda
+const filesTab = {
+  name: 'rrweb-files-tab',
+  transformIndexHtml: {
+    order: 'pre',
+    handler: () => [{ tag: 'script', attrs: { type: 'module', src: '/rrweb/files/files.ts' }, injectTo: 'body' }],
+  },
+};
+
 export default defineConfig({
   root: r('..'),
-  plugins: [tailwindcss(), react()],
+  plugins: [tailwindcss(), react(), filesTab],
   define: { __RR_VERSION__: JSON.stringify(pkg.version) },
   resolve: {
     alias: Object.entries(shims).map(([m, f]) => ({

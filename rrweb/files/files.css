@@ -1,0 +1,63 @@
+#rrf-tabs { position: fixed; top: 7px; left: 50%; transform: translateX(-50%); z-index: 2147483001; display: flex; gap: 2px;
+  padding: 3px; border-radius: 999px; background: rgba(28, 28, 28, .94); box-shadow: 0 2px 12px rgba(0, 0, 0, .4); font-size: 12px; }
+#rrf-tabs button { border: 0; border-radius: 999px; padding: 5px 14px; background: none; color: #aaa; font: inherit; font-weight: 600; cursor: pointer; }
+#rrf-tabs button:hover { color: #fff; }
+#rrf-tabs button.active { background: #e9e9e9; color: #151515; }
+
+#rrf { position: fixed; inset: 0; z-index: 2147483000; display: flex; gap: 8px; padding: 46px 8px 8px; box-sizing: border-box;
+  background: #121212; color: #ddd; font-size: 13px; line-height: 1.4; }
+#rrf[hidden] { display: none; }
+#rrf button { font: inherit; color: inherit; }
+#rrf aside { width: 220px; flex: none; overflow: auto; padding: 12px; border-radius: 10px; background: #1d1d1d; }
+#rrf section { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: 10px; background: #1d1d1d; }
+.rrf-h { margin: 2px 4px 10px; font-weight: 700; font-size: 14px; color: #fff; }
+.rrf-note { margin: 12px 4px; color: #777; font-size: 12px; }
+.rrf-roots button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border: 0; border-radius: 6px;
+  background: none; text-align: left; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rrf-roots button:hover { background: #2a2a2a; }
+.rrf-roots button.active { background: #333; color: #fff; }
+
+.rrf-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 12px 14px 6px; font-size: 15px; font-weight: 600; }
+.rrf-crumbs button { border: 0; border-radius: 6px; padding: 2px 6px; background: none; cursor: pointer; }
+.rrf-crumbs button:hover { background: #2a2a2a; }
+.rrf-crumbs button:last-child { color: #fff; }
+.rrf-sep-char { color: #666; }
+
+.rrf-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 12px 10px; border-bottom: 1px solid #2a2a2a; }
+.rrf-bar > button { min-width: 32px; padding: 6px 11px; border: 0; border-radius: 6px; background: #2a2a2a; cursor: pointer; }
+.rrf-bar > button:hover:not(:disabled) { background: #383838; color: #fff; }
+.rrf-bar > button:disabled { opacity: .35; cursor: default; }
+.rrf-sep { width: 1px; height: 20px; margin: 0 4px; background: #333; }
+.rrf-grow { flex: 1; }
+.rrf-check { display: flex; align-items: center; gap: 6px; color: #999; font-size: 12px; cursor: pointer; }
+
+.rrf-list { flex: 1; overflow: auto; }
+.rrf-list table { width: 100%; border-collapse: collapse; table-layout: fixed; user-select: none; }
+.rrf-list th { position: sticky; top: 0; z-index: 1; padding: 8px 14px; background: #1d1d1d; color: #888; font-weight: 600; font-size: 12px;
+  text-align: left; cursor: pointer; border-bottom: 1px solid #2a2a2a; }
+.rrf-list th:hover { color: #fff; }
+.rrf-list th.num { width: 170px; }
+.rrf-list th.num:nth-child(2) { width: 100px; }
+.rrf-list td { padding: 6px 14px; border-bottom: 1px solid #222; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rrf-list td.num { color: #999; text-align: left; font-variant-numeric: tabular-nums; }
+.rrf-list td.name { display: flex; align-items: center; gap: 9px; }
+.rrf-list td.name span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.rrf-list tr:hover td { background: #242424; }
+.rrf-list tr.sel td { background: #34404f; color: #fff; }
+.rrf-empty { padding: 30px 14px !important; color: #666; text-align: center; }
+.rrf-ico { display: inline-flex; flex: none; width: 18px; height: 18px; }
+.rrf-ico svg { width: 100%; height: 100%; fill: none; stroke: #8a8a8a; stroke-width: 1.6; stroke-linejoin: round; }
+.rrf-ico.dir svg { fill: #c9a24a; stroke: #c9a24a; }
+
+.rrf-status { display: flex; justify-content: space-between; gap: 16px; padding: 7px 14px; border-top: 1px solid #2a2a2a; color: #888; font-size: 12px; }
+.rrf-msg { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rrf-msg.err { color: #f07a7a; }
+
+.rrf-drop { display: none; position: absolute; inset: 0; z-index: 2; align-items: center; justify-content: center;
+  background: rgba(18, 18, 18, .85); border: 2px dashed #8bf; border-radius: 12px; color: #fff; font-size: 18px; }
+#rrf.dragging .rrf-drop { display: flex; }
+
+@media (max-width: 720px) {
+  #rrf aside { display: none; }
+  .rrf-list th.num:nth-child(3), .rrf-list td.num:nth-child(3) { display: none; }
+}

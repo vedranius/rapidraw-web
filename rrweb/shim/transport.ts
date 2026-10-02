@@ -54,6 +54,11 @@ export function call<T>(cmd: string, args: unknown = {}): Promise<T> {
   });
 }
 
+// Event kao da je stigao s backenda (Files tab: osvježi RapidRAW library nakon izmjena na disku)
+export function emitLocal(event: string, payload: unknown = null) {
+  handlers.get(event)?.forEach((h) => h(payload));
+}
+
 export function on(event: string, h: Handler): () => void {
   if (!handlers.has(event)) handlers.set(event, new Set());
   handlers.get(event)!.add(h);
