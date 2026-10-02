@@ -37,6 +37,7 @@ jobs:
           UP="${TAG%-web}"; UP="${UP#v}"; D="rapidraw-web-server-$UP"
           mkdir -p "out/$D"
           cp -r rrweb/dist-web rrweb/relay rrweb/run.sh rrweb/run.ps1 rrweb/README.md LICENSE "out/$D/"
+          chmod +x "out/$D/run.sh"
           tar -C out -czf "$D.tar.gz" "$D"
           (cd out && zip -qr "../$D.zip" "$D")
       - uses: actions/upload-artifact@v4
