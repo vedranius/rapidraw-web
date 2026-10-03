@@ -203,6 +203,7 @@ jobs:
               *.AppImage)  a=${b%.AppImage}; a=${a##*_} ;;
               *.dmg)       a=${b%.dmg}; a=${a##*_} ;;
               *-setup.exe) a=x64 ;;
+              rrweb-fuse) rm "$f"; continue ;;   # već je u server bundleu (fuse/<arch>/)
               *) continue ;;
             esac
             case "$a" in amd64|x86_64|x64) a=x64 ;; arm64|aarch64) a=arm64 ;; esac
