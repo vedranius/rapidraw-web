@@ -15,6 +15,7 @@
 //   RR_BRIDGE_PORT (8780)   loopback port na koji se spaja bridge (VITE_RR_RELAY pri buildu bridgea)
 //   RR_DIST   (../dist-web)
 //   RR_NO_BROWSER=1           bridge ne otvara browser (server bez ekrana; pod xvfb-run se prepozna samo)
+//   RR_LOG                    kopija ispisa u fajl (bridge/run.sh: <app data>/logs/relay.log; do 5 MB, pa .1)
 // FUSE pozivi iz samog relaya (Files tab na folderu s klijenta) i odgovori na njih dijele libuv threadpool
 process.env.UV_THREADPOOL_SIZE ??= '64';
 import http from 'node:http';
@@ -24,12 +25,28 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { format } from 'node:util';
 import { WebSocketServer } from 'ws';
 import { createFiles, validName } from './files.mjs';
 import { createRemote, editor } from './remote.mjs';
 import { createRaf } from './raf.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+// Ugrađeni relay piše samo u prozor bridgea: kopija u fajl, da se greške (npr. pad RapidRAW-a) mogu naknadno vidjeti
+if (process.env.RR_LOG) {
+  try {
+    const LOG = process.env.RR_LOG;
+    fs.mkdirSync(path.dirname(LOG), { recursive: true });
+    if (fs.statSync(LOG, { throwIfNoEntry: false })?.size > 5 << 20) fs.renameSync(LOG, `${LOG}.1`);
+    const out = fs.createWriteStream(LOG, { flags: 'a' });
+    out.on('error', () => {});
+    for (const k of ['log', 'warn', 'error']) {
+      const orig = console[k].bind(console);
+      console[k] = (...a) => { orig(...a); out.write(`${new Date().toISOString()} ${format(...a)}\n`); };
+    }
+  } catch (e) { console.warn(`[relay] RR_LOG: ${e.message}`); }
+}
 const PORT = +(process.env.RR_PORT ?? 8780);
 const BRIDGE_PORT = +(process.env.RR_BRIDGE_PORT ?? 8780); // = port iz VITE_RR_RELAY u bridge buildu
 const HOST = process.env.RR_HOST ?? '0.0.0.0';
@@ -137,6 +154,7 @@ const remote = createRemote({ validName, insideRoots: (p) => files.within(p), on
 // Fuji RAF iz foldera "na zahtjev": thumbnail i EXIF iz ugrađenog JPEG-a umjesto cijelog fajla (rrweb/relay/raf.mjs)
 const raf = createRaf({
   locate: (p) => remote.locate(p),
+  offline: (p) => remote.offline(p),
   settings: () => bridgeCall('load_settings', {}),
   bridge: bridgeCall,
   work: remote.work,
@@ -225,6 +243,15 @@ wssBridge.on('connection', (ws) => {
         raf.learn(msg.payload?.thumbnailPath);
         raf.generated(msg.payload?.path);
       }
+      // thumbnaile RapidRAW-u dozira relay (raf.mjs): dok ih još ima, UI vidi relayev napredak
+      if (msg.event === 'thumbnail-progress' || msg.event === 'thumbnail-generation-complete') {
+        if (msg.event === 'thumbnail-generation-complete') raf.drained();
+        const p = raf.progress();
+        if (p) {
+          if (msg.event === 'thumbnail-generation-complete') return;
+          msg.payload = p;
+        }
+      }
       const s = JSON.stringify(msg);
       clients.forEach((c) => c.send(s));
       return;
@@ -258,17 +285,21 @@ wssClient.on('connection', (ws, req) => {
       return;
     }
     if (!bridge) { ws.send(JSON.stringify({ id, error: 'RapidRAW bridge nije spojen' })); return; }
+    // Fotka iz foldera s računala koje nije spojeno: RapidRAW je ne smije čitati (greška čitanja kroz mmap ga sruši)
+    if (typeof args?.path === 'string' && remote.offline(args.path)) {
+      ws.send(JSON.stringify({ id, error: 'The folder on the computer you are browsing from is not connected. Open RapidRAW Web in Chrome or Edge on that computer (Files → This computer → Reconnect).' }));
+      return;
+    }
     if (cmd === 'read_exif_for_paths' && Array.isArray(args?.paths)) {
       raf.readExif(args.paths).then(
         (result) => ws.send(JSON.stringify({ id, result: result ?? null })),
         (e) => ws.send(JSON.stringify({ id, error: e.message ?? String(e) })));
       return;
     }
-    if (cmd === 'update_thumbnail_queue' && Array.isArray(args?.paths)) {
-      const now = raf.takeThumbs(args.paths);
-      // sve su RAF-ovi koje relay priprema: prazna lista bi RapidRAW-u obrisala red
-      if (args.paths.length && !now.length) { ws.send(JSON.stringify({ id, result: null })); return; }
-      args = { ...args, paths: now };
+    // thumbnaile RapidRAW-u predaje relay (raf.mjs), tako da fotka u editoru ima prednost; prazna lista (poništi) ide dalje
+    if (cmd === 'update_thumbnail_queue' && Array.isArray(args?.paths) && !raf.takeThumbs(args.paths)) {
+      ws.send(JSON.stringify({ id, result: null }));
+      return;
     }
     rid = (rid + 1) >>> 0 || 1;
     if (EDIT_CMDS.has(cmd)) editor.touch();

@@ -2,6 +2,15 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.9.0
+
+- **Editing comes first in every folder**, not only in on-demand ones: thumbnails are handed to RapidRAW by rapidraw-web, none while you edit (and for 15 s after your last change), one at a time while a photo is open, four at a time in the library. Thumbnails of edited photos are rendered from the whole RAW on the GPU and used to slow the sliders down. Test with 60 edited RAFs in a local folder: opening a photo 5.6 → 2.9 s, slider previews 30–50 % faster, no thumbnail work while editing.
+- **Fuji RAF EXIF in every folder** comes from the embedded JPEG's header (~65 KB) instead of the whole file, unless the `.rrdata` already holds EXIF.
+- **Choose the preview size and live quality yourself** in the connection panel (badge), besides the recommendation.
+- The badge shows **download and upload** (↓ ↑).
+- Fixed: RapidRAW could crash (*bridge disconnected*) when it read a photo from a folder whose computer had been disconnected for longer than 2 minutes. Such photos now give a clear message, and short read errors are retried.
+- The server part keeps a log, `logs/relay.log` in RapidRAW Web's data folder (`RR_LOG`), so problems can be traced afterwards.
+
 ## 1.8.0
 
 - **The photo you are editing comes first.** In on-demand folders, opening a photo fetches it whole, in parallel, ahead of thumbnails and the background copy. While you edit (and for a few seconds after each change), thumbnails and the background copy wait; thumbnails of edited photos (RapidRAW renders them from the whole file on the GPU) are made at most two at a time. On a LAN test with 24 RAFs: opening a photo 3.1 → 1.9 s, first slider preview 870 → 230 ms; over a slower connection the difference is much bigger.

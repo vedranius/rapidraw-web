@@ -110,6 +110,8 @@
 .rrr-opt input { margin-top: 3px; }
 .rrr-opt > span { display: flex; flex-direction: column; gap: 3px; }
 .rrr-opt small { color: #999; font-size: 12px; }
+.rrn-choose { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; }
+.rrn-choose select { background: #2a2a2a; color: inherit; border: 1px solid #444; border-radius: 6px; padding: 3px 6px; }
 .rrr-sub { display: flex; gap: 8px; margin: -4px 0 10px 30px; color: #bbb; font-size: 12px; cursor: pointer; }
 .rrr-sub.off { opacity: .45; cursor: default; }
 
@@ -123,5 +125,5 @@
 .rrn-panel .rrn-warn { color: #e0b05a; }
 .rrn-panel .rrn-note { color: #777; font-size: 11px; }
 .rrn-actions { display: flex; gap: 8px; margin: 10px 0 4px; }
-.rrn-actions button { padding: 6px 12px; border: 0; border-radius: 6px; background: #2a2a2a; color: #ddd; font: inherit; cursor: pointer; }
+.rrn-actions button, .rrn-choose button { padding: 6px 12px; border: 0; border-radius: 6px; background: #2a2a2a; color: #ddd; font: inherit; cursor: pointer; }
 .rrn-actions button.primary { background: #e9e9e9; color: #151515; font-weight: 600; }

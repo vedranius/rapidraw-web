@@ -23,6 +23,7 @@ if (-not $env:RR_ROOTS) { $env:RR_ROOTS = "$($env:RR_PHOTOS);$Data;$Cache" }
 if (-not $env:RR_CONFIG) { $env:RR_CONFIG = Join-Path $Data "rrweb.json" }
 if (-not $env:RR_WORK) { $env:RR_WORK = Join-Path $Cache "remote" }
 if (-not $env:RR_APP_CACHE) { $env:RR_APP_CACHE = $Cache }
+if (-not $env:RR_LOG) { $env:RR_LOG = Join-Path $Data "logs\relay.log" }
 
 $relay = Start-Process node -ArgumentList "`"$Here\relay\relay.mjs`"" -NoNewWindow -PassThru
 Start-Sleep -Milliseconds 500

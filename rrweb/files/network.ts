@@ -10,6 +10,8 @@ type Reco = { resolution: number; quality: Quality; why: string };
 type Measure = { mbps: number; up?: number; rtt: number; at: number };
 
 const QUALITY_LABEL: Record<Quality, string> = { performance: 'Performance', high: 'High', full: 'Full' };
+const RESOLUTIONS = [720, 1280, 1920, 2560, 3840]; // kao RapidRAW: Settings → Processing
+const mbit = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}G` : v < 10 ? v.toFixed(1) : String(Math.round(v)));
 
 export function recommend(mbps: number, rtt: number): Reco {
   if (mbps < 5 || rtt > 200) return { resolution: 1280, quality: 'performance', why: 'slow or distant connection' };
@@ -76,12 +78,21 @@ export function mountNetwork(tabs: HTMLElement) {
     return { ms, kb };
   };
 
+  // ručni odabir (RapidRAW-ove postavke editorPreviewResolution / livePreviewQuality)
+  const res = el('select', {}) as HTMLSelectElement;
+  const qual = el('select', {}) as HTMLSelectElement;
+  for (const v of RESOLUTIONS) res.append(el('option', { value: String(v) }, `${v} px`));
+  for (const q of ['performance', 'high', 'full'] as Quality[]) qual.append(el('option', { value: q }, QUALITY_LABEL[q]));
+
   function render() {
     const r = last && recommend(last.mbps, last.rtt);
+    if (document.activeElement !== res && document.activeElement !== qual) {
+      res.value = String(current().resolution);
+      qual.value = current().quality;
+    }
     const p = previewStats();
     const slow = p && p.ms > 400;
-    badge.textContent = !last ? '…' : last.mbps >= 1000 ? `${(last.mbps / 1000).toFixed(1)} Gb/s`
-      : `${last.mbps < 10 ? last.mbps.toFixed(1) : Math.round(last.mbps)} Mb/s`;
+    badge.textContent = !last ? '…' : `↓${mbit(last.mbps)}${last.up ? ` ↑${mbit(last.up)}` : ''} Mb/s`;
     badge.className = `rrn-badge${(r && differs(r)) || slow ? ' warn' : ''}`;
     const c = current();
     panel.replaceChildren(
@@ -89,12 +100,15 @@ export function mountNetwork(tabs: HTMLElement) {
       el('p', {}, last ? `${last.mbps.toFixed(1)} Mbit/s download${last.up ? ` · ${last.up.toFixed(1)} Mbit/s upload` : ''} · ${Math.round(last.rtt)} ms ping` : 'Measuring…'),
       ...(last?.up ? [el('p', { class: 'rrn-note' }, 'Download carries the previews; folders used from this computer travel at the upload speed.')] : []),
       ...(p ? [el('p', { class: slow ? 'rrn-warn' : '' }, `Recent previews: ${Math.round(p.kb)} KB in ${Math.round(p.ms)} ms on average${slow ? ' (slow, a lower setting will feel smoother)' : ''}`)] : []),
-      el('p', {}, `Current preview: ${c.resolution} px, ${QUALITY_LABEL[c.quality] ?? c.quality}`),
       ...(r ? [el('p', {}, el('b', {}, `Recommended: ${r.resolution} px, ${QUALITY_LABEL[r.quality]}`), ` (${r.why})`)] : []),
       el('div', { class: 'rrn-actions' },
         el('button', { onclick: () => test() }, 'Test again'),
-        ...(r && differs(r) ? [el('button', { class: 'primary', onclick: () => apply(r) }, 'Apply (reloads the editor)')] : [])),
-      el('p', { class: 'rrn-note' }, 'Sizes and quality can also be set in RapidRAW: Settings → Processing.'));
+        ...(r && differs(r) ? [el('button', { class: 'primary', onclick: () => apply(r) }, 'Use recommended')] : [])),
+      el('b', {}, 'Preview'),
+      el('div', { class: 'rrn-choose' },
+        el('label', {}, 'Size ', res), el('label', {}, 'Live quality ', qual),
+        el('button', { onclick: () => apply({ resolution: Number(res.value), quality: qual.value as Quality, why: 'manual' }) }, 'Save')),
+      el('p', { class: 'rrn-note' }, 'Larger previews look sharper but need more bandwidth; saving reloads the editor. Also in RapidRAW: Settings → Processing.'));
   }
 
   async function loadSettings() {
@@ -133,6 +147,7 @@ export function mountNetwork(tabs: HTMLElement) {
   });
 
   try { last = JSON.parse(sessionStorage.getItem('rrweb-net') ?? 'null'); } catch { last = null; }
+  if (last && last.up === undefined) last = null; // starije mjerenje, bez uploada
   if (last) loadSettings().then(render);
   else setTimeout(test, 1500); // jednom po kartici, nakon što se RapidRAW učita
   render();

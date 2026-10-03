@@ -24,7 +24,8 @@ const READS = 6;                // najviše dohvata s klijenta odjednom (po dije
 // Prioriteti dohvata s klijenta: fotka otvorena u editoru, thumbnaili iz RAF-ova (raf.mjs), ostala čitanja
 // RapidRAW-a (thumbnaili editiranih fotki, EXIF…), punjenje u pozadini. Niži red ne kreće dok viši ima posla.
 export const PRIO = { FOCUS: 0, SEED: 1, READ: 2, FILL: 3 };
-const EDIT_QUIET = 4000;        // ms nakon zadnje radnje u editoru do nastavka pozadinskog posla
+const EDIT_QUIET = 15000;       // ms nakon zadnje radnje u editoru do nastavka pozadinskog posla
+const EDIT_RECENT = 120000;     // toliko nakon zadnje radnje fotka se smatra otvorenom (pozadina radi sporije)
 const LOAD_MAX = 60000;         // otvaranje fotke koje se nikad nije javilo ne smije zaustaviti pozadinu zauvijek
 
 // Editor (relay.mjs javlja otvaranje fotke i pomake slidera): dok radi, sve pozadinsko čeka, da otvorena
@@ -39,6 +40,7 @@ export const editor = {
     for (const [t, at] of this.loads) if (Date.now() - at > LOAD_MAX) this.loads.delete(t);
     return this.loads.size > 0 || Date.now() - this.last < EDIT_QUIET;
   },
+  recent() { return Date.now() - this.last < EDIT_RECENT; },
   async idle(stop = () => false) { while (this.busy() && !stop()) await new Promise((r) => setTimeout(r, 300)); },
 };
 const RECONNECT_WAIT = 120000;  // koliko zahtjev čeka da se browser ponovno spoji
@@ -147,7 +149,15 @@ class Cached {
     const len = Math.min(count * CHUNK, this.size - off);
     if (!slotted) await this.share.slot(prio);
     let data;
-    try { ({ data } = await this.share.request({ op: 'read', path: this.rel, off, len })); } finally { this.share.unslot(prio); }
+    try {
+      // prolazna greška čitanja na klijentu (npr. fajl upravo zapisan): pokušaj opet, jer greška kroz mmap ruši RapidRAW
+      for (let attempt = 0; ; attempt++) {
+        try { ({ data } = await this.share.request({ op: 'read', path: this.rel, off, len })); break; } catch (e) {
+          if (attempt >= 2 || e.code === 'ENOENT' || this.share.stopped) throw e;
+          await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+        }
+      }
+    } finally { this.share.unslot(prio); }
     if (this.share.stopped) throw fail('EIO', 'stopped');
     const fd = await this.open();
     await fd.write(data, 0, data.length, off);
@@ -255,6 +265,7 @@ class Share {
     this.active = [0, 0, 0, 0];    // dohvata s klijenta u tijeku, po prioritetu (PRIO)
     this.waiting = [[], [], [], []];
     this.focus = null;             // rel fotke otvorene u editoru
+    this.offlineSince = Date.now(); // dok se browser ne spoji (attach)
     // fill: total = veličina cijelog foldera, filled = koliko je od toga već cijelo na serveru
     this.stats = { fetched: 0, complete: 0, uploaded: 0, pushed: 0, total: 0, filled: 0, filling: false, diskFull: false };
     this.stage = path.join(WORK, 'stage', this.id);
@@ -271,6 +282,7 @@ class Share {
   attach(ws) {
     this.agent?.close();
     this.agent = ws;
+    this.offlineSince = 0;
     for (const w of this.waiters) w();
     this.waiters.clear();
     // tuneli i proxyji zatvaraju WebSocket koji miruje; ping ga drži otvorenim
@@ -292,6 +304,7 @@ class Share {
       clearInterval(keepalive);
       if (this.agent !== ws) return;
       this.agent = null;
+      this.offlineSince = Date.now();
       for (const p of this.pending.values()) p.reject(fail('EOFFLINE', 'client folder disconnected'));
       this.pending.clear();
       console.log(`[remote] ${this.name}: client disconnected, waiting for it to reconnect`);
@@ -805,6 +818,11 @@ export function createRemote({ validName, insideRoots, onChange = () => {} }) {
       } catch { /* nema /proc/mounts */ }
     },
     roots: () => [...shares.values()].map((s) => s.view),
+    // fajl iz foldera "na zahtjev" čiji browser nije spojen dulje od par sekundi (kratki prekid se čeka)
+    offline(p) {
+      const hit = typeof p === 'string' ? this.locate(p.split('?vc=')[0]) : null;
+      return !!hit && !hit.share.agent && Date.now() - hit.share.offlineSince > 5000;
+    },
     // load_image iz editora: ako je fotka iz foldera "na zahtjev", dohvati je ispred svega ostalog
     focus(p) {
       const hit = typeof p === 'string' && !p.includes('?vc=') ? this.locate(p) : null;

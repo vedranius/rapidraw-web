@@ -20,6 +20,7 @@ export RR_ROOTS="${RR_ROOTS:-$RR_PHOTOS:$DATA:$CACHE}"
 export RR_CONFIG="${RR_CONFIG:-$DATA/rrweb.json}"   # photo library folder iz RapidRAW Web prozora
 export RR_WORK="${RR_WORK:-$CACHE/remote}"          # folderi s klijentskog računala (mirror, cache, FUSE)
 export RR_APP_CACHE="${RR_APP_CACHE:-$CACHE}"       # RapidRAW-ov cache (thumbnails/ za brze RAF thumbnailove)
+export RR_LOG="${RR_LOG:-$DATA/logs/relay.log}"     # kopija ispisa relaya
 
 # Headless server bez ekrana → Xvfb (WebKitGTK treba display; wgpu/Vulkan ga ne treba)
 LAUNCH=()

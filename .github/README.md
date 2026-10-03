@@ -123,7 +123,7 @@ In both modes, everything RapidRAW writes (edits in `.rrdata`, exports, new fold
 - **HTTPS, or `localhost`**: browsers allow folder access only on secure pages. The easiest way is [Tailscale](https://tailscale.com): on the server run `tailscale serve --bg 8780` and open `https://<server>.<tailnet>.ts.net`. That works from anywhere and keeps the server private. A reverse proxy with a certificate (Caddy, nginx) works too. On your own LAN you can also tell Chrome to treat the plain address as secure: open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, add `http://<server>:8780` and restart Chrome.
 - **Keep the tab open** while editing: the browser is the storage. If it closes, a copy in progress pauses and continues when you reconnect. If the connection drops (Wi-Fi, a tunnel, reloading the page), RapidRAW waits up to 2 minutes for it to come back instead of getting read errors, and after a server restart the browser registers its folders again by itself.
 
-**How it works.** The browser acts as the storage: it reads and writes the chosen folder for the server over a WebSocket. *Copy* mode uploads the files into a mirror folder on the server, and a watcher sends new or changed files back. *On demand* mode mounts the folder as a disk on the server (`rrweb-fuse`, included in every Linux and Windows package: FUSE on Linux, WinFsp on Windows); each read fetches just the needed range from the browser into a server-side cache, with read-ahead while RapidRAW decodes a photo. Data travels in pieces of at most 1 MB with a keepalive, so tunnels and proxies such as Cloudflare don't cut the connection; the photo you open in the editor comes first (it is fetched whole, in parallel, ahead of everything else), then thumbnails, then other reads, then the background copy. While you edit (and for a few seconds after each change) thumbnails and the background copy wait, so sliders get the whole connection, CPU and GPU; thumbnails of edited photos, which RapidRAW renders from the whole file, are made at most two at a time. Mounts left behind by a crash are cleaned up when the server starts.
+**How it works.** The browser acts as the storage: it reads and writes the chosen folder for the server over a WebSocket. *Copy* mode uploads the files into a mirror folder on the server, and a watcher sends new or changed files back. *On demand* mode mounts the folder as a disk on the server (`rrweb-fuse`, included in every Linux and Windows package: FUSE on Linux, WinFsp on Windows); each read fetches just the needed range from the browser into a server-side cache, with read-ahead while RapidRAW decodes a photo. Data travels in pieces of at most 1 MB with a keepalive, so tunnels and proxies such as Cloudflare don't cut the connection; the photo you open in the editor comes first (it is fetched whole, in parallel, ahead of everything else), then thumbnails, then other reads, then the background copy. While you edit (and for 15 seconds after each change) thumbnails and the background copy wait, so sliders get the whole connection, CPU and GPU (see [Editing comes first](#editing-comes-first)). If the computer that shares the folder disconnects for longer, its photos can't be opened until it reconnects (RapidRAW says so instead of waiting). Mounts left behind by a crash are cleaned up when the server starts.
 
 **Fuji RAF.** RapidRAW reads the embedded preview and the EXIF data only from TIFF-based RAW files (NEF, ARW, CR2, DNG); for a RAF it decodes the whole RAW, and the library reads the EXIF of every photo in a folder as soon as you open it. In on-demand mode that would mean 30–45 MB per photo before you see anything. So for RAF files without edits, the browser cuts the camera's embedded JPEG out of the file, shrinks it to RapidRAW's thumbnail sizes and sends it (about 0.3 MB), and RapidRAW reads the EXIF from that JPEG's header (about 65 KB). Thumbnails then show the camera's JPEG (with its film simulation), exactly like RapidRAW does for NEF or ARW files; a photo you edit gets RapidRAW's own rendering.
 
@@ -136,6 +136,10 @@ In both modes, everything RapidRAW writes (edits in `.rrdata`, exports, new fold
 | Linux | ✅ Supported | The `fuse3` package (`fusermount3`), usually already installed |
 | Windows | ✅ Supported | [WinFsp](https://winfsp.dev) (free file system driver, install once). The folder appears as a directory under RapidRAW Web's cache folder; names are case-sensitive there, like on the computer that shares it |
 | macOS | Planned | [macFUSE](https://osxfuse.github.io) (kernel extension, must be allowed in macOS security settings, on Apple Silicon also in Recovery) or [FUSE-T](https://www.fuse-t.org) (no kernel extension) |
+
+## Editing comes first
+
+RapidRAW makes thumbnails in the background with several workers; for an edited photo it renders the whole RAW on the GPU, the same GPU that renders your slider changes. rapidraw-web therefore hands thumbnails to RapidRAW itself: none while you edit (and for 15 seconds after your last change), one at a time while a photo is open in the editor, four at a time in the library. In a test with 60 edited Fuji RAFs in a local folder, opening a photo went from 5.6 to 2.9 seconds and slider previews got 30–50 % faster. The library's EXIF data of Fuji RAF files is read from the embedded JPEG's header (about 65 KB) instead of the whole file, unless the photo's `.rrdata` already holds it.
 
 ## Connection and preview quality
 
@@ -150,7 +154,7 @@ Through a tunnel such as Cloudflare, everything between the server and your brow
 | 15–50 Mbit/s | 1920 px, High |
 | 50 Mbit/s and more (LAN) | 2560 px, High |
 
-*Apply* saves the setting and reloads the editor. While you edit, the badge also watches how long real previews take and turns amber when they get slow.
+*Use recommended*, or pick a preview **size** and **live quality** yourself and *Save*; both reload the editor. While you edit, the badge also watches how long real previews take and turns amber when they get slow.
 
 ### Configuration
 
@@ -167,6 +171,7 @@ Through a tunnel such as Cloudflare, everything between the server and your brow
 | `RR_BRIDGE_PORT` | `8780` | Loopback port the bridge connects to (change only together with a rebuilt bridge) |
 | `RR_BRIDGE_BIN` | auto-detect | Path to `rapidraw-web-bridge` |
 | `RR_VERBOSE` | off | Log every IPC call with timing, and the file operations of on-demand folders |
+| `RR_LOG` | `<data dir>/logs/relay.log` (bridge, `run.sh`, `run.ps1`) | Copy of the server's log (up to 5 MB, then `.1`) |
 | `RR_NO_BROWSER` | off (on in the Linux service and under `xvfb-run`) | Don't open a browser when the bridge starts its bundled server |
 
 ### GPU in Docker (NVIDIA)

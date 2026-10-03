@@ -133,8 +133,14 @@ class Agent {
         return [{ entries }];
       }
       case 'read': {
-        const f = await this.file(h.path);
-        return [{}, new Uint8Array(await f.slice(h.off, h.off + h.len).arrayBuffer())];
+        try {
+          const f = await this.file(h.path);
+          return [{}, new Uint8Array(await f.slice(h.off, h.off + h.len).arrayBuffer())];
+        } catch { // File iz cachea je zastario (fajl se u međuvremenu promijenio): svjež pa još jednom
+          this.files.delete(h.path);
+          const f = await this.file(h.path);
+          return [{}, new Uint8Array(await f.slice(h.off, h.off + h.len).arrayBuffer())];
+        }
       }
       case 'write': { // komadi istog fajla dijele jedan writable (inače Chrome kopira cijeli fajl za svaki komad)
         let w = this.writers.get(h.path);
