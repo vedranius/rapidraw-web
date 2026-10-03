@@ -15,7 +15,7 @@ const inside = (p, root) => p === root || p.startsWith(root.endsWith(path.sep) ?
 const exists = (p) => fsp.lstat(p).then(() => true, () => false);
 const samePath = (a, b) => (process.platform === 'linux' ? a === b : a.toLowerCase() === b.toLowerCase());
 
-function validName(name) {
+export function validName(name) {
   if (typeof name !== 'string' || !name.trim() || name === '.' || name === '..'
     || /[\\/:*?"<>|\x00-\x1f]/.test(name) || /[. ]$/.test(name)) throw new Error(`Invalid name: ${name}`);
   return name;
@@ -56,8 +56,9 @@ async function addToZip(zip, p, name) {
 }
 
 // settings(): RapidRAW postavke (preko bridgea), bridge(cmd, args): poziv RapidRAW komande,
-// library(): photo library folder ili null, extraRoots(): dodatni folderi (RR_PHOTOS)
-export function createFiles({ settings, bridge, library = () => null, extraRoots = () => [] }) {
+// library(): photo library folder ili null, extraRoots(): dodatni folderi (RR_PHOTOS, folderi s klijenta),
+// labels(): { putanja: naziv } za prikaz
+export function createFiles({ settings, bridge, library = () => null, extraRoots = () => [], labels = () => ({}) }) {
   let cached = { at: 0, roots: [] };
 
   async function roots() {
@@ -90,7 +91,8 @@ export function createFiles({ settings, bridge, library = () => null, extraRoots
   async function ls({ path: dir }) {
     const rs = await roots();
     const lib = library() ? await fsp.realpath(library()).catch(() => null) : null;
-    if (!dir) return { path: null, roots: rs, library: lib, sep: path.sep, crumbs: [], items: [] };
+    const names = { ...labels(), ...(lib ? { [lib]: `${path.basename(lib) || lib} (library)` } : {}) };
+    if (!dir) return { path: null, roots: rs, library: lib, labels: names, sep: path.sep, crumbs: [], items: [] };
     const real = await within(dir);
     const root = rs.find((r) => inside(real, r));
     const crumbs = [];
@@ -106,7 +108,7 @@ export function createFiles({ settings, bridge, library = () => null, extraRoots
         items.push({ name: e.name, dir, size: dir ? 0 : st.size, mtime: st.mtimeMs, sidecar: !dir && isSidecar(e.name) });
       } catch { /* pokvaren link, nema prava… */ }
     }
-    return { path: real, roots: rs, library: lib, sep: path.sep, crumbs, items };
+    return { path: real, roots: rs, library: lib, labels: names, sep: path.sep, crumbs, items };
   }
 
   async function mkdir({ dir, name }) {
@@ -225,5 +227,5 @@ export function createFiles({ settings, bridge, library = () => null, extraRoots
     return true;
   }
 
-  return { commands, http, invalidate: () => { cached.at = 0; } };
+  return { commands, http, within, invalidate: () => { cached.at = 0; } };
 }

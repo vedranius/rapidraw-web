@@ -19,7 +19,7 @@ Package version: `{{PKG_VERSION}}`, so installing a newer web release over an ol
 Setup: [README → Quick start](https://github.com/vedranius/rapidraw-web#quick-start)
 
 ### Features
-**Editor**: the real RapidRAW interface, every slider rendered by the server's GPU. **Photo library**: chosen once on the server; folder and file pickers in the browser start there. **Files**: download exports (several files as .zip), upload, create folders, rename, copy, move and delete (to the trash) inside your photo folders; RapidRAW edits travel with their photos.
+**Editor**: the real RapidRAW interface, every slider rendered by the server's GPU. **Photo library**: chosen once on the server; folder and file pickers in the browser start there. **This computer**: edit photos that stay in a folder on the computer you browse from (copied in the background, or on demand with a Linux server; Chrome/Edge over HTTPS). **Connection badge**: recommends the preview quality for your connection. **Files**: download exports (several files as .zip), upload, create folders, rename, copy, move and delete (to the trash) inside your photo folders; RapidRAW edits travel with their photos.
 
 ### Known limitations
 One active editing session at a time · pickers only browse the photo folders (other paths can be typed) · desktop-only window features and tethering are not available.

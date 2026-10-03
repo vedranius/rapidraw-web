@@ -3,7 +3,7 @@ import { call } from '../shim/transport';
 
 export type Item = { name: string; dir: boolean; size: number; mtime: number; sidecar: boolean };
 export type Listing = {
-  path: string | null; roots: string[]; library: string | null; sep: string;
+  path: string | null; roots: string[]; library: string | null; labels?: Record<string, string>; sep: string;
   crumbs: { name: string; path: string }[]; items: Item[];
 };
 
@@ -33,7 +33,7 @@ export function icon(dir: boolean) {
 export const errText = (e: unknown) => (typeof e === 'string' ? e : (e as Error)?.message ?? String(e));
 export const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 export const joinPath = (l: Listing, name: string) => (l.path!.endsWith(l.sep) ? l.path! + name : l.path! + l.sep + name);
-export const rootName = (l: Listing, r: string) => (r === l.library ? `${baseName(r)} (library)` : baseName(r));
+export const rootName = (l: Listing, r: string) => l.labels?.[r] ?? baseName(r);
 export const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 export function fmtSize(n: number) {
   const u = ['B', 'KB', 'MB', 'GB', 'TB'];

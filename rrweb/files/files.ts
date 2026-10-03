@@ -3,6 +3,8 @@
 // Server dio: rrweb/relay/files.mjs.
 import { call, emitLocal } from '../shim/transport';
 import { baseName, collator, copyText, el, errText, fmtSize, icon, joinPath, ls, rootName, type Item, type Listing } from './ui';
+import { mountNetwork } from './network';
+import { mountRemote } from './remote';
 import './files.css';
 
 declare const __RR_VERSION__: string;
@@ -56,6 +58,7 @@ const fileInput = el('input', { type: 'file', multiple: true, hidden: true,
 const sink = el('iframe', { name: 'rrf-dl', hidden: true, title: 'downloads' });
 
 const rootsBox = el('nav', { class: 'rrf-roots' });
+const remoteBox = el('div', { class: 'rrr' });
 const crumbs = el('div', { class: 'rrf-crumbs' });
 const th = (label: string, key: SortKey, cls = '') => el('th', { class: cls, onclick: () => {
   sort = sort.key === key ? { key, dir: sort.dir === 1 ? -1 : 1 } : { key, dir: 1 };
@@ -68,6 +71,7 @@ const drop = el('div', { class: 'rrf-drop' }, 'Drop files to upload them into th
 const panel = el('div', { id: 'rrf', hidden: true },
   el('aside', {}, el('div', { class: 'rrf-h' }, 'Photo folders'), rootsBox,
     el('p', { class: 'rrf-note' }, 'Your photo library and the folders you open in RapidRAW are listed here.'),
+    remoteBox,
     el('p', { class: 'rrf-ver' }, `RapidRAW ${__RR_VERSION__} · web ${__RR_WEB_VERSION__}`)),
   el('section', {},
     crumbs,
@@ -80,6 +84,8 @@ const panel = el('div', { id: 'rrf', hidden: true },
     el('div', { class: 'rrf-status' }, summary, message)),
   drop, fileInput, sink);
 document.body.append(panel, tabs);
+mountNetwork(tabs);
+mountRemote(remoteBox, { open: (p) => load(p), refresh: () => { if (isOpen) load(listing.path, [...selected]); } });
 
 function setMessage(text = '', error = false) {
   message.textContent = text;

@@ -23,8 +23,28 @@ env:
   REF: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
+  # Folder s klijentskog računala "na zahtjev" (FUSE, Linux server): mala Rust binarka za server bundle
+  fuse:
+    name: rrweb-fuse ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: x86_64 }      # starija glibc → radi i na novijim distribucijama
+          - { runner: ubuntu-22.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ env.REF }}' }
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --manifest-path rrweb/fuse/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with: { name: 'fuse-${{ matrix.arch }}', path: rrweb/fuse/target/release/rrweb-fuse }
+
   server:
     name: Server bundle (web UI + relay)
+    needs: fuse
+    if: ${{ !cancelled() }}   # bez rrweb-fuse bundle i dalje radi, samo bez načina "na zahtjev"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,11 +58,19 @@ jobs:
       - run: npx vite build --config rrweb/vite.web.config.mjs
       - run: npm ci --omit=dev --no-audit --no-fund
         working-directory: rrweb/relay
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: { pattern: 'fuse-*', path: fuse-dl }
       - name: Package
         run: |
           mkdir -p "out/$TAG"
           cp -r rrweb/dist-web rrweb/relay rrweb/run.sh rrweb/run.ps1 rrweb/README.md LICENSE "out/$TAG/"
           chmod +x "out/$TAG/run.sh"
+          for a in x86_64 aarch64; do   # artefakti ne čuvaju exec bit
+            if [ -f "fuse-dl/fuse-$a/rrweb-fuse" ]; then
+              mkdir -p "out/$TAG/fuse/$a" && install -m 755 "fuse-dl/fuse-$a/rrweb-fuse" "out/$TAG/fuse/$a/"
+            fi
+          done
           tar -C out -czf "${TAG}_linux_server.tar.gz" "$TAG"
       - uses: actions/upload-artifact@v4
         with: { name: server, path: '*_linux_server.tar.gz' }
@@ -145,7 +173,7 @@ jobs:
           path: src-tauri/target/release/bundle/dmg/*.dmg
 
   release:
-    needs: [server, bridge-linux, bridge-windows, bridge-macos]
+    needs: [fuse, server, bridge-linux, bridge-windows, bridge-macos]
     if: ${{ !cancelled() && needs.server.result == 'success' && (github.event_name == 'push' || inputs.tag != '') }}
     runs-on: ubuntu-latest
     steps:
@@ -161,6 +189,7 @@ jobs:
           [ "${{ needs.bridge-linux.result }}" = success ] || missing="$missing Linux"
           [ "${{ needs.bridge-windows.result }}" = success ] || missing="$missing Windows"
           [ "${{ needs.bridge-macos.result }}" = success ] || missing="$missing macOS"
+          [ "${{ needs.fuse.result }}" = success ] || missing="$missing rrweb-fuse(Linux on-demand folders)"
           [ -n "$missing" ] && printf '\n> ⚠️ Build failed for:%s — not included in this release.\n' "$missing" >> notes.md
           # Linux artifakti zadržavaju deb/, rpm/, appimage/ poddirektorije, a files: dist/* ih ne vidi
           find dist -mindepth 2 -type f -exec mv -t dist {} +
@@ -194,7 +223,7 @@ jobs:
           make_latest: true
 
   report-failure:
-    needs: [server, bridge-linux, bridge-windows, bridge-macos, release]
+    needs: [fuse, server, bridge-linux, bridge-windows, bridge-macos, release]
     if: ${{ failure() && (github.event_name == 'push' || inputs.tag != '') }}
     runs-on: ubuntu-latest
     steps:

@@ -8,6 +8,10 @@ node rrweb/check-shims.mjs
 npm ci --no-audit --no-fund
 npx vite build --config rrweb/vite.web.config.mjs
 (cd rrweb/relay && npm install --omit=dev --no-audit --no-fund)
+if [ "$(uname -s)" = Linux ]; then   # folder s klijenta "na zahtjev" (FUSE)
+  cargo build --release --manifest-path rrweb/fuse/Cargo.toml
+  mkdir -p "rrweb/fuse/$(uname -m)" && cp rrweb/fuse/target/release/rrweb-fuse "rrweb/fuse/$(uname -m)/"
+fi
 echo "rrweb: $(node rrweb/version.mjs)"
 CONFIGS=(--config rrweb/tauri.bridge.json --config rrweb/tauri.version.json)
 if [ "${OS:-}" = Windows_NT ] || [ "$(uname -s)" = Darwin ]; then

@@ -8,18 +8,26 @@
 //   RR_PHOTOS (opcionalno)  dodatni folder za Files tab (uz foldere otvorene u RapidRAW-u)
 //   RR_CONFIG (opcionalno)  JSON s postavkama relaya ({"library": "<photo library folder>"}), piše ga bridge prozor
 //   RR_ORIGINS (opcionalno) zarezom odvojeni dodatni dopušteni Origin-i (npr. https://photos.example.com iza proxyja)
+//   RR_WORK   (tmp/rrweb-remote) radni folder za foldere s klijenta (mirror, cache, FUSE mountovi)
+//   RR_FUSE_BIN               rrweb-fuse binarka (default ../fuse/<arch>/rrweb-fuse)
+//   RR_BRIDGE_PORT (8780)   loopback port na koji se spaja bridge (VITE_RR_RELAY pri buildu bridgea)
 //   RR_DIST   (../dist-web)
+// FUSE pozivi iz samog relaya (Files tab na folderu s klijenta) i odgovori na njih dijele libuv threadpool
+process.env.UV_THREADPOOL_SIZE ??= '64';
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { createFiles } from './files.mjs';
+import { createFiles, validName } from './files.mjs';
+import { createRemote } from './remote.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = +(process.env.RR_PORT ?? 8780);
-const BRIDGE_PORT = 8780;
+const BRIDGE_PORT = +(process.env.RR_BRIDGE_PORT ?? 8780); // = port iz VITE_RR_RELAY u bridge buildu
 const HOST = process.env.RR_HOST ?? '0.0.0.0';
 const DIST = path.resolve(process.env.RR_DIST ?? path.join(here, '../dist-web'));
 const AUTH = process.env.RR_AUTH ? 'Basic ' + Buffer.from(process.env.RR_AUTH).toString('base64') : null;
@@ -30,6 +38,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.webp': 'image/webp', '.json': 'application/json', '.woff2': 'font/woff2', '.ico': 'image/x-icon',
   '.wasm': 'application/wasm', '.tif': 'image/tiff', '.tiff': 'image/tiff' };
+const SPEED = randomBytes(16 << 20); // nasumično, da ga proxy/gzip ne smanji
 const isLoopback = (a = '') => a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
 const authed = (req) => !AUTH || req.headers.authorization === AUTH;
 const underRoots = (p) => ROOTS.some((r) => p === r || p.startsWith(r + path.sep));
@@ -65,6 +74,17 @@ const server = http.createServer((req, res) => {
     files.http(req, res, u);
     return;
   }
+  if (u.pathname === '/rr/speed') { // test brzine veze za preporuku kvalitete previewa (rrweb/files/network.ts)
+    const n = Math.min(Math.max(+u.searchParams.get('bytes') || 0, 1 << 16), SPEED.length);
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': n, 'Cache-Control': 'no-store' });
+    res.end(SPEED.subarray(0, n));
+    return;
+  }
+  if (u.pathname.startsWith('/rfs/')) {
+    if (!sameOrigin(req)) { res.writeHead(403).end(); return; }
+    remote.http(req, res, u);
+    return;
+  }
   const rel = path.normalize(decodeURIComponent(u.pathname)).replace(/^([/\\])+/, '');
   const file = path.join(DIST, rel);
   if (!file.startsWith(DIST)) { res.writeHead(403).end(); return; }
@@ -96,9 +116,12 @@ const files = createFiles({
   settings: () => bridgeCall('load_settings', {}),
   bridge: bridgeCall,
   library: () => config.library ?? null,
-  extraRoots: () => (process.env.RR_PHOTOS ? [process.env.RR_PHOTOS] : []),
+  extraRoots: () => [...(process.env.RR_PHOTOS ? [process.env.RR_PHOTOS] : []), ...remote.roots()],
+  labels: () => remote.labels(),
 });
-const LOCAL = { __rr_home: () => os.homedir(), ...files.commands };
+// Folderi s klijentskog računala (browser je pohrana): rrweb/relay/remote.mjs
+const remote = createRemote({ validName, insideRoots: (p) => files.within(p), onChange: () => files.invalidate() });
+const LOCAL = { __rr_home: () => os.homedir(), __rr_ping: () => Date.now(), ...files.commands, ...remote.commands };
 
 // Poziv RapidRAW komande iz samog relaya (Files tab: postavke, brisanje u koš)
 function bridgeCall(cmd, args) {
@@ -117,19 +140,32 @@ function bridgeCall(cmd, args) {
 
 const wssClient = new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: 256 << 20 });
 const wssBridge = new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: 1 << 30 });
+const wssRfs = new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: 64 << 20 });
 
 const upgrade = (bridgeOnly) => (req, sock, head) => {
   const p = new URL(req.url, 'http://x').pathname;
   if (p === '/bridge' && isLoopback(req.socket.remoteAddress)) wssBridge.handleUpgrade(req, sock, head, (ws) => wssBridge.emit('connection', ws));
   else if (p === '/ipc' && !bridgeOnly && authed(req) && sameOrigin(req)) wssClient.handleUpgrade(req, sock, head, (ws) => wssClient.emit('connection', ws));
+  else if (p === '/rfs' && !bridgeOnly && authed(req) && sameOrigin(req)) {
+    const id = new URL(req.url, 'http://x').searchParams.get('id');
+    wssRfs.handleUpgrade(req, sock, head, (ws) => remote.attach(ws, id));
+  }
   else sock.destroy();
 };
 server.on('upgrade', upgrade(false));
 // Bridge se uvijek spaja na 127.0.0.1:8780 (VITE_RR_RELAY u bridge buildu), pa uz drugi RR_PORT slušaj i tamo
+// (samo ako 8780 nitko ne koristi: Windows inače dopusti 127.0.0.1:8780 pored tuđeg 0.0.0.0:8780 i preotme mu promet)
 if (PORT !== BRIDGE_PORT) {
-  http.createServer((_req, res) => res.writeHead(404).end()).on('upgrade', upgrade(true))
-    .on('error', (e) => console.error(`[relay] bridge port ${BRIDGE_PORT}: ${e.message}`))
-    .listen(BRIDGE_PORT, '127.0.0.1');
+  const probe = net.connect(BRIDGE_PORT, '127.0.0.1');
+  probe.on('connect', () => {
+    probe.destroy();
+    console.error(`[relay] port ${BRIDGE_PORT} is used by another program: the RapidRAW bridge cannot reach this relay`);
+  });
+  probe.on('error', () => {
+    http.createServer((_req, res) => res.writeHead(404).end()).on('upgrade', upgrade(true))
+      .on('error', (e) => console.error(`[relay] bridge port ${BRIDGE_PORT}: ${e.message}`))
+      .listen(BRIDGE_PORT, '127.0.0.1');
+  });
 }
 
 wssBridge.on('connection', (ws) => {
@@ -198,8 +234,17 @@ function log(f, bytes) {
 // Relay koji je pokrenuo bridge (Windows installer) gasi se s njim. RapidRAW izlazi mimo Tauri Exit eventa,
 // pa shell plugin ne stigne ubiti child proces; ovo pokriva i rušenje bridgea.
 if (process.env.RR_EXIT_WITH_PARENT) {
-  setInterval(() => { try { process.kill(process.ppid, 0); } catch { console.log('[relay] bridge exited, stopping'); process.exit(0); } }, 2000).unref();
+  setInterval(() => { try { process.kill(process.ppid, 0); } catch { console.log('[relay] bridge exited, stopping'); shutdown(); } }, 2000).unref();
 }
+// Na izlazu odmontiraj FUSE foldere s klijenta (inače ostaje "Transport endpoint is not connected")
+let stopping = false;
+async function shutdown() {
+  if (stopping) return;
+  stopping = true;
+  await remote.shutdown();
+  process.exit(0);
+}
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, shutdown);
 
 server.on('error', (e) => { console.error(`[relay] ${e.code === 'EADDRINUSE' ? `port ${PORT} is already in use` : e.message}`); process.exit(1); });
 server.listen(PORT, HOST, () => {

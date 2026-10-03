@@ -8,6 +8,9 @@ Everything rapidraw-web adds to RapidRAW lives here. Full documentation: https:/
 | `bridge/` | 3 KB page loaded by the real RapidRAW backend instead of its UI; forwards IPC + events to the relay |
 | `relay/relay.mjs` | Node server: serves the web UI and `/files`, routes browser ⇄ bridge |
 | `relay/files.mjs`, `files/` | Files tab and server-side folder/file pickers (`files/picker.ts`, used by `shim/dialog.ts`): server side (list, zip download, upload, copy/move with sidecars) and the browser UI injected next to RapidRAW |
+| `relay/remote.mjs`, `files/remote.ts`, `fuse/` | *This computer*: a folder on the browsing computer as storage (copy mode with write-back; on-demand mode via the `rrweb-fuse` FUSE helper on Linux) |
+| `files/network.ts` | Connection badge: speed/ping test and preview quality recommendation |
+| `CHANGELOG.md` | What changed in each web version (used in the release notes) |
 | `bundle/prepare.mjs` | All-in-one bridge (Windows, macOS): fetches Node.js (SHA256-checked) as a sidecar and generates the Tauri overlay that bundles relay + web UI |
 | `gen-events.mjs` | Extracts every event name the UI listens to (runs on each bridge build) |
 | `check-shims.mjs` | Fails the build if the UI imports a Tauri module/function the shims don't cover |

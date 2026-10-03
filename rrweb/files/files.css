@@ -86,3 +86,40 @@
 .rrp-foot > button.rrp-ok:disabled { opacity: .4; cursor: default; }
 .rrp-foot > button.rrp-link { padding: 7px 4px; background: none; color: #8bf; }
 .rrp-name { flex: 1 1 100%; padding: 7px 10px; border: 1px solid #333; border-radius: 6px; background: #151515; color: #eee; font: inherit; }
+
+/* remote.ts: folder s ovog računala */
+.rrr { margin-top: 18px; padding-top: 12px; border-top: 1px solid #2a2a2a; }
+.rrr-h { font-size: 13px; }
+.rrr-item { margin: 6px 0 10px; }
+.rrr-name { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px; border: 0; border-radius: 6px; background: none;
+  font-weight: 600; text-align: left; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rrr-name:hover { background: #2a2a2a; }
+.rrr-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #666; }
+.rrr-dot.on { background: #6c6; }
+.rrr-status { margin: 2px 4px 4px 20px; color: #888; font-size: 11px; }
+.rrr-actions { display: flex; gap: 6px; margin-left: 20px; }
+.rrr-actions button, .rrr-add, .rrr-row button { padding: 4px 9px; border: 0; border-radius: 6px; background: #2a2a2a; font-size: 12px; cursor: pointer; }
+.rrr-actions button:hover, .rrr-add:hover, .rrr-row button:hover { background: #383838; color: #fff; }
+.rrr-add { width: 100%; margin-top: 4px; }
+.rrr-dialog { height: auto; max-height: calc(100vh - 64px); }
+.rrr-body { overflow: auto; padding: 8px 16px; }
+.rrr-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 6px 0 10px; }
+.rrr-row code { color: #ccc; word-break: break-all; }
+.rrr-opt { display: flex; gap: 10px; margin: 10px 0; padding: 10px; border-radius: 8px; background: #242424; cursor: pointer; }
+.rrr-opt.off { opacity: .55; cursor: default; }
+.rrr-opt input { margin-top: 3px; }
+.rrr-opt > span { display: flex; flex-direction: column; gap: 3px; }
+.rrr-opt small { color: #999; font-size: 12px; }
+
+/* network.ts: veza sa serverom i kvaliteta previewa */
+#rrf-tabs .rrn-badge { margin-left: 4px; padding: 5px 10px; color: #9c9; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#rrf-tabs .rrn-badge.warn { color: #e0b05a; }
+.rrn-panel { position: fixed; top: 44px; left: 50%; transform: translateX(-50%); z-index: 2147483001; width: min(380px, calc(100vw - 32px));
+  padding: 14px 16px; border-radius: 10px; background: #1d1d1d; color: #ddd; box-shadow: 0 10px 30px rgba(0, 0, 0, .5); font-size: 13px; line-height: 1.45; }
+.rrn-panel[hidden] { display: none; }
+.rrn-panel p { margin: 6px 0; }
+.rrn-panel .rrn-warn { color: #e0b05a; }
+.rrn-panel .rrn-note { color: #777; font-size: 11px; }
+.rrn-actions { display: flex; gap: 8px; margin: 10px 0 4px; }
+.rrn-actions button { padding: 6px 12px; border: 0; border-radius: 6px; background: #2a2a2a; color: #ddd; font: inherit; cursor: pointer; }
+.rrn-actions button.primary { background: #e9e9e9; color: #151515; font-weight: 600; }
