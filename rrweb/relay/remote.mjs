@@ -20,7 +20,27 @@ const WORK = path.resolve(process.env.RR_WORK ?? path.join(os.tmpdir(), 'rrweb-r
 const CHUNK = 1 << 20;          // jedinica cachea i dohvaćanja = najveći komad u jednoj WebSocket poruci
 const MAX_RUN = 1;              // chunkova po zahtjevu: poruke ≤ 1 MB (proxyji/tuneli poput Cloudflarea)
 const PUSH = 1 << 20;           // veličina komada kod slanja fajla na klijenta
-const READS = 6;                // najviše dohvata s klijenta odjednom (po dijeljenom folderu)
+const READS = 6;                // najviše dohvata s klijenta odjednom (po dijeljenom folderu; fokus ima svojih READS)
+// Prioriteti dohvata s klijenta: fotka otvorena u editoru, thumbnaili iz RAF-ova (raf.mjs), ostala čitanja
+// RapidRAW-a (thumbnaili editiranih fotki, EXIF…), punjenje u pozadini. Niži red ne kreće dok viši ima posla.
+export const PRIO = { FOCUS: 0, SEED: 1, READ: 2, FILL: 3 };
+const EDIT_QUIET = 4000;        // ms nakon zadnje radnje u editoru do nastavka pozadinskog posla
+const LOAD_MAX = 60000;         // otvaranje fotke koje se nikad nije javilo ne smije zaustaviti pozadinu zauvijek
+
+// Editor (relay.mjs javlja otvaranje fotke i pomake slidera): dok radi, sve pozadinsko čeka, da otvorena
+// fotka ima cijelu vezu, a slideri CPU i GPU
+export const editor = {
+  last: 0,
+  loads: new Map(),             // token → početak otvaranja
+  touch() { this.last = Date.now(); },
+  loading(token) { this.loads.set(token, Date.now()); this.touch(); },
+  loaded(token) { if (this.loads.delete(token)) this.touch(); },
+  busy() {
+    for (const [t, at] of this.loads) if (Date.now() - at > LOAD_MAX) this.loads.delete(t);
+    return this.loads.size > 0 || Date.now() - this.last < EDIT_QUIET;
+  },
+  async idle(stop = () => false) { while (this.busy() && !stop()) await new Promise((r) => setTimeout(r, 300)); },
+};
 const RECONNECT_WAIT = 120000;  // koliko zahtjev čeka da se browser ponovno spoji
 const FILL_RESERVE = 5e9;       // punjenje u pozadini staje kad na serveru ostane manje od 5 GB
 const LIST_TTL = 3000;
@@ -120,13 +140,14 @@ class Cached {
     return this.opening;
   }
 
-  // fg: čitanje za RapidRAW; bg: punjenje u pozadini (slotted = slot je već zauzet, vidi fill)
-  async fetchRun(start, count, fg = true, slotted = false) {
+  // prio: PRIO.* (bez njega: fokus ako je ovo fotka otvorena u editoru, inače obično čitanje);
+  // slotted = slot je već zauzet (vidi fill)
+  async fetchRun(start, count, prio = this.share.isFocus(this.rel) ? PRIO.FOCUS : PRIO.READ, slotted = false) {
     const off = start * CHUNK;
     const len = Math.min(count * CHUNK, this.size - off);
-    if (!slotted) await this.share.slot(fg);
+    if (!slotted) await this.share.slot(prio);
     let data;
-    try { ({ data } = await this.share.request({ op: 'read', path: this.rel, off, len })); } finally { this.share.unslot(fg); }
+    try { ({ data } = await this.share.request({ op: 'read', path: this.rel, off, len })); } finally { this.share.unslot(prio); }
     if (this.share.stopped) throw fail('EIO', 'stopped');
     const fd = await this.open();
     await fd.write(data, 0, data.length, off);
@@ -160,19 +181,21 @@ class Cached {
     if (!this.done && this.have.every(Boolean)) await this.complete();
   }
 
-  // Punjenje u pozadini: dohvaća chunkove koji fale, ali samo kad RapidRAW ništa ne čeka (vidi Share.slot)
-  async fill() {
+  // Dohvaća sve chunkove koji fale: PRIO.FILL = punjenje u pozadini (čeka da editor miruje i da RapidRAW ništa
+  // drugo ne čita), PRIO.FOCUS = fotka upravo otvorena u editoru (cijela, paralelno, ispred svega)
+  async fill(prio = PRIO.FILL, parallel = 4) {
     const running = new Set();
     for (let i = 0; i < this.n && !this.done && !this.share.stopped; i++) {
       if (this.have[i] || this.inflight.has(i)) continue;
-      // slot prije nego što chunk postane "inflight": inače bi čitanje za RapidRAW čekalo chunk koji stoji u bg redu
-      await this.share.slot(false);
-      if (this.have[i] || this.inflight.has(i) || this.done || this.share.stopped) { this.share.unslot(false); continue; }
-      const p = this.fetchRun(i, 1, false, true).finally(() => { this.inflight.delete(i); running.delete(p); });
+      if (prio === PRIO.FILL) await editor.idle(() => this.share.stopped);
+      // slot prije nego što chunk postane "inflight": inače bi čitanje za RapidRAW čekalo chunk koji stoji u redu
+      await this.share.slot(prio);
+      if (this.have[i] || this.inflight.has(i) || this.done || this.share.stopped) { this.share.unslot(prio); continue; }
+      const p = this.fetchRun(i, 1, prio, true).finally(() => { this.inflight.delete(i); running.delete(p); });
       this.inflight.set(i, p);
       running.add(p);
       p.catch(() => {});
-      if (running.size >= 4) await Promise.race(running).catch(() => {});
+      if (running.size >= parallel) await Promise.race(running).catch(() => {});
     }
     await Promise.allSettled([...running]);
     if (!this.done && this.have.every(Boolean)) await this.complete();
@@ -229,10 +252,9 @@ class Share {
     this.pushing = new Map();      // rel → red slanja na klijenta (jedno po jedno, zadnji sadržaj pobjeđuje)
     this.started = Date.now();
     this.waiters = new Set();      // zahtjevi koji čekaju da se browser ponovno spoji
-    this.active = 0;               // dohvata s klijenta u tijeku
-    this.fgActive = 0;
-    this.fgq = [];                 // čekaju slot: čitanja za RapidRAW
-    this.bgq = [];                 //              punjenje u pozadini
+    this.active = [0, 0, 0, 0];    // dohvata s klijenta u tijeku, po prioritetu (PRIO)
+    this.waiting = [[], [], [], []];
+    this.focus = null;             // rel fotke otvorene u editoru
     // fill: total = veličina cijelog foldera, filled = koliko je od toga već cijelo na serveru
     this.stats = { fetched: 0, complete: 0, uploaded: 0, pushed: 0, total: 0, filled: 0, filling: false, diskFull: false };
     this.stage = path.join(WORK, 'stage', this.id);
@@ -311,23 +333,40 @@ class Share {
     });
   }
 
-  // Najviše READS dohvata odjednom; čitanja za RapidRAW (fg) idu prije punjenja u pozadini (bg),
-  // a pozadina dobije slot tek kad nijedno fg čitanje ne radi niti čeka.
-  slot(fg) {
-    const free = this.active < READS && (fg || (!this.fgActive && !this.fgq.length));
-    if (free) { this.active++; if (fg) this.fgActive++; return Promise.resolve(); }
-    return new Promise((r) => (fg ? this.fgq : this.bgq).push(r));
+  // Fokus (fotka u editoru) uvijek smije do READS dohvata, bez obzira na ostale; ostali dijele READS, a red kreće
+  // tek kad nijedan važniji ne radi niti čeka (thumbnaili ne smiju usporiti otvaranje fotke)
+  canStart(p) {
+    if (p === PRIO.FOCUS) return this.active[0] < READS;
+    if (this.active[1] + this.active[2] + this.active[3] >= READS) return false;
+    for (let q = 0; q < p; q++) if (this.active[q] || this.waiting[q].length) return false;
+    return true;
   }
 
-  unslot(fg) {
-    this.active--;
-    if (fg) this.fgActive--;
-    while (this.active < READS && (this.fgq.length || (this.bgq.length && !this.fgActive))) {
-      const isFg = this.fgq.length > 0;
-      this.active++;
-      if (isFg) this.fgActive++;
-      (isFg ? this.fgq : this.bgq).shift()();
+  slot(p) {
+    if (this.canStart(p)) { this.active[p]++; return Promise.resolve(); }
+    return new Promise((r) => this.waiting[p].push(r));
+  }
+
+  unslot(p) {
+    this.active[p]--;
+    for (let q = 0; q < this.waiting.length; q++) {
+      while (this.waiting[q].length && this.canStart(q)) { this.active[q]++; this.waiting[q].shift()(); }
     }
+  }
+
+  async requestAt(p, head, data) {
+    await this.slot(p);
+    try { return await this.request(head, data); } finally { this.unslot(p); }
+  }
+
+  // fotka i njeni sidecari (.rrdata, .rrexif, virtualne kopije)
+  isFocus(rel) { return !!this.focus && (rel === this.focus || rel.startsWith(`${this.focus}.`)); }
+
+  // Fotka otvorena u editoru: RapidRAW je ionako čita cijelu, pa je odmah dohvati paralelno, ispred svega
+  setFocus(rel) {
+    this.focus = rel;
+    this.cached(rel).then((c) => (c.done ? null : c.fill(PRIO.FOCUS, READS)))
+      .catch((e) => { if (e.code !== 'ENOENT' && e.code !== 'EISDIR') console.warn(`[remote] ${this.name}: focus ${rel}: ${e.message}`); });
   }
 
   // ondemand + fill: cijeli folder se polako puni na server dok RapidRAW ne čita ništa drugo. Za formate čiji
@@ -349,6 +388,7 @@ class Share {
       for (const rel of files) {
         if (this.stopped) break;
         if (this.local.has(rel)) continue; // RapidRAW ga je već prepisao na serveru
+        await editor.idle(() => this.stopped);
         try {
           const c = await this.cached(rel);
           if (c.done) { this.stats.filled += c.size; continue; }
@@ -694,16 +734,6 @@ class Share {
 // onChange(): popis dijeljenih foldera se promijenio (relay osvježi rootove Files taba)
 export function createRemote({ validName, insideRoots, onChange = () => {} }) {
   const shares = new Map();
-  // mountovi ostali od prethodnog pada relaya
-  if (process.platform === 'linux') {
-    try {
-      for (const line of fs.readFileSync('/proc/mounts', 'utf8').split('\n')) {
-        const [, raw, type] = line.split(' ');
-        const dir = raw?.replace(/\\([0-7]{3})/g, (_, o) => String.fromCharCode(parseInt(o, 8))); // razmak = \040
-        if (type === 'fuse.rrweb' && dir?.startsWith(WORK + path.sep)) { lazyUnmount(dir); console.log(`[remote] cleaned up stale mount ${dir}`); }
-      }
-    } catch { /* nema /proc/mounts */ }
-  }
   const id = () => Math.random().toString(36).slice(2, 10);
 
   async function start({ id: wanted, name, mode, keep, keepDir, fill = true }) {
@@ -762,7 +792,24 @@ export function createRemote({ validName, insideRoots, onChange = () => {} }) {
       }
     },
     work: WORK,
+    // Mountovi ostali od prethodnog pada relaya. Tek kad je relay zauzeo port: dok radi drugi relay (isti RR_WORK),
+    // njegovi mountovi nisu mrtvi
+    sweep() {
+      if (process.platform !== 'linux') return;
+      try {
+        for (const line of fs.readFileSync('/proc/mounts', 'utf8').split('\n')) {
+          const [, raw, type] = line.split(' ');
+          const dir = raw?.replace(/\\([0-7]{3})/g, (_, o) => String.fromCharCode(parseInt(o, 8))); // razmak = \040
+          if (type === 'fuse.rrweb' && dir?.startsWith(WORK + path.sep)) { lazyUnmount(dir); console.log(`[remote] cleaned up stale mount ${dir}`); }
+        }
+      } catch { /* nema /proc/mounts */ }
+    },
     roots: () => [...shares.values()].map((s) => s.view),
+    // load_image iz editora: ako je fotka iz foldera "na zahtjev", dohvati je ispred svega ostalog
+    focus(p) {
+      const hit = typeof p === 'string' && !p.includes('?vc=') ? this.locate(p) : null;
+      if (hit) hit.share.setFocus(hit.rel);
+    },
     // putanja na mountu foldera "na zahtjev" → { share, rel } (rrweb/relay/raf.mjs)
     locate(p) {
       for (const s of shares.values()) {

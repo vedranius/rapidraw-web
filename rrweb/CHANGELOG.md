@@ -2,6 +2,13 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.8.0
+
+- **The photo you are editing comes first.** In on-demand folders, opening a photo fetches it whole, in parallel, ahead of thumbnails and the background copy. While you edit (and for a few seconds after each change), thumbnails and the background copy wait; thumbnails of edited photos (RapidRAW renders them from the whole file on the GPU) are made at most two at a time. On a LAN test with 24 RAFs: opening a photo 3.1 → 1.9 s, first slider preview 870 → 230 ms; over a slower connection the difference is much bigger.
+- **Connection badge:** measures with several parallel connections without counting the ping, so fast connections are no longer underestimated, and also measures upload (folders from the computer you browse from travel at its upload speed). Background transfers pause during the test.
+- Fixed: on Linux, the server part could keep running after the RapidRAW Web window/service had stopped; leftover mounts are cleaned up only once the server owns its port (a second instance no longer detaches the mounts of the first).
+- Docs: through a tunnel such as Cloudflare, traffic also passes the server's internet upload; at home the LAN address is faster (and Chrome can treat it as secure for folders from this computer).
+
 ## 1.7.0
 
 - **On-demand folders on Windows servers.** *Use a folder from this computer → On demand* now also works when RapidRAW Web runs on Windows: install the free [WinFsp](https://winfsp.dev) once. The folder is mounted as a directory (no drive letter needed) and behaves as on Linux: only what RapidRAW reads travels, edits and exports go straight back, deleted originals go to `.rrweb-trash`, Fuji RAF browsing uses the embedded JPEG. Without WinFsp the dialog says what is missing; copy mode works as before.

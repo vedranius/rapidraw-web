@@ -1,13 +1,13 @@
 // Kvaliteta previewa prema vezi sa serverom. RapidRAW već ima veličinu previewa (editorPreviewResolution) i kvalitetu
 // live previewa (livePreviewQuality: performance / high / full); backend ih čita kod svakog rendera.
-// Jednom po kartici (i na klik) mjeri ping i brzinu preuzimanja, predloži postavke, a za vrijeme rada prati
-// stvarne previewe (apply_adjustments) i javi kad postanu spori.
+// Jednom po kartici (i na klik) mjeri ping te brzinu preuzimanja (previewi) i slanja (folderi s ovog računala),
+// predloži postavke, a za vrijeme rada prati stvarne previewe (apply_adjustments) i javi kad postanu spori.
 import { call, onTiming } from '../shim/transport';
 import { el } from './ui';
 
 type Quality = 'performance' | 'high' | 'full';
 type Reco = { resolution: number; quality: Quality; why: string };
-type Measure = { mbps: number; rtt: number; at: number };
+type Measure = { mbps: number; up?: number; rtt: number; at: number };
 
 const QUALITY_LABEL: Record<Quality, string> = { performance: 'Performance', high: 'High', full: 'Full' };
 
@@ -26,19 +26,36 @@ async function measure(): Promise<Measure> {
     rtts.push(performance.now() - t);
   }
   rtts.sort((a, b) => a - b);
-  // preuzimanje: kreće s 1 MB i raste dok jedan dohvat ne traje ~1 s (najviše 16 MB)
-  let bytes = 1 << 20;
-  let mbps = 0;
+  const rtt = rtts[2];
+  const mbps = await rate(rtt, async (per) => {
+    const sizes = await Promise.all(Array.from({ length: STREAMS }, async () => {
+      const r = await fetch(`/rr/speed?bytes=${per}&t=${Math.random()}`, { cache: 'no-store' });
+      return (await r.arrayBuffer()).byteLength;
+    }));
+    return sizes.reduce((a, b) => a + b, 0);
+  });
+  const up = await rate(rtt, async (per) => {
+    const body = new Uint8Array(per);
+    for (let i = 0; i < per; i += 65536) crypto.getRandomValues(body.subarray(i, Math.min(per, i + 65536)));
+    await Promise.all(Array.from({ length: STREAMS }, () => fetch('/rr/speed', { method: 'POST', body, cache: 'no-store' })));
+    return per * STREAMS;
+  });
+  return { mbps, up, rtt, at: Date.now() };
+}
+
+// Više paralelnih veza (kao speed testovi): jedna TCP veza kroz tunel s većim pingom se ne stigne zahuktati.
+// Veličina raste dok jedan krug ne traje ~1 s (najviše STREAMS × 16 MB); čekanje na prvi bajt (ping) se ne broji.
+const STREAMS = 4;
+async function rate(rtt: number, round: (perStream: number) => Promise<number>) {
+  let per = 1 << 18;
   for (;;) {
     const t = performance.now();
-    const r = await fetch(`/rr/speed?bytes=${bytes}&t=${Date.now()}`, { cache: 'no-store' });
-    const n = (await r.arrayBuffer()).byteLength;
+    const bytes = await round(per);
     const s = (performance.now() - t) / 1000;
-    mbps = (n * 8) / s / 1e6;
-    if (s > 0.8 || bytes >= 16 << 20) break;
-    bytes = Math.min(bytes * 4, 16 << 20);
+    const mbps = (bytes * 8) / Math.max(s - rtt / 1000, s / 2) / 1e6;
+    if (s > 1 || per >= 16 << 20) return mbps;
+    per = Math.min(per * 4, 16 << 20);
   }
-  return { mbps, rtt: rtts[2], at: Date.now() };
 }
 
 export function mountNetwork(tabs: HTMLElement) {
@@ -69,7 +86,8 @@ export function mountNetwork(tabs: HTMLElement) {
     const c = current();
     panel.replaceChildren(
       el('b', {}, 'Connection to the server'),
-      el('p', {}, last ? `${last.mbps.toFixed(1)} Mbit/s download · ${Math.round(last.rtt)} ms ping` : 'Measuring…'),
+      el('p', {}, last ? `${last.mbps.toFixed(1)} Mbit/s download${last.up ? ` · ${last.up.toFixed(1)} Mbit/s upload` : ''} · ${Math.round(last.rtt)} ms ping` : 'Measuring…'),
+      ...(last?.up ? [el('p', { class: 'rrn-note' }, 'Download carries the previews; folders used from this computer travel at the upload speed.')] : []),
       ...(p ? [el('p', { class: slow ? 'rrn-warn' : '' }, `Recent previews: ${Math.round(p.kb)} KB in ${Math.round(p.ms)} ms on average${slow ? ' (slow, a lower setting will feel smoother)' : ''}`)] : []),
       el('p', {}, `Current preview: ${c.resolution} px, ${QUALITY_LABEL[c.quality] ?? c.quality}`),
       ...(r ? [el('p', {}, el('b', {}, `Recommended: ${r.resolution} px, ${QUALITY_LABEL[r.quality]}`), ` (${r.why})`)] : []),

@@ -7,13 +7,18 @@
 //    RapidRAW samo pročita i javi UI-ju kao i inače. Kao RapidRAW za NEF/ARW: samo za fotke bez editova (.rrdata).
 //  - EXIF: browser pošalje samo EXIF zaglavlje ugrađenog JPEG-a ("rafexif", ~65 KB); relay ga spremi kao privremeni
 //    .raf i pusti RapidRAW-ov vlastiti EXIF parser da ga pročita (isti put kao za NEF/ARW), bez polja samog JPEG-a.
+// Ostali thumbnaili iz foldera "na zahtjev" (editirane fotke, drugi formati) traže od RapidRAW-a cijeli fajl i GPU:
+// relay mu ih daje najviše HEAVY odjednom i samo kad editor miruje, da otvorena fotka i slideri imaju prednost.
 // Mora pratiti src-tauri/src/file_management.rs i exif_processing.rs; rrweb/check-shims.mjs ruši build ako se promijene.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { blake3 } from '@noble/hashes/blake3.js';
+import { PRIO, editor } from './remote.mjs';
 
 const PARALLEL = 4;   // thumbnaila odjednom (browser ih dekodira paralelno)
+const HEAVY = 2;      // thumbnaila koje RapidRAW radi sam (cijeli fajl), odjednom
+const HEAVY_WAIT = 120000;
 const EXIF_PARALLEL = 8;
 // EXIF polja koja opisuju ugrađeni JPEG, a ne RAW (dimenzije previewa, kompresija…)
 const JPEG_ONLY = new Set(['PixelXDimension', 'PixelYDimension', 'Compression', 'CompressedBitsPerPixel', 'JPEGInterchangeFormat',
@@ -61,6 +66,8 @@ export function createRaf({ locate, settings, bridge, work }) {
   let cfg = null;
   let cfgAt = 0;
   const exifCache = new Map(); // "share:rel:size:mtime" → EXIF mapa (ponovno otvaranje foldera)
+  const heavy = [];            // čekaju da ih RapidRAW napravi sam
+  const heavyOut = new Map();  // predani RapidRAW-u → timeout (thumbnail-generated ih javlja gotovima)
 
   async function config() {
     if (!cfg || Date.now() - cfgAt > 30000) {
@@ -71,20 +78,23 @@ export function createRaf({ locate, settings, bridge, work }) {
     return cfg;
   }
 
-  // Ugrađeni JPEG u RapidRAW-ov cache; ako išta ne štima, RapidRAW thumbnail napravi sam (kao bez ovoga)
+  // Ugrađeni JPEG u RapidRAW-ov cache. true = RapidRAW će thumbnail samo pročitati iz cachea;
+  // false = mora ga napraviti sam (editirana fotka, drugi format, ili nešto nije štimalo)
   async function prepare({ p }) {
     const c = await config();
-    const raf = c.off ? null : await plainRaf(locate, p);
-    if (!raf) return;
+    const raf = c.off || !dir ? null : await plainRaf(locate, p);
+    if (!raf) return false;
     const h = cacheHash(p, raf.entry.mtime ?? raf.share.started); // isto vrijeme koje rrweb-fuse javlja RapidRAW-u
     const small = path.join(dir, `${h}_small.jpg`);
     const medium = path.join(dir, `${h}_medium.jpg`);
-    if (fs.existsSync(small) && fs.existsSync(medium)) return;
-    const { head, data } = await raf.share.request({ op: 'thumb', path: raf.rel, sizes: [c.small, c.medium], quality: 0.75 });
+    if (fs.existsSync(small) && fs.existsSync(medium)) return true;
+    await editor.idle(() => raf.share.stopped);
+    const { head, data } = await raf.share.requestAt(PRIO.SEED, { op: 'thumb', path: raf.rel, sizes: [c.small, c.medium], quality: 0.75 });
     const [a, b] = head.lens;
     await fsp.mkdir(dir, { recursive: true });
     await writeAtomic(medium, data.subarray(a, a + b));
     await writeAtomic(small, data.subarray(0, a));
+    return true;
   }
 
   function flush() {
@@ -92,16 +102,35 @@ export function createRaf({ locate, settings, bridge, work }) {
     if (ready.length) bridge('update_thumbnail_queue', { paths: ready.splice(0) }).catch(() => {});
   }
 
+  function heavyDone(p) {
+    const t = heavyOut.get(p);
+    if (t === undefined) return;
+    clearTimeout(t);
+    heavyOut.delete(p);
+    pumpHeavy();
+  }
+
+  function pumpHeavy() {
+    while (heavyOut.size < HEAVY && heavy.length && !editor.busy()) {
+      const p = heavy.pop();
+      heavyOut.set(p, setTimeout(() => heavyDone(p), HEAVY_WAIT));
+      bridge('update_thumbnail_queue', { paths: [p] }).catch(() => heavyDone(p));
+    }
+  }
+  setInterval(pumpHeavy, 1000).unref(); // nastavi kad editor utihne
+
   function pump() {
     while (running < PARALLEL && queue.length) {
       const item = queue.pop(); // zadnje traženi (vidljivi) prvi, kao i RapidRAW
       running++;
       prepare(item)
-        .catch((e) => { if (e.code !== 'ENOENT') console.warn(`[raf] thumbnail ${item.p}: ${e.message}`); })
-        .finally(() => {
+        .catch((e) => { if (e.code !== 'ENOENT') console.warn(`[raf] thumbnail ${item.p}: ${e.message}`); return false; })
+        .then((cached) => {
           running--;
           pending.delete(item.p);
-          if (item.gen === gen) { ready.push(item.p); timer ??= setTimeout(flush, 100); }
+          if (item.gen === gen) {
+            if (cached) { ready.push(item.p); timer ??= setTimeout(flush, 100); } else { heavy.push(item.p); pumpHeavy(); }
+          }
           pump();
         });
     }
@@ -113,26 +142,28 @@ export function createRaf({ locate, settings, bridge, work }) {
     if (!raf) return null;
     const key = `${raf.share.id}:${raf.rel}:${raf.entry.size}:${raf.entry.mtime}`;
     if (exifCache.has(key)) return exifCache.get(key);
-    const { data } = await raf.share.request({ op: 'rafexif', path: raf.rel });
+    const { data } = await raf.share.requestAt(PRIO.SEED, { op: 'rafexif', path: raf.rel });
     const tmp = path.join(exifDir, `${hex(blake3(Buffer.from(p))).slice(0, 32)}.raf`); // stalno ime: RapidRAW-ov .rrcache ne raste
     await fsp.writeFile(tmp, data);
     return { key, tmp };
   }
 
   return {
-    // update_thumbnail_queue iz UI-ja: vraća putanje koje RapidRAW dobiva odmah; RAF-ove iz foldera
-    // "na zahtjev" relay prvo pripremi i onda ih sam preda RapidRAW-u
+    // update_thumbnail_queue iz UI-ja: vraća putanje koje RapidRAW dobiva odmah (sve izvan foldera "na zahtjev");
+    // za fotke iz foldera "na zahtjev" relay thumbnail pripremi (RAF) ili ga RapidRAW-u dozira (ostalo)
     takeThumbs(paths) {
-      if (!paths.length) { gen++; queue.length = 0; pending.clear(); return paths; }
-      if (!dir) return paths;
+      if (!paths.length) { gen++; queue.length = 0; pending.clear(); heavy.length = 0; return paths; }
       const now = [];
       for (const p of paths) {
-        if (typeof p !== 'string' || !/\.raf$/i.test(p) || p.includes('?vc=') || !locate(p)) now.push(p);
+        if (typeof p !== 'string' || !locate(p.split('?vc=')[0])) now.push(p);
         else if (!pending.has(p)) { pending.add(p); queue.push({ p, gen }); }
       }
       pump();
       return now;
     },
+
+    // thumbnail-generated iz RapidRAW-a
+    generated(p) { heavyDone(p); },
 
     // read_exif_for_paths iz UI-ja (library čita EXIF svih fotki u folderu): RAF-ovi iz foldera "na zahtjev"
     // iz ugrađenog JPEG-a, ostalo (i sve što ne uspije) normalno preko RapidRAW-a

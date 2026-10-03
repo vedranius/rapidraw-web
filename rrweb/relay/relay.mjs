@@ -26,7 +26,7 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createFiles, validName } from './files.mjs';
-import { createRemote } from './remote.mjs';
+import { createRemote, editor } from './remote.mjs';
 import { createRaf } from './raf.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -79,6 +79,13 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (u.pathname === '/rr/speed') { // test brzine veze za preporuku kvalitete previewa (rrweb/files/network.ts)
+    editor.touch(); // za vrijeme mjerenja pozadinski prijenosi (folderi s klijenta) miruju
+    if (req.method === 'POST') { // upload: browser šalje, relay samo broji
+      let n = 0;
+      req.on('data', (c) => { n += c.length; });
+      req.on('end', () => res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ bytes: n })));
+      return;
+    }
     const n = Math.min(Math.max(+u.searchParams.get('bytes') || 0, 1 << 16), SPEED.length);
     res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': n, 'Cache-Control': 'no-store' });
     res.end(SPEED.subarray(0, n));
@@ -200,6 +207,7 @@ wssBridge.on('connection', (ws) => {
       const r = data.readUInt32LE(0);
       const f = inflight.get(r); inflight.delete(r);
       if (!f) return;
+      if (f.cmd === 'load_image') editor.loaded(r);
       data.writeUInt32LE(f.id, 0);           // prepiši relayId → id klijenta
       f.client.send(data, { binary: true });
       log(f, data.length - 4);
@@ -213,13 +221,17 @@ wssBridge.on('connection', (ws) => {
       return;
     }
     if (msg.event !== undefined) {
-      if (msg.event === 'thumbnail-generated') raf.learn(msg.payload?.thumbnailPath);
+      if (msg.event === 'thumbnail-generated') {
+        raf.learn(msg.payload?.thumbnailPath);
+        raf.generated(msg.payload?.path);
+      }
       const s = JSON.stringify(msg);
       clients.forEach((c) => c.send(s));
       return;
     }
     const f = inflight.get(msg.id); inflight.delete(msg.id);
     if (!f) return;
+    if (f.cmd === 'load_image') editor.loaded(msg.id);
     msg.id = f.id;
     f.client.send(JSON.stringify(msg));
     log(f);
@@ -228,6 +240,7 @@ wssBridge.on('connection', (ws) => {
     if (bridge === ws) bridge = null;
     console.log('[relay] bridge disconnected');
     for (const [r, f] of inflight) { f.client.send(JSON.stringify({ id: f.id, error: 'bridge disconnected' })); inflight.delete(r); }
+    editor.loads.clear();
   });
 });
 
@@ -258,16 +271,24 @@ wssClient.on('connection', (ws, req) => {
       args = { ...args, paths: now };
     }
     rid = (rid + 1) >>> 0 || 1;
+    if (EDIT_CMDS.has(cmd)) editor.touch();
+    if (cmd === 'load_image') { // otvorena fotka ima prednost pred svim pozadinskim prijenosima i thumbnailima
+      editor.loading(rid);
+      remote.focus(args?.path);
+    }
     inflight.set(rid, { client: ws, id, cmd, t0: process.hrtime.bigint() });
     bridge.send(JSON.stringify({ id: rid, cmd, args }));
   });
   ws.on('close', () => {
     clients.delete(ws);
-    for (const [r, f] of inflight) if (f.client === ws) inflight.delete(r);
+    for (const [r, f] of inflight) if (f.client === ws) { inflight.delete(r); editor.loaded(r); }
   });
 });
 
 const VERBOSE = !!process.env.RR_VERBOSE;
+// Rad u editoru: dok traje (i par sekundi nakon), pozadina (thumbnaili, folderi s klijenta) miruje (remote.mjs: editor)
+const EDIT_CMDS = new Set(['load_image', 'apply_adjustments', 'generate_uncropped_preview', 'generate_mask_overlay',
+  'generate_preset_preview', 'apply_denoising', 'generate_ai_foreground_mask', 'generate_ai_sky_mask', 'generate_ai_subject_mask']);
 function log(f, bytes) {
   if (!VERBOSE && bytes === undefined) return;
   const ms = Number(process.hrtime.bigint() - f.t0) / 1e6;
@@ -276,8 +297,14 @@ function log(f, bytes) {
 
 // Relay koji je pokrenuo bridge (Windows installer) gasi se s njim. RapidRAW izlazi mimo Tauri Exit eventa,
 // pa shell plugin ne stigne ubiti child proces; ovo pokriva i rušenje bridgea.
+// Na Linuxu siroče dobije novog roditelja (systemd, init), pa se provjerava i promjena roditelja.
 if (process.env.RR_EXIT_WITH_PARENT) {
-  setInterval(() => { try { process.kill(process.ppid, 0); } catch { console.log('[relay] bridge exited, stopping'); shutdown(); } }, 2000).unref();
+  const parent = process.ppid;
+  setInterval(() => {
+    let alive = process.ppid === parent;
+    try { process.kill(parent, 0); } catch { alive = false; }
+    if (!alive) { console.log('[relay] bridge exited, stopping'); shutdown(); }
+  }, 2000).unref();
 }
 // Na izlazu odmontiraj FUSE foldere s klijenta (inače ostaje "Transport endpoint is not connected")
 let stopping = false;
@@ -295,6 +322,7 @@ process.on('unhandledRejection', (e) => console.error('[relay] unhandled rejecti
 
 server.on('error', (e) => { console.error(`[relay] ${e.code === 'EADDRINUSE' ? `port ${PORT} is already in use` : e.message}`); process.exit(1); });
 server.listen(PORT, HOST, () => {
+  remote.sweep();
   console.log(`[relay] http://${HOST}:${PORT}  dist=${DIST}  roots=${ROOTS.join(',')}  auth=${AUTH ? 'on' : 'off'}`);
   // "[relay] url …" linije čita bridge (prozor s adresama za otvaranje u browseru)
   const lan = HOST === '0.0.0.0' || HOST === '::'
