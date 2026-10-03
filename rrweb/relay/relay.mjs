@@ -168,9 +168,18 @@ if (PORT !== BRIDGE_PORT) {
   });
 }
 
+// WebSocket bez 'error' listenera baca grešku (neispravan okvir, prekinuta veza kroz tunel) i ruši cijeli relay
+const quiet = (ws, what) => ws.on('error', (e) => console.warn(`[relay] ${what}: ${e.message}`));
+// tuneli i proxyji (Cloudflare: 100 s) zatvaraju WebSocket koji miruje
+const keepalive = (ws) => {
+  const t = setInterval(() => { if (ws.readyState === 1) ws.ping(); }, 20000);
+  ws.on('close', () => clearInterval(t));
+};
+
 wssBridge.on('connection', (ws) => {
   if (bridge) bridge.close();
   bridge = ws;
+  quiet(ws, 'bridge');
   console.log('[relay] bridge connected');
   ws.send(JSON.stringify(libraryState()));
   ws.on('message', (data, isBinary) => {
@@ -183,7 +192,8 @@ wssBridge.on('connection', (ws) => {
       log(f, data.length - 4);
       return;
     }
-    const msg = JSON.parse(data);
+    let msg;
+    try { msg = JSON.parse(data); } catch { return; }
     if (msg.rr === 'set-library') {
       try { setLibrary(msg.path); } catch (e) { console.error(`[relay] photo library ${msg.path}: ${e.message}`); }
       ws.send(JSON.stringify(libraryState()));
@@ -205,9 +215,12 @@ wssBridge.on('connection', (ws) => {
 
 wssClient.on('connection', (ws, req) => {
   clients.add(ws);
+  quiet(ws, 'client');
+  keepalive(ws);
   console.log(`[relay] client +1 (${clients.size})`);
   ws.on('message', async (data) => {
-    const { id, cmd, args } = JSON.parse(data);
+    let id, cmd, args;
+    try { ({ id, cmd, args } = JSON.parse(data)); } catch { return; }
     if (LOCAL[cmd]) {
       try { ws.send(JSON.stringify({ id, result: (await LOCAL[cmd](args ?? {})) ?? null })); }
       catch (e) { ws.send(JSON.stringify({ id, error: e.message ?? String(e) })); }
@@ -241,10 +254,14 @@ let stopping = false;
 async function shutdown() {
   if (stopping) return;
   stopping = true;
+  setTimeout(() => process.exit(0), 10000).unref(); // gašenje ne smije zapeti (npr. na mrtvom FUSE mountu) i držati port
   await remote.shutdown();
   process.exit(0);
 }
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, shutdown);
+// Greška u jednom zahtjevu ne smije srušiti relay: RapidRAW bi ostao bez veze, a FUSE mountovi mrtvi
+process.on('uncaughtException', (e) => console.error('[relay] uncaught exception:', e));
+process.on('unhandledRejection', (e) => console.error('[relay] unhandled rejection:', e));
 
 server.on('error', (e) => { console.error(`[relay] ${e.code === 'EADDRINUSE' ? `port ${PORT} is already in use` : e.message}`); process.exit(1); });
 server.listen(PORT, HOST, () => {

@@ -64,6 +64,13 @@ Updating: install the newer packages the same way. Their version is `<RapidRAW>+
 
 Open `http://<server>:8780`.
 
+Run it as your normal user, not with `sudo`: as root, edits and exports in your photo folders become root's files and RapidRAW's settings end up in `/root`. If the relay ever stops unexpectedly, `run.sh` starts it again; the browser and the bridge reconnect by themselves. To keep it running in the background without a terminal (until the next reboot), with logs in the journal:
+
+```bash
+systemd-run --user --unit=rapidraw-web -E RR_PHOTOS=$HOME/Pictures "$PWD/run.sh"
+journalctl --user -u rapidraw-web -f      # logs · stop: systemctl --user stop rapidraw-web
+```
+
 On a headless server (no `DISPLAY`/`WAYLAND_DISPLAY`) `run.sh` starts the bridge under `xvfb-run`, so install `xvfb`. The GPU is used through Vulkan and doesn't need a display.
 
 The server bundle and `run.ps1` also work on Windows (`tar xzf …_linux_server.tar.gz`, then `powershell -ExecutionPolicy Bypass -File .\run.ps1`) if you prefer starting it with the variables below.
@@ -95,19 +102,21 @@ Pick one of two modes:
 
 | | **Copy to the server in the background** | **On demand** |
 |---|---|---|
-| What travels | The whole folder with subfolders, copied first (resumable) | Only what RapidRAW reads: about 1 MB for a thumbnail, the whole photo once you edit it |
+| What travels | The whole folder with subfolders, copied first (resumable) | Only what RapidRAW reads: for a thumbnail the embedded preview of most RAW files (a few MB at most), but the **whole file for Fuji RAF and Canon CR3**, whose embedded preview RapidRAW can't read; the whole photo once you edit it |
 | When you can edit | As photos arrive | Right away |
 | Best for | Time to wait, or a slow upload you leave running | Editing a few photos quickly on a fast connection |
 | Server | Any OS | Linux with `fuse3` (other OSes: see below) |
+
+In on-demand mode, **Meanwhile copy the rest to the server in the background** (on by default) fetches the rest of the folder whenever RapidRAW isn't reading anything, so browsing gets as fast as with photos on the server. It pauses while you work and stops when less than 5 GB is left on the server's disk.
 
 In both modes, everything RapidRAW writes (edits in `.rrdata`, exports, new folders) is saved back into the folder on this computer automatically. With **Keep a copy on the server**, the photos that reached the server and all edits also stay in a server folder you choose; otherwise the server copy is temporary and deleted when you click *Stop*.
 
 **Requirements**
 - **Chrome or Edge**: only they let a web page read and write a folder you pick (File System Access API). Firefox and Safari can't.
 - **HTTPS, or `localhost`**: browsers allow folder access only on secure pages. The easiest way is [Tailscale](https://tailscale.com): on the server run `tailscale serve --bg 8780` and open `https://<server>.<tailnet>.ts.net`. That works from anywhere and keeps the server private. A reverse proxy with a certificate (Caddy, nginx) works too.
-- **Keep the tab open** while editing: the browser is the storage. If it closes, a copy in progress pauses and continues when you reconnect.
+- **Keep the tab open** while editing: the browser is the storage. If it closes, a copy in progress pauses and continues when you reconnect. If the connection drops (Wi-Fi, a tunnel, reloading the page), RapidRAW waits up to 2 minutes for it to come back instead of getting read errors, and after a server restart the browser registers its folders again by itself.
 
-**How it works.** The browser acts as the storage: it reads and writes the chosen folder for the server over a WebSocket. *Copy* mode uploads the files into a mirror folder on the server, and a watcher sends new or changed files back. *On demand* mode mounts the folder as a disk on the server with FUSE (`rrweb-fuse`, part of the Linux server bundle); each read fetches just the needed range from the browser into a server-side cache, with read-ahead while RapidRAW decodes a photo.
+**How it works.** The browser acts as the storage: it reads and writes the chosen folder for the server over a WebSocket. *Copy* mode uploads the files into a mirror folder on the server, and a watcher sends new or changed files back. *On demand* mode mounts the folder as a disk on the server with FUSE (`rrweb-fuse`, part of the Linux server bundle); each read fetches just the needed range from the browser into a server-side cache, with read-ahead while RapidRAW decodes a photo. Data travels in pieces of at most 1 MB with a keepalive, so tunnels and proxies such as Cloudflare don't cut the connection; reads for RapidRAW always go before the background copy. Mounts left behind by a crash are cleaned up when the server starts.
 
 **Safety.** The page can only reach the folder you picked (the browser asks for permission). Deletions are never mirrored as permanent deletes of your originals: in copy mode they are not sent back at all, and in on-demand mode a deleted original is moved to a hidden `.rrweb-trash` folder inside the shared folder.
 

@@ -9,9 +9,9 @@ import { el, errText, fmtSize } from './ui';
 import './files.css';
 
 type Mode = 'transfer' | 'ondemand';
-type ShareInfo = { id: string; name: string; mode: Mode; keep: boolean; view: string; mirror: string; online: boolean;
-  stats: { fetched: number; complete: number; uploaded: number; pushed: number } };
-type Saved = { id: string; name: string; mode: Mode; keep: boolean; keepDir?: string; handle: FileSystemDirectoryHandle };
+type ShareInfo = { id: string; name: string; mode: Mode; keep: boolean; fill?: boolean; view: string; mirror: string; online: boolean;
+  stats: { fetched: number; complete: number; uploaded: number; pushed: number; total?: number; filled?: number; filling?: boolean; diskFull?: boolean } };
+type Saved = { id: string; name: string; mode: Mode; keep: boolean; keepDir?: string; fill?: boolean; handle: FileSystemDirectoryHandle };
 type Progress = { done: number; total: number; bytes: number; totalBytes: number; started: number; current?: string; error?: string; finished?: boolean };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Dir = FileSystemDirectoryHandle & { entries(): AsyncIterable<[string, any]>; queryPermission?(o: object): Promise<string>; requestPermission?(o: object): Promise<string> };
@@ -68,7 +68,8 @@ class Agent {
   files = new Map<string, { file: File; at: number }>();
   writers = new Map<string, FileSystemWritableFileStream>();
   progress?: Progress;
-  constructor(public share: ShareInfo, public root: Dir, private onChange: () => void) {}
+  // onGone: server ne zna za ovaj folder (relay se ponovno pokrenuo) → ponovno ga prijavi
+  constructor(public share: ShareInfo, public root: Dir, private onChange: () => void, private onGone?: () => void) {}
 
   connect() {
     if (this.stopped) return;
@@ -76,10 +77,12 @@ class Agent {
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => { this.share.online = true; this.onChange(); };
     ws.onmessage = (m) => this.handle(m.data as ArrayBuffer);
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       this.share.online = false;
       this.onChange();
-      if (!this.stopped) setTimeout(() => this.connect(), 2000);
+      if (this.stopped) return;
+      if (ev.code === 4004 && this.onGone) { this.stopped = true; this.onGone(); return; }
+      setTimeout(() => this.connect(), 2000);
     };
     this.ws = ws;
   }
@@ -244,7 +247,11 @@ export function mountRemote(box: HTMLElement, hooks: { open(path: string): void;
       if (!p.finished) return `Copying ${p.done}/${p.total} · ${fmtSize(p.bytes)} of ${fmtSize(p.totalBytes)} · ${rate(p)}`;
       return `${p.total} files on the server · edits and exports come back here`;
     }
-    return `On demand · ${fmtSize(info.stats.fetched)} fetched · edits are saved here`;
+    const st = info.stats;
+    if (st.diskFull) return `On demand · background copy paused: the server disk is almost full · edits are saved here`;
+    if (st.filling && st.total) return `On demand · copying the rest in the background: ${fmtSize(st.filled ?? 0)} of ${fmtSize(st.total)} · edits are saved here`;
+    if (info.fill && st.total && !st.filling) return `On demand · whole folder on the server (${fmtSize(st.total)}) · edits are saved here`;
+    return `On demand · ${fmtSize(st.fetched)} fetched · edits are saved here`;
   }
 
   function render() {
@@ -268,11 +275,11 @@ export function mountRemote(box: HTMLElement, hooks: { open(path: string): void;
   }
 
   async function activate(s: Saved) {
-    const info = await call<ShareInfo>('__rr_share_start', { id: s.id, name: s.name, mode: s.mode, keep: s.keep, keepDir: s.keepDir });
+    const info = await call<ShareInfo>('__rr_share_start', { id: s.id, name: s.name, mode: s.mode, keep: s.keep, keepDir: s.keepDir, fill: s.fill ?? true });
     s.id = info.id;
     await save(s);
     agents.get(s.id)?.stop();
-    const a = new Agent(info, s.handle as Dir, render);
+    const a = new Agent(info, s.handle as Dir, render, () => reactivate(s));
     agents.set(s.id, a);
     a.connect();
     if (s.mode === 'transfer') {
@@ -281,6 +288,12 @@ export function mountRemote(box: HTMLElement, hooks: { open(path: string): void;
     }
     await refresh();
     hooks.refresh();
+  }
+
+  // server se ponovno pokrenuo: isti id → isti put na serveru, pa RapidRAW-ovi pinovi i dalje rade
+  function reactivate(s: Saved) {
+    if (!saved.includes(s)) return;
+    activate(s).catch(() => setTimeout(() => reactivate(s), 3000));
   }
 
   async function resume(s: Saved) {
@@ -310,6 +323,12 @@ export function mountRemote(box: HTMLElement, hooks: { open(path: string): void;
     const transfer = el('input', { type: 'radio', name: 'rrr-mode', checked: true }) as HTMLInputElement;
     const ondemand = el('input', { type: 'radio', name: 'rrr-mode', disabled: !caps.ondemand }) as HTMLInputElement;
     const keep = el('input', { type: 'checkbox' }) as HTMLInputElement;
+    const fill = el('input', { type: 'checkbox', checked: true, disabled: true }) as HTMLInputElement;
+    const fillRow = el('label', { class: 'rrr-sub off' }, fill,
+      el('span', {}, 'Meanwhile copy the rest to the server in the background (only while RapidRAW is not reading; stops when the server disk is almost full)'));
+    const modeChanged = () => { fill.disabled = !ondemand.checked; fillRow.classList.toggle('off', !ondemand.checked); };
+    transfer.onchange = modeChanged;
+    ondemand.onchange = modeChanged;
     const msg = el('div', { class: 'rrp-msg' });
     const close = () => back.remove();
     const back = el('div', { class: 'rrp-back' }, el('div', { class: 'rrp rrr-dialog' },
@@ -324,7 +343,10 @@ export function mountRemote(box: HTMLElement, hooks: { open(path: string): void;
         el('label', { class: 'rrr-opt' }, transfer, el('span', {}, el('b', {}, 'Copy to the server in the background'),
           el('small', {}, 'The whole folder with subfolders is copied first; edit as photos arrive. Best when you are not in a hurry. Works with any server.'))),
         el('label', { class: `rrr-opt${caps.ondemand ? '' : ' off'}` }, ondemand, el('span', {}, el('b', {}, 'On demand: edit right away'),
-          el('small', {}, caps.ondemand ? 'Nothing is copied up front: a photo is fetched when RapidRAW opens it, thumbnails need only a small part of each file.' : caps.reason ?? 'Not available on this server.'))),
+          el('small', {}, caps.ondemand
+            ? 'Nothing is copied up front: a photo is fetched when RapidRAW opens it. Thumbnails of most RAW files need only a small part of each file; Fuji RAF and Canon CR3 need the whole file, so their first thumbnails take longer.'
+            : caps.reason ?? 'Not available on this server.'))),
+        fillRow,
         el('label', { class: 'rrr-opt' }, keep, el('span', {}, el('b', {}, 'Also keep a copy on the server'),
           el('small', {}, 'Photos that reach the server and all edits stay in a server folder (otherwise a temporary copy is deleted when you stop).'),
           el('span', { class: 'rrr-row' }, el('button', { onclick: async () => {
@@ -338,7 +360,8 @@ export function mountRemote(box: HTMLElement, hooks: { open(path: string): void;
         el('button', { class: 'rrp-ok', onclick: async () => {
           if (!handle) { msg.textContent = 'Choose a folder first'; return; }
           if (keep.checked && !keepDir) { msg.textContent = 'Choose the server folder for the copy'; return; }
-          const s: Saved = { id: '', name: handle.name, mode: ondemand.checked ? 'ondemand' : 'transfer', keep: keep.checked, keepDir: keepDir ?? undefined, handle };
+          const s: Saved = { id: '', name: handle.name, mode: ondemand.checked ? 'ondemand' : 'transfer', keep: keep.checked, keepDir: keepDir ?? undefined,
+            fill: ondemand.checked ? fill.checked : undefined, handle };
           msg.textContent = 'Starting…';
           try {
             await activate(s);

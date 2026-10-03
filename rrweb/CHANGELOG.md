@@ -2,6 +2,17 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.4.1
+
+- **Folders from this computer, on demand: much more robust.**
+  - The server no longer stops when a connection breaks in an unusual way (for example through a Cloudflare tunnel). If it ever stops anyway, `run.sh` and the Windows/macOS app start it again, and the browser registers its folders again by itself, at the same path, so RapidRAW keeps working.
+  - When the connection to the browser drops, RapidRAW waits up to 2 minutes for it to come back instead of getting read errors, which could crash it.
+  - Mounts left behind by a crash (*Transport endpoint is not connected*) are cleaned up automatically.
+  - Data travels in pieces of at most 1 MB with a keepalive, so tunnels and proxies don't cut the connection.
+  - New option **Meanwhile copy the rest to the server in the background** (on by default): while RapidRAW isn't reading, the rest of the folder is copied to the server, so browsing gets fast. It stops when less than 5 GB is left on the server's disk.
+- Corrected: thumbnails of Fuji RAF and Canon CR3 files need the whole file in on-demand mode (RapidRAW can't read their embedded preview), not about 1 MB.
+- Linux: run the server as your normal user, not with `sudo`; how to keep it running in the background with `systemd-run`.
+
 ## 1.4.0
 
 - **Use a folder from this computer.** In the Files tab (*This computer*), share a folder from the computer you are browsing from. Your photos and edits stay there; RapidRAW on the server edits them. Needs Chrome or Edge, and HTTPS or localhost.

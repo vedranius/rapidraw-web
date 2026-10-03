@@ -360,6 +360,8 @@ fn main() {
     let _ = link.send(&json!({"id": 0, "op": "mounted"}), &[]);
     link.read_replies();
     if let Err(e) = session.umount_and_join() {
-        eprintln!("rrweb-fuse: unmount: {e}");
+        // zauzet (RapidRAW drži otvoren fajl): odvoji lijeno, inače ostaje "Transport endpoint is not connected"
+        eprintln!("rrweb-fuse: unmount: {e}; detaching lazily");
+        let _ = std::process::Command::new("fusermount3").args(["-u", "-z", &mountpoint]).status();
     }
 }

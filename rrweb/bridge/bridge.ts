@@ -21,6 +21,7 @@ let failures = 0;
 let relay: 'external' | 'bundled' | 'none' | undefined; // tko je pokrenuo relay
 let opened = false;
 let relayExited = false;
+let quickExits = 0; // ugrađeni relay koji pada odmah nakon pokretanja (npr. zauzet port) ne pokrećemo beskonačno
 let library: string | null | undefined; // undefined = relay još nije javio
 const urls = new Set<string>(); // "[relay] url …" linije ugrađenog relaya
 
@@ -57,6 +58,7 @@ function showUrls() {
 async function startBundledRelay() {
   relay = 'bundled';
   status('Starting server…');
+  const started = Date.now();
   try {
     const script = await join(await resourceDir(), '_up_', 'rrweb', 'relay', 'relay.mjs');
     const env = {
@@ -74,8 +76,11 @@ async function startBundledRelay() {
     cmd.stdout.on('data', line);
     cmd.stderr.on('data', line);
     cmd.on('close', ({ code }) => {
-      relayExited = true;
       log(`[relay] stopped (exit ${code})`);
+      // pad relaya: pokreni ga ponovno, browser i bridge se sami ponovno spoje
+      quickExits = Date.now() - started < 10000 ? quickExits + 1 : 0;
+      if (quickExits < 3) { status('Server stopped, restarting…'); setTimeout(startBundledRelay, 2000); return; }
+      relayExited = true;
       status('Server stopped, see the log below. Restart the app.');
     });
     await cmd.spawn();

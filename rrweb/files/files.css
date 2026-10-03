@@ -110,6 +110,8 @@
 .rrr-opt input { margin-top: 3px; }
 .rrr-opt > span { display: flex; flex-direction: column; gap: 3px; }
 .rrr-opt small { color: #999; font-size: 12px; }
+.rrr-sub { display: flex; gap: 8px; margin: -4px 0 10px 30px; color: #bbb; font-size: 12px; cursor: pointer; }
+.rrr-sub.off { opacity: .45; cursor: default; }
 
 /* network.ts: veza sa serverom i kvaliteta previewa */
 #rrf-tabs .rrn-badge { margin-left: 4px; padding: 5px 10px; color: #9c9; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }

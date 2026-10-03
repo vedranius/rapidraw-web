@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pokreće relay + RapidRAW Web Bridge. Ctrl+C gasi oboje.
+# Pokreće relay + RapidRAW Web Bridge. Ctrl+C gasi oboje; relay se sam ponovno pokrene ako padne.
 #   RR_PHOTOS=/mnt/photos ./run.sh
 # Env: RR_PHOTOS (obavezno), RR_PORT, RR_HOST, RR_AUTH=user:pass, RR_VERBOSE=1, RR_BRIDGE_BIN
 set -euo pipefail
@@ -27,8 +27,25 @@ if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
   LAUNCH=(xvfb-run -a)
 fi
 
-node "$HERE/relay/relay.mjs" & RELAY=$!
+# Relay koji padne pokreni ponovno (bridge i browser se sami ponovno spoje). Izlaz 0 = uredno gašenje;
+# ako pada odmah nakon pokretanja (npr. zauzet port), odustani.
+relay_loop() {
+  local pid="" code quick=0 started
+  trap '[ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; exit 0' TERM INT
+  while :; do
+    started=$SECONDS
+    node "$HERE/relay/relay.mjs" & pid=$!
+    code=0; wait "$pid" || code=$?
+    [ "$code" -eq 0 ] && exit 0
+    if [ $((SECONDS - started)) -lt 10 ]; then quick=$((quick + 1)); else quick=0; fi
+    [ "$quick" -ge 3 ] && { echo "[run.sh] relay keeps failing (exit $code), giving up" >&2; kill -TERM $$ 2>/dev/null; exit 1; }
+    echo "[run.sh] relay exited (exit $code), restarting in 2 s" >&2
+    sleep 2
+  done
+}
+APP=""
+relay_loop & RELAY=$!
 trap 'kill $RELAY $APP 2>/dev/null' EXIT INT TERM
 sleep 0.5
 "${LAUNCH[@]}" "$BIN" & APP=$!
-wait -n
+wait "$APP" || true

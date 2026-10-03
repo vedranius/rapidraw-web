@@ -7,7 +7,7 @@
 //  - keep:     kopija (dohvaćeni originali + editi) ostaje u odabranom folderu na serveru; inače privremeni
 //              cache u RR_WORK koji se briše na Stop.
 // Okvir na /rfs u oba smjera: [u32 LE q][u32 LE duljina JSON zaglavlja][zaglavlje][podaci].
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -17,9 +17,12 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const WORK = path.resolve(process.env.RR_WORK ?? path.join(os.tmpdir(), 'rrweb-remote'));
-const CHUNK = 1 << 20;          // jedinica cachea i dohvaćanja
-const MAX_RUN = 8;              // najviše chunkova u jednom zahtjevu klijentu
-const PUSH = 4 << 20;           // veličina komada kod slanja fajla na klijenta
+const CHUNK = 1 << 20;          // jedinica cachea i dohvaćanja = najveći komad u jednoj WebSocket poruci
+const MAX_RUN = 1;              // chunkova po zahtjevu: poruke ≤ 1 MB (proxyji/tuneli poput Cloudflarea)
+const PUSH = 1 << 20;           // veličina komada kod slanja fajla na klijenta
+const READS = 6;                // najviše dohvata s klijenta odjednom (po dijeljenom folderu)
+const RECONNECT_WAIT = 120000;  // koliko zahtjev čeka da se browser ponovno spoji
+const FILL_RESERVE = 5e9;       // punjenje u pozadini staje kad na serveru ostane manje od 5 GB
 const LIST_TTL = 3000;
 const ERRNO = { ENOENT: 2, EIO: 5, EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENOTEMPTY: 39, EACCES: 13 };
 
@@ -46,6 +49,11 @@ function checkRel(rel) {
 const parentOf = (rel) => (rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '');
 const nameOf = (rel) => rel.slice(rel.lastIndexOf('/') + 1);
 const exists = (p) => fsp.lstat(p).then(() => true, () => false);
+
+// Mount čiji je rrweb-fuse nestao ("Transport endpoint is not connected") odvoji lijeno, da ga se može ponovno koristiti
+function lazyUnmount(dir) {
+  spawnSync('fusermount3', ['-u', '-z', dir], { stdio: 'ignore' });
+}
 
 async function moveFile(from, to) {
   await fsp.mkdir(path.dirname(to), { recursive: true });
@@ -95,10 +103,14 @@ class Cached {
     return this.opening;
   }
 
-  async fetchRun(start, count) {
+  // fg: čitanje za RapidRAW; bg: punjenje u pozadini (slotted = slot je već zauzet, vidi fill)
+  async fetchRun(start, count, fg = true, slotted = false) {
     const off = start * CHUNK;
     const len = Math.min(count * CHUNK, this.size - off);
-    const { data } = await this.share.request({ op: 'read', path: this.rel, off, len });
+    if (!slotted) await this.share.slot(fg);
+    let data;
+    try { ({ data } = await this.share.request({ op: 'read', path: this.rel, off, len })); } finally { this.share.unslot(fg); }
+    if (this.share.stopped) throw fail('EIO', 'stopped');
     const fd = await this.open();
     await fd.write(data, 0, data.length, off);
     this.share.stats.fetched += data.length;
@@ -128,6 +140,24 @@ class Cached {
       i += count;
     }
     await Promise.all(waits);
+    if (!this.done && this.have.every(Boolean)) await this.complete();
+  }
+
+  // Punjenje u pozadini: dohvaća chunkove koji fale, ali samo kad RapidRAW ništa ne čeka (vidi Share.slot)
+  async fill() {
+    const running = new Set();
+    for (let i = 0; i < this.n && !this.done && !this.share.stopped; i++) {
+      if (this.have[i] || this.inflight.has(i)) continue;
+      // slot prije nego što chunk postane "inflight": inače bi čitanje za RapidRAW čekalo chunk koji stoji u bg redu
+      await this.share.slot(false);
+      if (this.have[i] || this.inflight.has(i) || this.done || this.share.stopped) { this.share.unslot(false); continue; }
+      const p = this.fetchRun(i, 1, false, true).finally(() => { this.inflight.delete(i); running.delete(p); });
+      this.inflight.set(i, p);
+      running.add(p);
+      p.catch(() => {});
+      if (running.size >= 4) await Promise.race(running).catch(() => {});
+    }
+    await Promise.allSettled([...running]);
     if (!this.done && this.have.every(Boolean)) await this.complete();
   }
 
@@ -181,14 +211,20 @@ class Share {
     this.timers = new Map();
     this.pushing = new Map();      // rel → red slanja na klijenta (jedno po jedno, zadnji sadržaj pobjeđuje)
     this.started = Date.now();
-    this.stats = { fetched: 0, complete: 0, uploaded: 0, pushed: 0 };
+    this.waiters = new Set();      // zahtjevi koji čekaju da se browser ponovno spoji
+    this.active = 0;               // dohvata s klijenta u tijeku
+    this.fgActive = 0;
+    this.fgq = [];                 // čekaju slot: čitanja za RapidRAW
+    this.bgq = [];                 //              punjenje u pozadini
+    // fill: total = veličina cijelog foldera, filled = koliko je od toga već cijelo na serveru
+    this.stats = { fetched: 0, complete: 0, uploaded: 0, pushed: 0, total: 0, filled: 0, filling: false, diskFull: false };
     this.stage = path.join(WORK, 'stage', this.id);
   }
 
   get view() { return this.mode === 'ondemand' ? this.mount : this.mirror; }
 
   info() {
-    return { id: this.id, name: this.name, mode: this.mode, keep: this.keep, view: this.view, mirror: this.mirror,
+    return { id: this.id, name: this.name, mode: this.mode, keep: this.keep, fill: !!this.fill, view: this.view, mirror: this.mirror,
       online: !!this.agent, stats: this.stats };
   }
 
@@ -196,11 +232,17 @@ class Share {
   attach(ws) {
     this.agent?.close();
     this.agent = ws;
+    for (const w of this.waiters) w();
+    this.waiters.clear();
+    // tuneli i proxyji zatvaraju WebSocket koji miruje; ping ga drži otvorenim
+    const keepalive = setInterval(() => { if (ws.readyState === 1) ws.ping(); }, 20000);
+    ws.on('error', (e) => console.warn(`[remote] ${this.name}: ${e.message}`));
     ws.on('message', (data, isBinary) => {
       if (!isBinary || data.length < 8) return;
       const q = data.readUInt32LE(0);
       const hlen = data.readUInt32LE(4);
-      const head = JSON.parse(data.subarray(8, 8 + hlen));
+      let head;
+      try { head = JSON.parse(data.subarray(8, 8 + hlen)); } catch { return; }
       const p = this.pending.get(q);
       if (!p) return;
       this.pending.delete(q);
@@ -208,22 +250,103 @@ class Share {
       else p.resolve({ head, data: data.subarray(8 + hlen) });
     });
     ws.on('close', () => {
+      clearInterval(keepalive);
       if (this.agent !== ws) return;
       this.agent = null;
-      for (const p of this.pending.values()) p.reject(fail('EIO', 'client folder disconnected'));
+      for (const p of this.pending.values()) p.reject(fail('EOFFLINE', 'client folder disconnected'));
       this.pending.clear();
+      console.log(`[remote] ${this.name}: client disconnected, waiting for it to reconnect`);
     });
     console.log(`[remote] ${this.name}: client connected`);
   }
 
-  request(head, data) {
-    if (!this.agent) return Promise.reject(fail('EIO', 'client folder is not connected'));
+  // Kad veza s browserom pukne (tunel, Wi-Fi, osvježavanje stranice), zahtjev pričeka da se ponovno spoji i
+  // pokuša opet. Greška bi se kroz mmap pretvorila u SIGBUS i srušila RapidRAW, pa je javljamo tek nakon RECONNECT_WAIT.
+  async request(head, data) {
+    for (let attempt = 0; ; attempt++) {
+      await this.online();
+      try { return await this.send(head, data); } catch (e) {
+        if (e.code !== 'EOFFLINE' || attempt >= 4) throw e.code === 'EOFFLINE' ? fail('EIO', e.message) : e;
+      }
+    }
+  }
+
+  online() {
+    if (this.agent) return Promise.resolve();
+    if (this.stopped) return Promise.reject(fail('EIO', 'stopped'));
+    return new Promise((resolve, reject) => {
+      const w = () => { clearTimeout(t); resolve(); };
+      const t = setTimeout(() => { this.waiters.delete(w); reject(fail('EIO', 'client folder is not connected')); }, RECONNECT_WAIT);
+      w.fail = () => { clearTimeout(t); reject(fail('EIO', 'stopped')); };
+      this.waiters.add(w);
+    });
+  }
+
+  send(head, data) {
+    if (!this.agent) return Promise.reject(fail('EOFFLINE', 'client folder disconnected'));
     this.q = (this.q + 1) >>> 0 || 1;
     const q = this.q;
     return new Promise((resolve, reject) => {
       this.pending.set(q, { resolve, reject });
-      this.agent.send(frame(q, head, data));
+      this.agent.send(frame(q, head, data), (e) => {
+        if (e && this.pending.delete(q)) reject(fail('EOFFLINE', e.message));
+      });
     });
+  }
+
+  // Najviše READS dohvata odjednom; čitanja za RapidRAW (fg) idu prije punjenja u pozadini (bg),
+  // a pozadina dobije slot tek kad nijedno fg čitanje ne radi niti čeka.
+  slot(fg) {
+    const free = this.active < READS && (fg || (!this.fgActive && !this.fgq.length));
+    if (free) { this.active++; if (fg) this.fgActive++; return Promise.resolve(); }
+    return new Promise((r) => (fg ? this.fgq : this.bgq).push(r));
+  }
+
+  unslot(fg) {
+    this.active--;
+    if (fg) this.fgActive--;
+    while (this.active < READS && (this.fgq.length || (this.bgq.length && !this.fgActive))) {
+      const isFg = this.fgq.length > 0;
+      this.active++;
+      if (isFg) this.fgActive++;
+      (isFg ? this.fgq : this.bgq).shift()();
+    }
+  }
+
+  // ondemand + fill: cijeli folder se polako puni na server dok RapidRAW ne čita ništa drugo. Za formate čiji
+  // ugrađeni preview RapidRAW ne zna pročitati (Fuji RAF, Canon CR3) thumbnail ionako treba cijeli fajl.
+  async fillAll() {
+    this.stats.filling = true;
+    const files = [];
+    const walk = async (rel) => {
+      for (const e of (await this.list(rel)).values()) {
+        if (this.stopped || e.name.startsWith('.')) continue;
+        const r = rel ? `${rel}/${e.name}` : e.name;
+        if (e.kind === 'dir') await walk(r);
+        else { files.push(r); this.stats.total += e.size ?? 0; }
+      }
+    };
+    try {
+      await walk('');
+      console.log(`[remote] ${this.name}: filling ${files.length} files (${(this.stats.total / 1e9).toFixed(1)} GB) in the background`);
+      for (const rel of files) {
+        if (this.stopped) break;
+        if (this.local.has(rel)) continue; // RapidRAW ga je već prepisao na serveru
+        try {
+          const c = await this.cached(rel);
+          if (c.done) { this.stats.filled += c.size; continue; }
+          // ne puni disk servera do kraja (mirror može biti u RR_WORK, tj. na sistemskom disku)
+          const st = await fsp.statfs(this.mirror);
+          if (st.bavail * st.bsize - c.size < FILL_RESERVE) {
+            console.warn(`[remote] ${this.name}: background fill stopped, less than ${FILL_RESERVE / 1e9} GB free on the server`);
+            this.stats.diskFull = true;
+            break;
+          }
+          await c.fill();
+          if (c.done) this.stats.filled += c.size;
+        } catch (e) { if (!this.stopped) console.warn(`[remote] ${this.name}: fill ${rel}: ${e.message}`); }
+      }
+    } finally { this.stats.filling = false; }
   }
 
   async list(rel) {
@@ -408,9 +531,13 @@ class Share {
   }
 
   async mountFuse() {
+    lazyUnmount(this.mount); // ostatak od prethodnog pada relaya
     await fsp.mkdir(this.mount, { recursive: true });
     const child = spawn(FUSE_BIN, [this.mount], { stdio: ['pipe', 'pipe', 'inherit'] });
     this.fuse = child;
+    // helper može nestati (pad, kill); pisanje u njegov stdin ne smije srušiti relay
+    child.stdin.on('error', (e) => console.warn(`[remote] ${this.name}: rrweb-fuse stdin: ${e.message}`));
+    child.on('error', (e) => console.warn(`[remote] ${this.name}: rrweb-fuse: ${e.message}`));
     let buf = Buffer.alloc(0);
     const send = (head, data = Buffer.alloc(0)) => {
       const h = Buffer.from(JSON.stringify(head));
@@ -419,7 +546,7 @@ class Share {
       out.writeUInt32LE(data.length, 4);
       h.copy(out, 8);
       data.copy(out, 8 + h.length);
-      child.stdin.write(out);
+      if (child.stdin.writable) child.stdin.write(out);
     };
     const mounted = new Promise((resolve, reject) => {
       child.once('exit', (code) => reject(new Error(`rrweb-fuse exited (${code})`)));
@@ -429,7 +556,8 @@ class Share {
           const hlen = buf.readUInt32LE(0);
           const dlen = buf.readUInt32LE(4);
           if (buf.length < 8 + hlen + dlen) break;
-          const head = JSON.parse(buf.subarray(8, 8 + hlen));
+          let head;
+          try { head = JSON.parse(buf.subarray(8, 8 + hlen)); } catch { buf = buf.subarray(8 + hlen + dlen); continue; }
           const data = buf.subarray(8 + hlen, 8 + hlen + dlen);
           buf = buf.subarray(8 + hlen + dlen);
           if (head.op === 'mounted') { resolve(); continue; }
@@ -442,7 +570,11 @@ class Share {
         }
       });
     });
-    child.on('exit', () => { if (this.fuse === child) this.fuse = null; });
+    child.on('exit', (code, sig) => {
+      if (this.fuse === child) this.fuse = null;
+      lazyUnmount(this.mount);
+      if (!this.stopped) console.warn(`[remote] ${this.name}: rrweb-fuse exited (${sig ?? code})`);
+    });
     await Promise.race([mounted, new Promise((_, r) => setTimeout(() => r(new Error('mount timeout')), 10000))]);
     console.log(`[remote] ${this.name}: mounted at ${this.mount}`);
   }
@@ -504,11 +636,16 @@ class Share {
 
   async start() {
     await fsp.mkdir(this.mirror, { recursive: true });
-    if (this.mode === 'ondemand') await this.mountFuse();
-    else { await this.have(); this.watch(); }
+    if (this.mode === 'ondemand') {
+      await this.mountFuse();
+      if (this.fill) this.online().then(() => this.fillAll()).catch(() => {});
+    } else { await this.have(); this.watch(); }
   }
 
   async stop() {
+    this.stopped = true;
+    for (const w of this.waiters) w.fail();
+    this.waiters.clear();
     this.watcher?.close();
     for (const t of this.timers.values()) clearTimeout(t);
     for (const c of this.files.values()) await c.dispose();
@@ -519,16 +656,31 @@ class Share {
     this.agent?.close();
     await fsp.rm(this.stage, { recursive: true, force: true });
     if (!this.keep) await fsp.rm(path.join(WORK, 'mirror', this.id), { recursive: true, force: true });
-    if (this.mode === 'ondemand') await fsp.rm(path.dirname(this.mount), { recursive: true, force: true }).catch(() => {});
+    if (this.mode === 'ondemand') {
+      // nikad rekurzivno: na još spojenom mountu rm bi išao kroz FUSE (i visio, ili brisao na klijentu)
+      lazyUnmount(this.mount);
+      await fsp.rmdir(this.mount).catch(() => {});
+      await fsp.rmdir(path.dirname(this.mount)).catch(() => {});
+    }
   }
 }
 
 // onChange(): popis dijeljenih foldera se promijenio (relay osvježi rootove Files taba)
 export function createRemote({ validName, insideRoots, onChange = () => {} }) {
   const shares = new Map();
+  // mountovi ostali od prethodnog pada relaya
+  if (process.platform === 'linux') {
+    try {
+      for (const line of fs.readFileSync('/proc/mounts', 'utf8').split('\n')) {
+        const [, raw, type] = line.split(' ');
+        const dir = raw?.replace(/\\([0-7]{3})/g, (_, o) => String.fromCharCode(parseInt(o, 8))); // razmak = \040
+        if (type === 'fuse.rrweb' && dir?.startsWith(WORK + path.sep)) { lazyUnmount(dir); console.log(`[remote] cleaned up stale mount ${dir}`); }
+      }
+    } catch { /* nema /proc/mounts */ }
+  }
   const id = () => Math.random().toString(36).slice(2, 10);
 
-  async function start({ id: wanted, name, mode, keep, keepDir }) {
+  async function start({ id: wanted, name, mode, keep, keepDir, fill = true }) {
     validName(name);
     if (mode !== 'transfer' && mode !== 'ondemand') throw new Error('mode must be transfer or ondemand');
     if (mode === 'ondemand' && !capabilities().ondemand) throw new Error(capabilities().reason);
@@ -541,7 +693,8 @@ export function createRemote({ validName, insideRoots, onChange = () => {} }) {
       const dir = await insideRoots(keepDir); // samo unutar foldera s fotografijama
       mirror = path.join(dir, name);
     }
-    const share = new Share({ id: sid, name, mode, keep: !!keep, mirror, mount: path.join(WORK, 'mnt', sid, name) }, shares);
+    const share = new Share({ id: sid, name, mode, keep: !!keep, fill: mode === 'ondemand' && fill !== false, mirror,
+      mount: path.join(WORK, 'mnt', sid, name) }, shares);
     await share.start();
     shares.set(sid, share);
     onChange();
@@ -568,7 +721,7 @@ export function createRemote({ validName, insideRoots, onChange = () => {} }) {
     // /rfs?id=… WebSocket browsera koji dijeli folder
     attach(ws, sid) {
       const s = shares.get(sid);
-      if (!s) { ws.close(4004, 'unknown share'); return; }
+      if (!s) { ws.on('error', () => {}); ws.close(4004, 'unknown share'); return; }
       s.attach(ws);
     },
     // PUT /rfs/put?id=…&path=…&mtime=… (transfer upload)
