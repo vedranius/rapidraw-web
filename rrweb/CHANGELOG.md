@@ -2,6 +2,10 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.5.1
+
+- Servers without a screen: the bridge no longer tries to open a browser when it runs under `xvfb-run` (or with `RR_NO_BROWSER=1`); on KDE that started `kde-open`, which crashed.
+
 ## 1.5.0
 
 - **Linux: one file.** The `.deb`, `.rpm` and `.AppImage` are now all-in-one like on Windows and macOS: RapidRAW, the web UI, Node.js and the on-demand folder helper in one package. On a desktop, start *RapidRAW Web Bridge* from the menu; it starts the server, opens the browser and asks for your photo library.

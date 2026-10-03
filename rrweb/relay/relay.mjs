@@ -12,6 +12,7 @@
 //   RR_FUSE_BIN               rrweb-fuse binarka (default ../fuse/<arch>/rrweb-fuse)
 //   RR_BRIDGE_PORT (8780)   loopback port na koji se spaja bridge (VITE_RR_RELAY pri buildu bridgea)
 //   RR_DIST   (../dist-web)
+//   RR_NO_BROWSER=1           bridge ne otvara browser (server bez ekrana; pod xvfb-run se prepozna samo)
 // FUSE pozivi iz samog relaya (Files tab na folderu s klijenta) i odgovori na njih dijele libuv threadpool
 process.env.UV_THREADPOOL_SIZE ??= '64';
 import http from 'node:http';
@@ -110,7 +111,9 @@ function setLibrary(p) {
   files.invalidate();
   console.log(`[relay] photo library: ${config.library}`);
 }
-const libraryState = () => ({ rr: 'library', path: config.library ?? null, env: process.env.RR_PHOTOS ?? null });
+// Server bez ekrana (systemd servis, xvfb-run): bridge ne otvara browser (xdg-open/kde-open bez ekrana samo padne)
+const HEADLESS = !!process.env.RR_NO_BROWSER || /xvfb-run/.test(process.env.XAUTHORITY ?? '');
+const libraryState = () => ({ rr: 'library', path: config.library ?? null, env: process.env.RR_PHOTOS ?? null, headless: HEADLESS });
 
 const files = createFiles({
   settings: () => bridgeCall('load_settings', {}),

@@ -10,6 +10,7 @@ After=network-online.target
 
 [Service]
 Environment=RR_PHOTOS=%h/Pictures
+Environment=RR_NO_BROWSER=1
 # WebKitGTK needs a display; the GPU (Vulkan) doesn't. xvfb-run: package xvfb (Debian/Ubuntu),
 # xorg-x11-server-Xvfb (Fedora), xorg-server-xvfb (Arch)
 ExecStart=/usr/bin/xvfb-run -a /usr/bin/rapidraw-web-bridge

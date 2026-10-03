@@ -102,11 +102,6 @@ function connect() {
     relay ??= 'external';
     status('Running', true);
     if (relay !== 'bundled') el('hint').textContent = '';
-    if (relay === 'bundled' && !opened) {
-      opened = true;
-      open([...urls][0] ?? DEFAULT_UI).catch(() => {}); // server bez ekrana nema browser
-      if (library) getCurrentWindow().minimize(); // bez librarya prozor ostaje otvoren da se odabere
-    }
   };
   sock.onclose = () => {
     if (relay === undefined && ++failures >= 2) startBundledRelay(); // ~1 s čekanja da run.sh/run.ps1 stigne pokrenuti svoj relay
@@ -115,7 +110,15 @@ function connect() {
   };
   sock.onmessage = async (m) => {
     const msg = JSON.parse(m.data);
-    if (msg.rr === 'library') { showLibrary(msg.path ?? msg.env); return; }
+    if (msg.rr === 'library') {
+      // prva poruka ugrađenog relaya: otvori RapidRAW u browseru, osim na serveru bez ekrana
+      if (relay === 'bundled' && !opened) {
+        opened = true;
+        if (!msg.headless) open([...urls][0] ?? DEFAULT_UI).catch(() => {});
+      }
+      showLibrary(msg.path ?? msg.env); // s odabranim libraryjem prozor se minimizira, bez njega ostaje otvoren
+      return;
+    }
     const { id, cmd, args } = msg;
     if (cmd === 'save_settings' && args?.settings) args.settings.useWgpuRenderer = false;
     try {

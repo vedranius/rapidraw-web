@@ -161,6 +161,7 @@ The badge next to *Editor | Files* shows the measured speed to the server. Once 
 | `RR_BRIDGE_PORT` | `8780` | Loopback port the bridge connects to (change only together with a rebuilt bridge) |
 | `RR_BRIDGE_BIN` | auto-detect | Path to `rapidraw-web-bridge` |
 | `RR_VERBOSE` | off | Log every IPC call with timing |
+| `RR_NO_BROWSER` | off (on in the Linux service and under `xvfb-run`) | Don't open a browser when the bridge starts its bundled server |
 
 ### GPU in Docker (NVIDIA)
 
