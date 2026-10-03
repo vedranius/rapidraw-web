@@ -39,6 +39,8 @@ Download from the [Releases](https://github.com/vedranius/rapidraw-web/releases)
 
 The first time, Windows Firewall asks about *Node.js JavaScript Runtime*: allow **Private networks** to reach it from other devices.
 
+To use folders from other computers **on demand** (see [below](#use-a-folder-from-this-computer)), also install the free [WinFsp](https://winfsp.dev) once (`winfsp-*.msi` from its [releases](https://github.com/winfsp/winfsp/releases/latest), default options). Copy mode works without it.
+
 ### macOS: all-in-one app (experimental)
 
 1. Open `…_macos_arm64.dmg` (Apple Silicon) or `…_macos_x64.dmg` (Intel) and drag **RapidRAW Web Bridge** to *Applications*.
@@ -110,7 +112,7 @@ Pick one of two modes:
 | What travels | The whole folder with subfolders, copied first (resumable) | Only what RapidRAW reads: for browsing, the embedded preview of each RAW (a few MB at most; for Fuji RAF the browser sends a finished thumbnail of about 0.3 MB), but the whole file for Canon CR3; the whole photo once you edit it |
 | When you can edit | As photos arrive | Right away |
 | Best for | Time to wait, or a slow upload you leave running | Editing a few photos quickly on a fast connection |
-| Server | Any OS | Linux with `fuse3` (other OSes: see below) |
+| Server | Any OS | Linux with `fuse3`, or Windows with [WinFsp](https://winfsp.dev) (macOS: see below) |
 
 In on-demand mode, **Meanwhile copy the rest to the server in the background** (on by default) fetches the rest of the folder whenever RapidRAW isn't reading anything, so browsing gets as fast as with photos on the server. It pauses while you work and stops when less than 5 GB is left on the server's disk.
 
@@ -121,7 +123,7 @@ In both modes, everything RapidRAW writes (edits in `.rrdata`, exports, new fold
 - **HTTPS, or `localhost`**: browsers allow folder access only on secure pages. The easiest way is [Tailscale](https://tailscale.com): on the server run `tailscale serve --bg 8780` and open `https://<server>.<tailnet>.ts.net`. That works from anywhere and keeps the server private. A reverse proxy with a certificate (Caddy, nginx) works too.
 - **Keep the tab open** while editing: the browser is the storage. If it closes, a copy in progress pauses and continues when you reconnect. If the connection drops (Wi-Fi, a tunnel, reloading the page), RapidRAW waits up to 2 minutes for it to come back instead of getting read errors, and after a server restart the browser registers its folders again by itself.
 
-**How it works.** The browser acts as the storage: it reads and writes the chosen folder for the server over a WebSocket. *Copy* mode uploads the files into a mirror folder on the server, and a watcher sends new or changed files back. *On demand* mode mounts the folder as a disk on the server with FUSE (`rrweb-fuse`, part of the Linux server bundle); each read fetches just the needed range from the browser into a server-side cache, with read-ahead while RapidRAW decodes a photo. Data travels in pieces of at most 1 MB with a keepalive, so tunnels and proxies such as Cloudflare don't cut the connection; reads for RapidRAW always go before the background copy. Mounts left behind by a crash are cleaned up when the server starts.
+**How it works.** The browser acts as the storage: it reads and writes the chosen folder for the server over a WebSocket. *Copy* mode uploads the files into a mirror folder on the server, and a watcher sends new or changed files back. *On demand* mode mounts the folder as a disk on the server (`rrweb-fuse`, included in every Linux and Windows package: FUSE on Linux, WinFsp on Windows); each read fetches just the needed range from the browser into a server-side cache, with read-ahead while RapidRAW decodes a photo. Data travels in pieces of at most 1 MB with a keepalive, so tunnels and proxies such as Cloudflare don't cut the connection; reads for RapidRAW always go before the background copy. Mounts left behind by a crash are cleaned up when the server starts.
 
 **Fuji RAF.** RapidRAW reads the embedded preview and the EXIF data only from TIFF-based RAW files (NEF, ARW, CR2, DNG); for a RAF it decodes the whole RAW, and the library reads the EXIF of every photo in a folder as soon as you open it. In on-demand mode that would mean 30–45 MB per photo before you see anything. So for RAF files without edits, the browser cuts the camera's embedded JPEG out of the file, shrinks it to RapidRAW's thumbnail sizes and sends it (about 0.3 MB), and RapidRAW reads the EXIF from that JPEG's header (about 65 KB). Thumbnails then show the camera's JPEG (with its film simulation), exactly like RapidRAW does for NEF or ARW files; a photo you edit gets RapidRAW's own rendering.
 
@@ -132,7 +134,7 @@ In both modes, everything RapidRAW writes (edits in `.rrdata`, exports, new fold
 | Server | Status | What it needs |
 |---|---|---|
 | Linux | ✅ Supported | The `fuse3` package (`fusermount3`), usually already installed |
-| Windows | Planned | [WinFsp](https://winfsp.dev) (free FUSE driver for Windows) and a Windows build of `rrweb-fuse` |
+| Windows | ✅ Supported | [WinFsp](https://winfsp.dev) (free file system driver, install once). The folder appears as a directory under RapidRAW Web's cache folder; names are case-sensitive there, like on the computer that shares it |
 | macOS | Planned | [macFUSE](https://osxfuse.github.io) (kernel extension, must be allowed in macOS security settings, on Apple Silicon also in Recovery) or [FUSE-T](https://www.fuse-t.org) (no kernel extension) |
 
 ## Connection and preview quality
@@ -159,10 +161,10 @@ The badge next to *Editor | Files* shows the measured speed to the server. Once 
 | `RR_ORIGINS` | — | Extra allowed browser origins, comma-separated, e.g. `https://photos.example.com` behind a reverse proxy that changes the `Host` header |
 | `RR_ROOTS` | photos + bridge data/cache dirs | Directories `/files` is allowed to serve |
 | `RR_WORK` | `<bridge cache dir>/remote` | Server-side mirror, cache and mount points for folders from browsing computers |
-| `RR_FUSE_BIN` | next to the bundled Node.js, or `fuse/<arch>/rrweb-fuse` in the server bundle | FUSE helper for on-demand folders (Linux) |
+| `RR_FUSE_BIN` | next to the bundled Node.js, or `fuse/<arch>/rrweb-fuse[.exe]` in the server bundle | Helper for on-demand folders (Linux: FUSE, Windows: WinFsp) |
 | `RR_BRIDGE_PORT` | `8780` | Loopback port the bridge connects to (change only together with a rebuilt bridge) |
 | `RR_BRIDGE_BIN` | auto-detect | Path to `rapidraw-web-bridge` |
-| `RR_VERBOSE` | off | Log every IPC call with timing |
+| `RR_VERBOSE` | off | Log every IPC call with timing, and the file operations of on-demand folders |
 | `RR_NO_BROWSER` | off (on in the Linux service and under `xvfb-run`) | Don't open a browser when the bridge starts its bundled server |
 
 ### GPU in Docker (NVIDIA)
@@ -186,7 +188,7 @@ The IPC channel can do everything RapidRAW can do on the server (browse and writ
 - The folder/file pickers browse only the photo folders; other server paths can be typed in with *Type a path…*.
 - Desktop-only window features (window controls, native drag & drop from your OS) are no-ops. Tethering is not included.
 - RapidRAW's folder tree shows folders created in the Files tab after you reopen the parent folder. Uploading whole folders (as opposed to files) is not supported yet.
-- *Use a folder from this computer* needs Chrome or Edge and HTTPS (or `localhost`); on-demand mode needs a Linux server for now.
+- *Use a folder from this computer* needs Chrome or Edge and HTTPS (or `localhost`); on-demand mode needs a Linux or Windows server for now.
 
 ## Building from source
 

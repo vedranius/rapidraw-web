@@ -28,6 +28,7 @@ const ERRNO = { ENOENT: 2, EIO: 5, EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 
 
 // server bundle: fuse/<arch>/; all-in-one paket: sidecar pored ugrađenog Node.js-a (/usr/bin, AppImage usr/bin, Windows install)
 const WIN = process.platform === 'win32';
+const VERBOSE = !!process.env.RR_VERBOSE; // i FUSE operacije (bez read/write)
 const FUSE_NAME = WIN ? 'rrweb-fuse.exe' : 'rrweb-fuse';
 const FUSE_BIN = process.env.RR_FUSE_BIN ?? [
   path.join(here, '..', 'fuse', { x64: 'x86_64', arm64: 'aarch64' }[process.arch] ?? process.arch, FUSE_NAME),
@@ -584,9 +585,11 @@ class Share {
           const data = buf.subarray(8 + hlen, 8 + hlen + dlen);
           buf = buf.subarray(8 + hlen + dlen);
           if (head.op === 'mounted') { resolve(); continue; }
+          if (VERBOSE && head.op !== 'read' && head.op !== 'write') console.log(`[fuse] ${head.op} ${head.path ?? `${head.from} → ${head.to}`}`);
           this.fuseOp(head, data).then(
             (r) => (Array.isArray(r) ? send({ id: head.id, ...r[0] }, r[1]) : send({ id: head.id, ...r })),
             (e) => {
+              if (VERBOSE) console.log(`[fuse] ${head.op} ${head.path ?? `${head.from} → ${head.to}`}: ${e.code ?? e.message}`);
               if (e.code !== 'ENOENT') console.warn(`[remote] ${this.name}: ${head.op} ${head.path ?? ''}: ${e.message}`);
               send({ id: head.id, err: ERRNO[e.code] ?? ERRNO.EIO });
             });

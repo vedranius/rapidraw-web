@@ -376,7 +376,9 @@ pub fn run(mountpoint: &str, link: Arc<Link>) {
         .sectors_per_allocation_unit(1)
         .max_component_length(255)
         .file_info_timeout(1000)
-        .case_sensitive_search(false)
+        // case-sensitive: inače WinFsp neka imena (npr. izvor kod preimenovanja) šalje velikim slovima, a folder
+        // na klijentu (i lista u relayu) razlikuje velika i mala slova; RapidRAW koristi točna imena iz popisa
+        .case_sensitive_search(true)
         .case_preserved_names(true)
         .unicode_on_disk(true)
         .persistent_acls(true)

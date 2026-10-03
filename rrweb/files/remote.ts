@@ -2,7 +2,7 @@
 // Browser je agent (WebSocket /rfs): čita i piše u odabrani folder preko File System Access API-ja
 // (Chrome/Edge, samo na HTTPS-u ili localhostu). Server dio: rrweb/relay/remote.mjs.
 //  - transfer: cijeli folder se u pozadini kopira na server; editi i exporti se vraćaju u folder ovdje
-//  - ondemand: (Linux server) fotke se dohvaćaju tek kad ih RapidRAW otvori
+//  - ondemand: (Linux ili Windows server s WinFsp-om) fotke se dohvaćaju tek kad ih RapidRAW otvori
 import { call, emitLocal } from '../shim/transport';
 import { pick } from './picker';
 import { el, errText, fmtSize } from './ui';

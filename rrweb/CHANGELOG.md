@@ -2,6 +2,12 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.7.0
+
+- **On-demand folders on Windows servers.** *Use a folder from this computer → On demand* now also works when RapidRAW Web runs on Windows: install the free [WinFsp](https://winfsp.dev) once. The folder is mounted as a directory (no drive letter needed) and behaves as on Linux: only what RapidRAW reads travels, edits and exports go straight back, deleted originals go to `.rrweb-trash`, Fuji RAF browsing uses the embedded JPEG. Without WinFsp the dialog says what is missing; copy mode works as before.
+- `rrweb-fuse` is included in the Windows installer and in the server bundle (`fuse/x86_64/rrweb-fuse.exe`).
+- `RR_VERBOSE=1` also logs the file operations of on-demand folders.
+
 ## 1.6.0
 
 - **Fast Fuji RAF browsing in on-demand folders.** Opening a folder of RAF files no longer pulls every whole file (30–45 MB each) from the computer you browse from. The browser sends a finished thumbnail made from the camera's embedded JPEG (about 0.3 MB) and the EXIF header (about 65 KB); RapidRAW uses them as it does for NEF/ARW. In a test with 12 RAFs: 0 MB of RAW data instead of 378 MB until a photo is opened in the editor. Only for photos without edits; edited ones are rendered by RapidRAW as before.
