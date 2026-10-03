@@ -1,0 +1,15 @@
+[package]
+name = "rrweb-fuse"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "rapidraw-web: folder s klijentskog računala kao FUSE disk na Linux serveru (operacije rješava relay)"
+license = "AGPL-3.0-only"
+
+[dependencies]
+fuser = { version = "0.18", default-features = false }   # bez libfuse: mount preko fusermount3
+serde_json = "1"
+
+[profile.release]
+lto = true
+strip = true
