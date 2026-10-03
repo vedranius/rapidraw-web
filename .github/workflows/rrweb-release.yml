@@ -23,15 +23,16 @@ env:
   REF: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
-  # Folder s klijentskog računala "na zahtjev" (FUSE, Linux server): mala Rust binarka za server bundle
+  # Folder s klijentskog računala "na zahtjev" (Linux: FUSE, Windows: WinFsp): mala Rust binarka za server bundle
   fuse:
-    name: rrweb-fuse ${{ matrix.arch }}
+    name: rrweb-fuse ${{ matrix.os }} ${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-22.04, arch: x86_64 }      # starija glibc → radi i na novijim distribucijama
-          - { runner: ubuntu-22.04-arm, arch: aarch64 }
+          - { runner: ubuntu-22.04, os: linux, arch: x86_64, exe: '' }      # starija glibc → radi i na novijim distribucijama
+          - { runner: ubuntu-22.04-arm, os: linux, arch: aarch64, exe: '' }
+          - { runner: windows-latest, os: windows, arch: x86_64, exe: .exe }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -39,7 +40,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release --manifest-path rrweb/fuse/Cargo.toml
       - uses: actions/upload-artifact@v4
-        with: { name: 'fuse-${{ matrix.arch }}', path: rrweb/fuse/target/release/rrweb-fuse }
+        with: { name: 'fuse-${{ matrix.os }}-${{ matrix.arch }}', path: 'rrweb/fuse/target/release/rrweb-fuse${{ matrix.exe }}' }
 
   server:
     name: Server bundle (web UI + relay)
@@ -67,9 +68,9 @@ jobs:
           cp -r rrweb/dist-web rrweb/relay rrweb/run.sh rrweb/run.ps1 rrweb/README.md LICENSE "out/$TAG/"
           chmod +x "out/$TAG/run.sh"
           for a in x86_64 aarch64; do   # artefakti ne čuvaju exec bit
-            if [ -f "fuse-dl/fuse-$a/rrweb-fuse" ]; then
-              mkdir -p "out/$TAG/fuse/$a" && install -m 755 "fuse-dl/fuse-$a/rrweb-fuse" "out/$TAG/fuse/$a/"
-            fi
+            for f in "fuse-dl/fuse-linux-$a/rrweb-fuse" "fuse-dl/fuse-windows-$a/rrweb-fuse.exe"; do
+              [ -f "$f" ] && mkdir -p "out/$TAG/fuse/$a" && install -m 755 "$f" "out/$TAG/fuse/$a/"
+            done
           done
           tar -C out -czf "${TAG}_linux_server.tar.gz" "$TAG"
       - uses: actions/upload-artifact@v4
@@ -137,6 +138,7 @@ jobs:
       - run: npx vite build --config rrweb/vite.web.config.mjs
       - run: npm ci --omit=dev --no-audit --no-fund
         working-directory: rrweb/relay
+      - run: cargo build --release --manifest-path rrweb/fuse/Cargo.toml   # "na zahtjev" preko WinFsp-a
       - run: node rrweb/bundle/prepare.mjs
       - name: Version
         shell: bash
@@ -196,7 +198,7 @@ jobs:
           [ "${{ needs.bridge-linux.result }}" = success ] || missing="$missing Linux"
           [ "${{ needs.bridge-windows.result }}" = success ] || missing="$missing Windows"
           [ "${{ needs.bridge-macos.result }}" = success ] || missing="$missing macOS"
-          [ "${{ needs.fuse.result }}" = success ] || missing="$missing rrweb-fuse(Linux on-demand folders)"
+          [ "${{ needs.fuse.result }}" = success ] || missing="$missing rrweb-fuse(on-demand folders in the server bundle)"
           [ -n "$missing" ] && printf '\n> ⚠️ Build failed for:%s — not included in this release.\n' "$missing" >> notes.md
           # Linux artifakti zadržavaju deb/, rpm/, appimage/ poddirektorije, a files: dist/* ih ne vidi
           find dist -mindepth 2 -type f -exec mv -t dist {} +
@@ -210,7 +212,7 @@ jobs:
               *.AppImage)  a=${b%.AppImage}; a=${a##*_} ;;
               *.dmg)       a=${b%.dmg}; a=${a##*_} ;;
               *-setup.exe) a=x64 ;;
-              rrweb-fuse) rm "$f"; continue ;;   # već je u server bundleu (fuse/<arch>/)
+              rrweb-fuse|rrweb-fuse.exe) rm "$f"; continue ;;   # već je u server bundleu (fuse/<arch>/)
               *) continue ;;
             esac
             case "$a" in amd64|x86_64|x64) a=x64 ;; arm64|aarch64) a=arm64 ;; esac

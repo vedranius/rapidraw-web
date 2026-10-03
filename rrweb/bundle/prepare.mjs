@@ -1,8 +1,8 @@
 // All-in-one bridge (Windows, macOS, Linux): skida službeni Node.js (Tauri sidecar, SHA256 iz nodejs.org SHASUMS256)
 // i generira rrweb/bundle/tauri.bundle.json, overlay koji u bridge dodaje relay + web UI i dozvolu da bridge
 // sam pokrene relay. Overlay polja zamjenjuju (ne spajaju) upstream liste, pa se upstream resources/capabilities
-// čitaju i nadopunjuju. Linux: još rrweb-fuse (folderi s klijenta "na zahtjev"; prvo cargo build rrweb/fuse)
-// i systemd user servis za server bez ekrana (rrweb/linux/rapidraw-web.service) u .deb/.rpm.
+// čitaju i nadopunjuju. Linux i Windows: još rrweb-fuse (folderi s klijenta "na zahtjev"; prvo cargo build rrweb/fuse),
+// Linux i systemd user servis za server bez ekrana (rrweb/linux/rapidraw-web.service) u .deb/.rpm.
 //   node rrweb/bundle/prepare.mjs      (RR_NODE_VERSION=v24.x.y za fiksnu verziju; default: zadnji LTS;
 //                                      RR_BUNDLE_PLATFORM=darwin-arm64 itd. za test druge platforme)
 import { createHash } from 'node:crypto';
@@ -67,11 +67,13 @@ if (!existsSync(exe) || !existsSync(stamp) || readFileSync(stamp, 'utf8') !== `$
 }
 writeFileSync(`${BIN}/NODE-LICENSE.txt`, await (await get(`https://raw.githubusercontent.com/nodejs/node/${version}/LICENSE`)).text());
 
-if (os === 'linux') { // relay ga traži pored svoje Node binarke (rrweb/relay/remote.mjs)
-  const built = process.env.RR_FUSE_BUILT ?? 'rrweb/fuse/target/release/rrweb-fuse';
+const withFuse = os === 'linux' || os === 'win32';
+if (withFuse) { // relay ga traži pored svoje Node binarke (rrweb/relay/remote.mjs); Windows: treba i WinFsp
+  const ext = os === 'win32' ? '.exe' : '';
+  const built = process.env.RR_FUSE_BUILT ?? `rrweb/fuse/target/release/rrweb-fuse${ext}`;
   if (!existsSync(built)) throw new Error(`nema ${built}: prvo cargo build --release --manifest-path rrweb/fuse/Cargo.toml`);
-  copyFileSync(built, `${BIN}/rrweb-fuse-${triple}`);
-  chmodSync(`${BIN}/rrweb-fuse-${triple}`, 0o755);
+  copyFileSync(built, `${BIN}/rrweb-fuse-${triple}${ext}`);
+  chmodSync(`${BIN}/rrweb-fuse-${triple}${ext}`, 0o755);
 }
 
 const up = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
@@ -82,7 +84,7 @@ if (!Array.isArray(resources) || !Array.isArray(capabilities)) {
 }
 const overlay = {
   bundle: {
-    externalBin: [...(up.bundle?.externalBin ?? []), NODE, ...(os === 'linux' ? [FUSE] : [])],
+    externalBin: [...(up.bundle?.externalBin ?? []), NODE, ...(withFuse ? [FUSE] : [])],
     resources: [...resources, '../rrweb/dist-web', '../rrweb/relay', `../${BIN}/NODE-LICENSE.txt`],
     // macOS: ad-hoc potpis (nema Apple Developer ID); bez ikakvog potpisa Apple Silicon ne pokreće app
     ...(os === 'darwin' ? { macOS: { signingIdentity: '-' } } : {}),

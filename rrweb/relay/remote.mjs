@@ -2,8 +2,8 @@
 // fotografija za RapidRAW na serveru. Browser je "agent" (WebSocket /rfs) koji čita i piše u taj folder.
 //  - transfer: browser uploada cijeli folder u mirror na serveru (radi na svim OS-ovima). RapidRAW radi na mirroru,
 //              a novi i izmijenjeni fajlovi (editi .rrdata, exporti) automatski se vraćaju u folder na klijentu.
-//  - ondemand: Linux + FUSE (rrweb/fuse): folder klijenta je disk na serveru, bajtovi se dohvaćaju tek kad ih
-//              RapidRAW čita (chunk cache + read-ahead), a sve što RapidRAW zapiše ide ravno na klijenta.
+//  - ondemand: Linux (FUSE) ili Windows (WinFsp), rrweb/fuse: folder klijenta je disk na serveru, bajtovi se
+//              dohvaćaju tek kad ih RapidRAW čita (chunk cache + read-ahead), a sve što RapidRAW zapiše ide ravno na klijenta.
 //  - keep:     kopija (dohvaćeni originali + editi) ostaje u odabranom folderu na serveru; inače privremeni
 //              cache u RR_WORK koji se briše na Stop.
 // Okvir na /rfs u oba smjera: [u32 LE q][u32 LE duljina JSON zaglavlja][zaglavlje][podaci].
@@ -26,14 +26,26 @@ const FILL_RESERVE = 5e9;       // punjenje u pozadini staje kad na serveru osta
 const LIST_TTL = 3000;
 const ERRNO = { ENOENT: 2, EIO: 5, EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENOTEMPTY: 39, EACCES: 13 };
 
-// server bundle: fuse/<arch>/; all-in-one Linux paket: sidecar pored ugrađenog Node.js-a (/usr/bin, AppImage usr/bin)
+// server bundle: fuse/<arch>/; all-in-one paket: sidecar pored ugrađenog Node.js-a (/usr/bin, AppImage usr/bin, Windows install)
+const WIN = process.platform === 'win32';
+const FUSE_NAME = WIN ? 'rrweb-fuse.exe' : 'rrweb-fuse';
 const FUSE_BIN = process.env.RR_FUSE_BIN ?? [
-  path.join(here, '..', 'fuse', { x64: 'x86_64', arm64: 'aarch64' }[process.arch] ?? process.arch, 'rrweb-fuse'),
-  path.join(path.dirname(process.execPath), 'rrweb-fuse'),
-].find((p) => fs.existsSync(p)) ?? path.join(path.dirname(process.execPath), 'rrweb-fuse');
+  path.join(here, '..', 'fuse', { x64: 'x86_64', arm64: 'aarch64' }[process.arch] ?? process.arch, FUSE_NAME),
+  path.join(path.dirname(process.execPath), FUSE_NAME),
+].find((p) => fs.existsSync(p)) ?? path.join(path.dirname(process.execPath), FUSE_NAME);
 
+let winCheck = { at: 0, ok: false };
 export function capabilities() {
-  if (process.platform !== 'linux') return { ondemand: false, reason: 'On-demand mode needs a Linux server (FUSE). Transfer mode works.' };
+  if (WIN) {
+    if (!fs.existsSync(FUSE_BIN)) return { ondemand: false, reason: `rrweb-fuse not found (${FUSE_BIN}).` };
+    if (Date.now() - winCheck.at > 30000) { // rrweb-fuse --check: može li učitati WinFsp
+      const r = spawnSync(FUSE_BIN, ['--check'], { timeout: 10000, windowsHide: true, stdio: 'ignore' });
+      winCheck = { at: Date.now(), ok: r.status === 0 };
+    }
+    return winCheck.ok ? { ondemand: true }
+      : { ondemand: false, reason: 'On-demand mode needs WinFsp on the server: install it from winfsp.dev, then try again. Transfer mode works.' };
+  }
+  if (process.platform !== 'linux') return { ondemand: false, reason: 'On-demand mode needs a Linux or Windows server for now. Transfer mode works.' };
   if (!fs.existsSync('/dev/fuse')) return { ondemand: false, reason: '/dev/fuse is missing on the server (install fuse3).' };
   if (!fs.existsSync(FUSE_BIN)) return { ondemand: false, reason: `rrweb-fuse not found (${FUSE_BIN}).` };
   if (!['/usr/bin/fusermount3', '/bin/fusermount3', '/usr/local/bin/fusermount3'].some((p) => fs.existsSync(p))) {
@@ -55,6 +67,7 @@ const exists = (p) => fsp.lstat(p).then(() => true, () => false);
 
 // Mount čiji je rrweb-fuse nestao ("Transport endpoint is not connected") odvoji lijeno, da ga se može ponovno koristiti
 function lazyUnmount(dir) {
+  if (process.platform !== 'linux') return; // WinFsp mount nestaje s procesom
   spawnSync('fusermount3', ['-u', '-z', dir], { stdio: 'ignore' });
 }
 
@@ -452,10 +465,14 @@ class Share {
     const rel = h.path === undefined ? undefined : checkRel(h.path);
     switch (h.op) {
       case 'getattr': return this.attr(rel);
-      case 'readdir': {
+      case 'readdir': { // veličina i vrijeme za Windows (WinFsp ih čita iz popisa direktorija)
         const entries = new Map(await this.list(rel));
-        for (const l of this.local) if (parentOf(l) === rel && !entries.has(nameOf(l))) entries.set(nameOf(l), { name: nameOf(l), kind: 'file' });
-        return { entries: [...entries.values()].map((e) => ({ name: e.name, kind: e.kind })) };
+        for (const l of this.local) {
+          if (parentOf(l) !== rel) continue;
+          const st = await fsp.stat(this.localPath(l)).catch(() => null);
+          if (st) entries.set(nameOf(l), { name: nameOf(l), kind: st.isDirectory() ? 'dir' : 'file', size: st.size, mtime: Math.round(st.mtimeMs) });
+        }
+        return { entries: [...entries.values()].map((e) => ({ name: e.name, kind: e.kind, size: e.size ?? 0, mtime: e.mtime ?? this.started })) };
       }
       case 'read': {
         if (this.local.has(rel)) {
@@ -535,8 +552,11 @@ class Share {
 
   async mountFuse() {
     lazyUnmount(this.mount); // ostatak od prethodnog pada relaya
-    await fsp.mkdir(this.mount, { recursive: true });
-    const child = spawn(FUSE_BIN, [this.mount], { stdio: ['pipe', 'pipe', 'inherit'] });
+    if (WIN) { // WinFsp sam stvara folder za mount; ne smije postojati
+      await fsp.mkdir(path.dirname(this.mount), { recursive: true });
+      await fsp.rmdir(this.mount).catch(() => {});
+    } else await fsp.mkdir(this.mount, { recursive: true });
+    const child = spawn(FUSE_BIN, [this.mount], { stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true });
     this.fuse = child;
     // helper može nestati (pad, kill); pisanje u njegov stdin ne smije srušiti relay
     child.stdin.on('error', (e) => console.warn(`[remote] ${this.name}: rrweb-fuse stdin: ${e.message}`));

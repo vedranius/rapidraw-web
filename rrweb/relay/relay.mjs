@@ -11,7 +11,7 @@
 //   RR_WORK   (tmp/rrweb-remote) radni folder za foldere s klijenta (mirror, cache, FUSE mountovi)
 //   RR_APP_CACHE              RapidRAW-ov cache folder (thumbnails/ za RAF-ove "na zahtjev", rrweb/relay/raf.mjs);
 //                             bez njega se nauči iz prvog thumbnaila
-//   RR_FUSE_BIN               rrweb-fuse binarka (default ../fuse/<arch>/rrweb-fuse)
+//   RR_FUSE_BIN               rrweb-fuse binarka (default ../fuse/<arch>/rrweb-fuse[.exe] ili pored Node.js-a)
 //   RR_BRIDGE_PORT (8780)   loopback port na koji se spaja bridge (VITE_RR_RELAY pri buildu bridgea)
 //   RR_DIST   (../dist-web)
 //   RR_NO_BROWSER=1           bridge ne otvara browser (server bez ekrana; pod xvfb-run se prepozna samo)

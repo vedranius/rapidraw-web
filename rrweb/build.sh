@@ -9,9 +9,11 @@ node rrweb/check-shims.mjs
 npm ci --no-audit --no-fund
 npx vite build --config rrweb/vite.web.config.mjs
 (cd rrweb/relay && npm install --omit=dev --no-audit --no-fund)
-if [ "$(uname -s)" = Linux ]; then   # folder s klijenta "na zahtjev" (FUSE)
+if [ "$(uname -s)" = Linux ] || [ "${OS:-}" = Windows_NT ]; then   # folder s klijenta "na zahtjev" (FUSE / WinFsp)
   cargo build --release --manifest-path rrweb/fuse/Cargo.toml
-  mkdir -p "rrweb/fuse/$(uname -m)" && cp rrweb/fuse/target/release/rrweb-fuse "rrweb/fuse/$(uname -m)/"
+  if [ "$(uname -s)" = Linux ]; then   # za run.sh iz repoa
+    mkdir -p "rrweb/fuse/$(uname -m)" && cp rrweb/fuse/target/release/rrweb-fuse "rrweb/fuse/$(uname -m)/"
+  fi
 fi
 echo "rrweb: $(node rrweb/version.mjs)"
 CONFIGS=(--config rrweb/tauri.bridge.json --config rrweb/tauri.version.json)
