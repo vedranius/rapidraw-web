@@ -13,7 +13,7 @@ declare const __RR_VERSION__: string;
 declare const __RR_WEB_VERSION__: string;
 const RELAY: string = import.meta.env.VITE_RR_RELAY ?? 'ws://127.0.0.1:8780/bridge';
 const DEFAULT_UI = `http://localhost:${new URL(RELAY).port || 80}`; // relay s drugim RR_PORT-om ispiše svoje adrese
-const NODE = '../rrweb/win/bin/node'; // sidecar iz rrweb/win/prepare.mjs
+const NODE = '../rrweb/bundle/bin/node'; // sidecar iz rrweb/bundle/prepare.mjs
 const el = (id: string) => document.getElementById(id)!;
 let ws: WebSocket | undefined;
 let calls = 0;

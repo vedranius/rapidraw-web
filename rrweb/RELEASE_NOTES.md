@@ -4,10 +4,15 @@
 {{RRWEB_CHANGES}}
 
 ### Downloads
-- **Windows x64**: `*_windows_x64-setup.exe` is all-in-one (RapidRAW, web UI, Node.js). Install, start *RapidRAW Web Bridge* from the Start menu, and it opens in your browser.
-- **Linux**: one bridge package plus the server bundle (needs Node.js 20+):
-  - Bridge (RapidRAW in bridge mode, all processing on the server's GPU), `*_bridge_*` for x86_64 / aarch64: `.deb` (Debian/Ubuntu), `.rpm` (Fedora/openSUSE), `.AppImage` (any distro)
-  - Server bundle `*_server.tar.gz` / `.zip`: the RapidRAW UI built for the browser, the relay and start scripts
+Install on the computer that has your photos and the GPU; open it from any browser on your network.
+
+| OS | Download | |
+|---|---|---|
+| **Windows** 10/11, x64 | `…_windows_x64-setup.exe` | All-in-one installer. Start *RapidRAW Web Bridge* from the Start menu. |
+| **macOS**, Apple Silicon | `…_macos_arm64.dmg` | All-in-one app (experimental). Not notarized: the first time, right-click the app → *Open* (or *System Settings → Privacy & Security → Open Anyway*). |
+| **macOS**, Intel | `…_macos_x64.dmg` | Same as above. |
+| **Linux**, x64 | `…_linux_x64.deb` (Debian/Ubuntu), `.rpm` (Fedora/openSUSE) or `.AppImage` (any distro), **plus** `…_linux_server.tar.gz` | Bridge package + server bundle, started with `run.sh` (needs Node.js 20+); also runs headless. |
+| **Linux**, arm64 | `…_linux_arm64.deb` / `.rpm` / `.AppImage`, **plus** `…_linux_server.tar.gz` | Same as above. |
 
 Package version: `{{PKG_VERSION}}`, so installing a newer web release over an older one upgrades it, also on the same RapidRAW version.
 

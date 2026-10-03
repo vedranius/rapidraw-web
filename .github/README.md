@@ -39,18 +39,24 @@ Download from the [Releases](https://github.com/vedranius/rapidraw-web/releases)
 
 The first time, Windows Firewall asks about *Node.js JavaScript Runtime*: allow **Private networks** to reach it from other devices.
 
+### macOS: all-in-one app (experimental)
+
+1. Open `…_macos_arm64.dmg` (Apple Silicon) or `…_macos_x64.dmg` (Intel) and drag **RapidRAW Web Bridge** to *Applications*.
+2. The app is not notarized by Apple: the first time, right-click it → *Open*, or allow it under *System Settings → Privacy & Security → Open Anyway*.
+3. Same as on Windows from here: it opens RapidRAW in your browser and asks for your photo library. Allow *node* to accept incoming network connections to use it from other devices.
+
 ### Linux
 
-On the server you need **Node.js 20+**, one **bridge** package (`*_bridge_*`) and the **server bundle** (`*_server.tar.gz`).
+On the server you need **Node.js 20+**, one **bridge** package for your architecture (`…_linux_x64.*` or `…_linux_arm64.*`) and the **server bundle** (`…_linux_server.tar.gz`).
 
 ```bash
-# 1. Bridge — pick one
-sudo apt install ./*_bridge_amd64.deb                    # Debian / Ubuntu (arm64: *_bridge_arm64.deb)
-sudo dnf install ./*_bridge_x86_64.rpm                   # Fedora / openSUSE (aarch64: *_bridge_aarch64.rpm)
-chmod +x ./*_bridge_*.AppImage                           # any distro: put it next to run.sh
+# 1. Bridge — pick one (arm64: *_linux_arm64.*)
+sudo apt install ./*_linux_x64.deb                       # Debian / Ubuntu
+sudo dnf install ./*_linux_x64.rpm                       # Fedora / openSUSE (zypper)
+chmod +x ./*_linux_x64.AppImage                          # any distro: put it next to run.sh
 
 # 2. Server bundle
-tar xzf rapidraw-v*_server.tar.gz && cd rapidraw-v*-web-v*/
+tar xzf *_linux_server.tar.gz && cd rapidraw-v*-web-v*/
 RR_PHOTOS=/mnt/photos ./run.sh
 ```
 
@@ -60,7 +66,7 @@ Open `http://<server>:8780`.
 
 On a headless server (no `DISPLAY`/`WAYLAND_DISPLAY`) `run.sh` starts the bridge under `xvfb-run`, so install `xvfb`. The GPU is used through Vulkan and doesn't need a display.
 
-The server bundle and `run.ps1` also work on Windows (`powershell -ExecutionPolicy Bypass -File .\run.ps1`) if you prefer starting it with the variables below.
+The server bundle and `run.ps1` also work on Windows (`tar xzf …_linux_server.tar.gz`, then `powershell -ExecutionPolicy Bypass -File .\run.ps1`) if you prefer starting it with the variables below.
 
 ## Photo library and folder pickers
 

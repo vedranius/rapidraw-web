@@ -2,6 +2,6 @@ dist-web/
 dist-bridge/
 relay/node_modules/
 bridge/events.ts
-win/bin/
-win/tauri.windows.json
+bundle/bin/
+bundle/tauri.bundle.json
 tauri.version.json
