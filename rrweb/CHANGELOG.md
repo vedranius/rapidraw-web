@@ -2,6 +2,11 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.6.0
+
+- **Fast Fuji RAF browsing in on-demand folders.** Opening a folder of RAF files no longer pulls every whole file (30–45 MB each) from the computer you browse from. The browser sends a finished thumbnail made from the camera's embedded JPEG (about 0.3 MB) and the EXIF header (about 65 KB); RapidRAW uses them as it does for NEF/ARW. In a test with 12 RAFs: 0 MB of RAW data instead of 378 MB until a photo is opened in the editor. Only for photos without edits; edited ones are rendered by RapidRAW as before.
+- The build checks that RapidRAW still caches thumbnails and reads EXIF the same way, so a RapidRAW update can't silently break this.
+
 ## 1.5.1
 
 - Servers without a screen: the bridge no longer tries to open a browser when it runs under `xvfb-run` (or with `RR_NO_BROWSER=1`); on KDE that started `kde-open`, which crashed.

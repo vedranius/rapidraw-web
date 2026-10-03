@@ -738,7 +738,17 @@ export function createRemote({ validName, insideRoots, onChange = () => {} }) {
         if (!res.headersSent) res.writeHead(400, { 'Content-Type': 'text/plain' }).end(e.message);
       }
     },
+    work: WORK,
     roots: () => [...shares.values()].map((s) => s.view),
+    // putanja na mountu foldera "na zahtjev" → { share, rel } (rrweb/relay/raf.mjs)
+    locate(p) {
+      for (const s of shares.values()) {
+        if (s.mode !== 'ondemand' || !p.startsWith(s.view + path.sep)) continue;
+        const rel = p.slice(s.view.length + 1).split(path.sep).join('/');
+        try { return { share: s, rel: checkRel(rel) }; } catch { return null; }
+      }
+      return null;
+    },
     labels: () => Object.fromEntries([...shares.values()].map((s) => [s.view, `${s.name} (this computer)`])),
     async shutdown() { for (const s of shares.values()) await s.stop().catch(() => {}); },
   };

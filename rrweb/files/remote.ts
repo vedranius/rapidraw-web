@@ -105,6 +105,17 @@ class Agent {
     return file;
   }
 
+  // Fuji RAF: gdje je ugrađeni JPEG (zaglavlje: pomak i duljina na 84 i 88, big-endian)
+  async rafPreview(rel: string) {
+    const f = await this.file(rel);
+    const head = new DataView(await f.slice(0, 92).arrayBuffer());
+    const magic = head.byteLength >= 92 ? new TextDecoder().decode(new Uint8Array(head.buffer, 0, 15)) : '';
+    const off = magic ? head.getUint32(84) : 0;
+    const len = magic ? head.getUint32(88) : 0;
+    if (magic !== 'FUJIFILMCCD-RAW' || !len || off + len > f.size) throw new DOMException('no embedded preview', 'TypeMismatchError');
+    return { f, off, len };
+  }
+
   async op(h: Record<string, any>, data: Uint8Array<ArrayBuffer>): Promise<[object, Uint8Array<ArrayBuffer>?]> { // eslint-disable-line @typescript-eslint/no-explicit-any
     const parent = (rel: string) => rel.split('/').slice(0, -1).join('/');
     const name = (rel: string) => rel.split('/').at(-1)!;
@@ -137,6 +148,46 @@ class Agent {
         if (h.done) { await w.close(); this.writers.delete(h.path); }
         this.files.delete(h.path);
         return [{}];
+      }
+      case 'rafexif': { // Fuji RAF: samo EXIF zaglavlje ugrađenog JPEG-a (SOI … APP1 Exif, EOI) za RapidRAW (rrweb/relay/raf.mjs)
+        const { f, off, len } = await this.rafPreview(h.path);
+        const j = new Uint8Array(await f.slice(off, off + Math.min(len, 1 << 18)).arrayBuffer());
+        const v = new DataView(j.buffer);
+        for (let i = 2; i + 10 <= j.length && j[i] === 0xff;) {
+          const seg = 2 + v.getUint16(i + 2);
+          if (j[i + 1] === 0xe1 && new TextDecoder().decode(j.subarray(i + 4, i + 8)) === 'Exif') {
+            const out = new Uint8Array(i + seg + 2);
+            out.set(j.subarray(0, i + seg));
+            out.set([0xff, 0xd9], i + seg);
+            return [{}, out];
+          }
+          i += seg;
+        }
+        throw new DOMException('no EXIF in the embedded preview', 'TypeMismatchError');
+      }
+      case 'thumb': { // Fuji RAF: ugrađeni JPEG smanjen na RapidRAW-ove thumbnaile (rrweb/relay/raf.mjs)
+        const { f, off, len } = await this.rafPreview(h.path);
+        const bmp = await createImageBitmap(f.slice(off, off + len, 'image/jpeg'), { imageOrientation: 'from-image' });
+        const [small, medium] = h.sizes as number[];
+        if (Math.max(bmp.width, bmp.height) < medium * 0.95) { bmp.close(); throw new DOMException('preview too small', 'TypeMismatchError'); }
+        // kao RapidRAW downscale_f32_image: dulja stranica = size, bez povećavanja; JPEG kvalitete 75
+        const fit = (src: ImageBitmap | OffscreenCanvas, size: number) => {
+          const r = Math.min(1, size / Math.max(src.width, src.height));
+          const c = new OffscreenCanvas(Math.max(1, Math.round(src.width * r)), Math.max(1, Math.round(src.height * r)));
+          const ctx = c.getContext('2d')!;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(src, 0, 0, c.width, c.height);
+          return c;
+        };
+        const m = fit(bmp, medium);
+        bmp.close();
+        const enc = async (c: OffscreenCanvas) => new Uint8Array(await (await c.convertToBlob({ type: 'image/jpeg', quality: h.quality ?? 0.75 })).arrayBuffer());
+        const a = await enc(fit(m, small));
+        const b = await enc(m);
+        const out = new Uint8Array(a.length + b.length);
+        out.set(a);
+        out.set(b, a.length);
+        return [{ lens: [a.length, b.length] }, out];
       }
       case 'mkdir': await this.dir(h.path, true); return [{}];
       case 'remove': await (await this.dir(parent(h.path))).removeEntry(name(h.path), { recursive: !!h.recursive }); return [{}];
@@ -344,7 +395,7 @@ export function mountRemote(box: HTMLElement, hooks: { open(path: string): void;
           el('small', {}, 'The whole folder with subfolders is copied first; edit as photos arrive. Best when you are not in a hurry. Works with any server.'))),
         el('label', { class: `rrr-opt${caps.ondemand ? '' : ' off'}` }, ondemand, el('span', {}, el('b', {}, 'On demand: edit right away'),
           el('small', {}, caps.ondemand
-            ? 'Nothing is copied up front: a photo is fetched when RapidRAW opens it. Thumbnails of most RAW files need only a small part of each file; Fuji RAF and Canon CR3 need the whole file, so their first thumbnails take longer.'
+            ? 'Nothing is copied up front: a photo is fetched when RapidRAW opens it. Browsing needs only a small part of each file (Canon CR3: the whole file, so its first thumbnails take longer).'
             : caps.reason ?? 'Not available on this server.'))),
         fillRow,
         el('label', { class: 'rrr-opt' }, keep, el('span', {}, el('b', {}, 'Also keep a copy on the server'),

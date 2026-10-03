@@ -9,6 +9,8 @@
 //   RR_CONFIG (opcionalno)  JSON s postavkama relaya ({"library": "<photo library folder>"}), piše ga bridge prozor
 //   RR_ORIGINS (opcionalno) zarezom odvojeni dodatni dopušteni Origin-i (npr. https://photos.example.com iza proxyja)
 //   RR_WORK   (tmp/rrweb-remote) radni folder za foldere s klijenta (mirror, cache, FUSE mountovi)
+//   RR_APP_CACHE              RapidRAW-ov cache folder (thumbnails/ za RAF-ove "na zahtjev", rrweb/relay/raf.mjs);
+//                             bez njega se nauči iz prvog thumbnaila
 //   RR_FUSE_BIN               rrweb-fuse binarka (default ../fuse/<arch>/rrweb-fuse)
 //   RR_BRIDGE_PORT (8780)   loopback port na koji se spaja bridge (VITE_RR_RELAY pri buildu bridgea)
 //   RR_DIST   (../dist-web)
@@ -25,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createFiles, validName } from './files.mjs';
 import { createRemote } from './remote.mjs';
+import { createRaf } from './raf.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = +(process.env.RR_PORT ?? 8780);
@@ -124,6 +127,13 @@ const files = createFiles({
 });
 // Folderi s klijentskog računala (browser je pohrana): rrweb/relay/remote.mjs
 const remote = createRemote({ validName, insideRoots: (p) => files.within(p), onChange: () => files.invalidate() });
+// Fuji RAF iz foldera "na zahtjev": thumbnail i EXIF iz ugrađenog JPEG-a umjesto cijelog fajla (rrweb/relay/raf.mjs)
+const raf = createRaf({
+  locate: (p) => remote.locate(p),
+  settings: () => bridgeCall('load_settings', {}),
+  bridge: bridgeCall,
+  work: remote.work,
+});
 const LOCAL = { __rr_home: () => os.homedir(), __rr_ping: () => Date.now(), ...files.commands, ...remote.commands };
 
 // Poziv RapidRAW komande iz samog relaya (Files tab: postavke, brisanje u koš)
@@ -202,7 +212,12 @@ wssBridge.on('connection', (ws) => {
       ws.send(JSON.stringify(libraryState()));
       return;
     }
-    if (msg.event !== undefined) { const s = JSON.stringify(msg); clients.forEach((c) => c.send(s)); return; }
+    if (msg.event !== undefined) {
+      if (msg.event === 'thumbnail-generated') raf.learn(msg.payload?.thumbnailPath);
+      const s = JSON.stringify(msg);
+      clients.forEach((c) => c.send(s));
+      return;
+    }
     const f = inflight.get(msg.id); inflight.delete(msg.id);
     if (!f) return;
     msg.id = f.id;
@@ -230,6 +245,18 @@ wssClient.on('connection', (ws, req) => {
       return;
     }
     if (!bridge) { ws.send(JSON.stringify({ id, error: 'RapidRAW bridge nije spojen' })); return; }
+    if (cmd === 'read_exif_for_paths' && Array.isArray(args?.paths)) {
+      raf.readExif(args.paths).then(
+        (result) => ws.send(JSON.stringify({ id, result: result ?? null })),
+        (e) => ws.send(JSON.stringify({ id, error: e.message ?? String(e) })));
+      return;
+    }
+    if (cmd === 'update_thumbnail_queue' && Array.isArray(args?.paths)) {
+      const now = raf.takeThumbs(args.paths);
+      // sve su RAF-ovi koje relay priprema: prazna lista bi RapidRAW-u obrisala red
+      if (args.paths.length && !now.length) { ws.send(JSON.stringify({ id, result: null })); return; }
+      args = { ...args, paths: now };
+    }
     rid = (rid + 1) >>> 0 || 1;
     inflight.set(rid, { client: ws, id, cmd, t0: process.hrtime.bigint() });
     bridge.send(JSON.stringify({ id: rid, cmd, args }));

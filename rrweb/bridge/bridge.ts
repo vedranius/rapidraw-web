@@ -65,6 +65,7 @@ async function startBundledRelay() {
       RR_ROOTS: [await appDataDir(), await appCacheDir()].join(delimiter()),
       RR_CONFIG: await join(await appDataDir(), 'rrweb.json'),
       RR_WORK: await join(await appCacheDir(), 'remote'),
+      RR_APP_CACHE: await appCacheDir(),
       RR_EXIT_WITH_PARENT: '1',
     };
     const cmd = Command.sidecar(NODE, [script], { env });

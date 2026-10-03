@@ -107,7 +107,7 @@ Pick one of two modes:
 
 | | **Copy to the server in the background** | **On demand** |
 |---|---|---|
-| What travels | The whole folder with subfolders, copied first (resumable) | Only what RapidRAW reads: for a thumbnail the embedded preview of most RAW files (a few MB at most), but the **whole file for Fuji RAF and Canon CR3**, whose embedded preview RapidRAW can't read; the whole photo once you edit it |
+| What travels | The whole folder with subfolders, copied first (resumable) | Only what RapidRAW reads: for browsing, the embedded preview of each RAW (a few MB at most; for Fuji RAF the browser sends a finished thumbnail of about 0.3 MB), but the whole file for Canon CR3; the whole photo once you edit it |
 | When you can edit | As photos arrive | Right away |
 | Best for | Time to wait, or a slow upload you leave running | Editing a few photos quickly on a fast connection |
 | Server | Any OS | Linux with `fuse3` (other OSes: see below) |
@@ -122,6 +122,8 @@ In both modes, everything RapidRAW writes (edits in `.rrdata`, exports, new fold
 - **Keep the tab open** while editing: the browser is the storage. If it closes, a copy in progress pauses and continues when you reconnect. If the connection drops (Wi-Fi, a tunnel, reloading the page), RapidRAW waits up to 2 minutes for it to come back instead of getting read errors, and after a server restart the browser registers its folders again by itself.
 
 **How it works.** The browser acts as the storage: it reads and writes the chosen folder for the server over a WebSocket. *Copy* mode uploads the files into a mirror folder on the server, and a watcher sends new or changed files back. *On demand* mode mounts the folder as a disk on the server with FUSE (`rrweb-fuse`, part of the Linux server bundle); each read fetches just the needed range from the browser into a server-side cache, with read-ahead while RapidRAW decodes a photo. Data travels in pieces of at most 1 MB with a keepalive, so tunnels and proxies such as Cloudflare don't cut the connection; reads for RapidRAW always go before the background copy. Mounts left behind by a crash are cleaned up when the server starts.
+
+**Fuji RAF.** RapidRAW reads the embedded preview and the EXIF data only from TIFF-based RAW files (NEF, ARW, CR2, DNG); for a RAF it decodes the whole RAW, and the library reads the EXIF of every photo in a folder as soon as you open it. In on-demand mode that would mean 30–45 MB per photo before you see anything. So for RAF files without edits, the browser cuts the camera's embedded JPEG out of the file, shrinks it to RapidRAW's thumbnail sizes and sends it (about 0.3 MB), and RapidRAW reads the EXIF from that JPEG's header (about 65 KB). Thumbnails then show the camera's JPEG (with its film simulation), exactly like RapidRAW does for NEF or ARW files; a photo you edit gets RapidRAW's own rendering.
 
 **Safety.** The page can only reach the folder you picked (the browser asks for permission). Deletions are never mirrored as permanent deletes of your originals: in copy mode they are not sent back at all, and in on-demand mode a deleted original is moved to a hidden `.rrweb-trash` folder inside the shared folder.
 

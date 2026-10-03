@@ -33,5 +33,23 @@ for (const f of walk('src')) {
     }
   }
 }
+// rrweb/relay/raf.mjs piše u RapidRAW-ov cache thumbnailova i EXIF RAF-a čita kroz RapidRAW: ključ, imena fajlova,
+// kodiranje i put čitanja EXIF-a moraju ostati isti
+const fm = readFileSync('src-tauri/src/file_management.rs', 'utf8');
+const ex = readFileSync('src-tauri/src/exif_processing.rs', 'utf8');
+const ui = readFileSync('src/hooks/useThumbnails.ts', 'utf8');
+const nav = readFileSync('src/hooks/useAppNavigation.ts', 'utf8');
+for (const [what, ok] of [
+  ['cache folder "thumbnails"', fm.includes('cache_dir.join("thumbnails")')],
+  ['cache ključ blake3(path ‖ mtime sekunde LE ‖ adjustments)', /hasher\.update\(path_str\.as_bytes\(\)\);\s*hasher\.update\(&img_mod_time\.to_le_bytes\(\)\);\s*hasher\.update\(adjustments_bytes\);/.test(fm)],
+  ['mtime u sekundama', /\.duration_since\(std::time::UNIX_EPOCH\)\s*\.ok\(\)\?\s*\.as_secs\(\)/.test(fm)],
+  ['bez .rrdata su adjustments prazni', /\} else \{\s*\(0, false, Vec::new\(\)\)\s*\};\s*let cache_hash = compute_thumbnail_cache_hash\(path_str, &adjustments_bytes\)/.test(fm)],
+  ['imena {hash}_small.jpg / {hash}_medium.jpg', fm.includes('format!("{}_small.jpg", cache_hash)') && fm.includes('format!("{}_medium.jpg", cache_hash)')],
+  ['gotov cache se koristi bez dekodiranja', /if !force_regenerate && small_path\.exists\(\) && medium_path\.exists\(\)/.test(fm)],
+  ['JPEG kvaliteta 75, downscale na dulju stranicu', fm.includes('JpegEncoder::new_with_quality(&mut buf, 75)') && fm.includes('downscale_f32_image(image, target_width, target_width)')],
+  ['UI traži thumbnailove s update_thumbnail_queue({ paths })', ui.includes("invoke('update_thumbnail_queue', { paths: pathsToSend })")],
+  ['UI čita EXIF s read_exif_for_paths({ paths })', nav.includes('invoke(Invokes.ReadExifForPaths, { paths: chunk })')],
+  ['EXIF RAW-a: prvo kamadak-exif (extract_metadata), pa rawler', /if is_raw_file\(path\)\s*&& let Some\(map\) = extract_metadata\(file_bytes\)/.test(ex) && /if !map\.is_empty\(\) \{\s*return Some\(map\);\s*\}\s*let metadata = read_raw_metadata\(file_bytes\)\?;/.test(ex)],
+]) if (!ok) problems.push(`RapidRAW thumbnail/EXIF se promijenio (${what}): prilagodi rrweb/relay/raf.mjs`);
 if (problems.length) { console.error('rrweb shim check FAILED:\n  ' + [...new Set(problems)].join('\n  ')); process.exit(1); }
 console.log(`rrweb shim check OK (${Object.keys(SHIMS).length} modula)`);
