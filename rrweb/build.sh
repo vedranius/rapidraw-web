@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builda browser UI (rrweb/dist-web), bridge varijantu RapidRAW-a i relay.
 # BUNDLES=deb,rpm,appimage ./rrweb/build.sh  → i instalacijski paketi
-# Na Windowsu (Git Bash) i macOS-u bridge je all-in-one: ugrađeni Node.js + relay + web UI (rrweb/bundle/prepare.mjs).
+# Bridge je all-in-one: ugrađeni Node.js + relay + web UI (rrweb/bundle/prepare.mjs), na Linuxu i rrweb-fuse.
+# RR_PLAIN=1 → samo bridge bez ugrađenog relaya (relay se onda pokreće s run.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 node rrweb/check-shims.mjs
@@ -14,7 +15,7 @@ if [ "$(uname -s)" = Linux ]; then   # folder s klijenta "na zahtjev" (FUSE)
 fi
 echo "rrweb: $(node rrweb/version.mjs)"
 CONFIGS=(--config rrweb/tauri.bridge.json --config rrweb/tauri.version.json)
-if [ "${OS:-}" = Windows_NT ] || [ "$(uname -s)" = Darwin ]; then
+if [ -z "${RR_PLAIN:-}" ]; then
   node rrweb/bundle/prepare.mjs
   CONFIGS+=(--config rrweb/bundle/tauri.bundle.json)
 fi

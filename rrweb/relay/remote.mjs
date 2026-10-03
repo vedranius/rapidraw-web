@@ -26,8 +26,11 @@ const FILL_RESERVE = 5e9;       // punjenje u pozadini staje kad na serveru osta
 const LIST_TTL = 3000;
 const ERRNO = { ENOENT: 2, EIO: 5, EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENOTEMPTY: 39, EACCES: 13 };
 
-const FUSE_BIN = process.env.RR_FUSE_BIN
-  ?? path.join(here, '..', 'fuse', { x64: 'x86_64', arm64: 'aarch64' }[process.arch] ?? process.arch, 'rrweb-fuse');
+// server bundle: fuse/<arch>/; all-in-one Linux paket: sidecar pored ugrađenog Node.js-a (/usr/bin, AppImage usr/bin)
+const FUSE_BIN = process.env.RR_FUSE_BIN ?? [
+  path.join(here, '..', 'fuse', { x64: 'x86_64', arm64: 'aarch64' }[process.arch] ?? process.arch, 'rrweb-fuse'),
+  path.join(path.dirname(process.execPath), 'rrweb-fuse'),
+].find((p) => fs.existsSync(p)) ?? path.join(path.dirname(process.execPath), 'rrweb-fuse');
 
 export function capabilities() {
   if (process.platform !== 'linux') return { ondemand: false, reason: 'On-demand mode needs a Linux server (FUSE). Transfer mode works.' };

@@ -1,6 +1,6 @@
 // Radi UNUTAR pravog RapidRAW (Tauri) procesa, umjesto UI-ja.
 // Prima pozive s relaya, zove pravi invoke(), vraća rezultat; prosljeđuje sve evente.
-// Ako relay ne radi (npr. pokrenut iz Start menija), pokreće ugrađeni iz Windows installera i otvara browser.
+// Ako relay ne radi (npr. pokrenut iz menija), pokreće ugrađeni (all-in-one paket) i otvara browser.
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { appCacheDir, appDataDir, delimiter, join, resourceDir } from '@tauri-apps/api/path';
@@ -13,7 +13,7 @@ declare const __RR_VERSION__: string;
 declare const __RR_WEB_VERSION__: string;
 const RELAY: string = import.meta.env.VITE_RR_RELAY ?? 'ws://127.0.0.1:8780/bridge';
 const DEFAULT_UI = `http://localhost:${new URL(RELAY).port || 80}`; // relay s drugim RR_PORT-om ispiše svoje adrese
-const NODE = '../rrweb/bundle/bin/node'; // sidecar iz rrweb/bundle/prepare.mjs
+const NODE = '../rrweb/bundle/bin/rrweb-node'; // sidecar iz rrweb/bundle/prepare.mjs
 const el = (id: string) => document.getElementById(id)!;
 let ws: WebSocket | undefined;
 let calls = 0;
@@ -86,7 +86,7 @@ async function startBundledRelay() {
     await cmd.spawn();
     el('hint').textContent = 'Open RapidRAW in your browser (other devices: use your network address). Close this window to stop the server.';
   } catch (e) {
-    // Nema ugrađenog relaya (Linux paketi, ručni build): relay pokreće run.sh / run.ps1
+    // Nema ugrađenog relaya (ručni build bez rrweb/bundle overlaya): relay pokreće run.sh / run.ps1
     relay = 'none';
     log(String(e));
     el('hint').textContent = 'No bundled server in this build. Start rapidraw-web with run.sh / run.ps1 from the server bundle.';
@@ -104,7 +104,7 @@ function connect() {
     if (relay !== 'bundled') el('hint').textContent = '';
     if (relay === 'bundled' && !opened) {
       opened = true;
-      open([...urls][0] ?? DEFAULT_UI);
+      open([...urls][0] ?? DEFAULT_UI).catch(() => {}); // server bez ekrana nema browser
       if (library) getCurrentWindow().minimize(); // bez librarya prozor ostaje otvoren da se odabere
     }
   };

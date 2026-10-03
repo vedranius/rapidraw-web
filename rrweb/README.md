@@ -11,7 +11,8 @@ Everything rapidraw-web adds to RapidRAW lives here. Full documentation: https:/
 | `relay/remote.mjs`, `files/remote.ts`, `fuse/` | *This computer*: a folder on the browsing computer as storage (copy mode with write-back; on-demand mode via the `rrweb-fuse` FUSE helper on Linux) |
 | `files/network.ts` | Connection badge: speed/ping test and preview quality recommendation |
 | `CHANGELOG.md` | What changed in each web version (used in the release notes) |
-| `bundle/prepare.mjs` | All-in-one bridge (Windows, macOS): fetches Node.js (SHA256-checked) as a sidecar and generates the Tauri overlay that bundles relay + web UI |
+| `bundle/prepare.mjs` | All-in-one bridge (Windows, macOS, Linux): fetches Node.js (SHA256-checked) as the `rrweb-node` sidecar (Linux: also `rrweb-fuse`) and generates the Tauri overlay that bundles relay + web UI |
+| `linux/rapidraw-web.service` | systemd user service in the `.deb`/`.rpm` for servers without a screen (`xvfb-run`) |
 | `gen-events.mjs` | Extracts every event name the UI listens to (runs on each bridge build) |
 | `check-shims.mjs` | Fails the build if the UI imports a Tauri module/function the shims don't cover |
 | `vite.web.config.mjs` / `vite.bridge.config.mjs` | Builds for the browser UI and the bridge page |

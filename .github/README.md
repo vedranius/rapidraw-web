@@ -43,37 +43,42 @@ The first time, Windows Firewall asks about *Node.js JavaScript Runtime*: allow 
 
 1. Open `…_macos_arm64.dmg` (Apple Silicon) or `…_macos_x64.dmg` (Intel) and drag **RapidRAW Web Bridge** to *Applications*.
 2. The app is not notarized by Apple: the first time, right-click it → *Open*, or allow it under *System Settings → Privacy & Security → Open Anyway*.
-3. Same as on Windows from here: it opens RapidRAW in your browser and asks for your photo library. Allow *node* to accept incoming network connections to use it from other devices.
+3. Same as on Windows from here: it opens RapidRAW in your browser and asks for your photo library. Allow *rrweb-node* to accept incoming network connections to use it from other devices.
 
-### Linux
+### Linux: one package
 
-On the server you need **Node.js 20+**, one **bridge** package for your architecture (`…_linux_x64.*` or `…_linux_arm64.*`) and the **server bundle** (`…_linux_server.tar.gz`).
-
-```bash
-# 1. Bridge — pick one (arm64: *_linux_arm64.*)
-sudo apt install ./*_linux_x64.deb                       # Debian / Ubuntu
-sudo dnf install ./*_linux_x64.rpm                       # Fedora / openSUSE (zypper)
-chmod +x ./*_linux_x64.AppImage                          # any distro: put it next to run.sh
-
-# 2. Server bundle
-tar xzf *_linux_server.tar.gz && cd rapidraw-v*-web-v*/
-RR_PHOTOS=/mnt/photos ./run.sh
-```
-
-Updating: install the newer packages the same way. Their version is `<RapidRAW>+web.<web>` (e.g. `1.6.4+web.1.1.0`), so a new web release upgrades the bridge even when RapidRAW itself is unchanged.
-
-Open `http://<server>:8780`.
-
-Run it as your normal user, not with `sudo`: as root, edits and exports in your photo folders become root's files and RapidRAW's settings end up in `/root`. If the relay ever stops unexpectedly, `run.sh` starts it again; the browser and the bridge reconnect by themselves. To keep it running in the background without a terminal (until the next reboot), with logs in the journal:
+Download **one** file for your distribution (arm64: `…_linux_arm64.*`). Each contains everything: RapidRAW, the web UI, Node.js and the helper for on-demand folders.
 
 ```bash
-systemd-run --user --unit=rapidraw-web -E RR_PHOTOS=$HOME/Pictures "$PWD/run.sh"
-journalctl --user -u rapidraw-web -f      # logs · stop: systemctl --user stop rapidraw-web
+sudo apt install ./*_linux_x64.deb      # Debian / Ubuntu
+sudo dnf install ./*_linux_x64.rpm      # Fedora / openSUSE (zypper)
+chmod +x ./*_linux_x64.AppImage         # any distro, nothing to install: just run it
 ```
 
-On a headless server (no `DISPLAY`/`WAYLAND_DISPLAY`) `run.sh` starts the bridge under `xvfb-run`, so install `xvfb`. The GPU is used through Vulkan and doesn't need a display.
+**On a desktop:** start **RapidRAW Web Bridge** from the menu (or run the AppImage). Same as on Windows: it starts the server, opens RapidRAW in your browser and asks for your photo library.
 
-The server bundle and `run.ps1` also work on Windows (`tar xzf …_linux_server.tar.gz`, then `powershell -ExecutionPolicy Bypass -File .\run.ps1`) if you prefer starting it with the variables below.
+**On a server without a screen** (`.deb`/`.rpm`; uses `xvfb`, installed as a recommended package):
+
+```bash
+systemctl --user enable --now rapidraw-web    # starts now and at every login
+sudo loginctl enable-linger $USER             # …and at boot, without logging in
+journalctl --user -u rapidraw-web -f          # logs
+```
+
+The photo library is `~/Pictures`. To use another folder (or set any of the [variables below](#configuration)), run `systemctl --user edit rapidraw-web`, add the lines below and restart it with `systemctl --user restart rapidraw-web`:
+
+```ini
+[Service]
+Environment=RR_PHOTOS=/mnt/photos
+```
+
+With the AppImage on a server: `RR_PHOTOS=/mnt/photos xvfb-run -a ./…_linux_x64.AppImage`. The GPU is used through Vulkan and doesn't need a display; `xvfb` only gives the bridge's small window somewhere to live.
+
+Open `http://<server>:8780`. Run it as your normal user, not as root: as root, edits and exports in your photo folders become root's files and RapidRAW's settings end up in `/root`. If the server part ever stops unexpectedly, the bridge starts it again, and the browser reconnects by itself.
+
+Updating: install the newer package the same way. Its version is `<RapidRAW>+web.<web>` (e.g. `1.6.4+web.1.5.0`), so a new web release is an upgrade even when RapidRAW itself is unchanged.
+
+**Server bundle** (`…_linux_server.tar.gz`, optional): the relay and web UI on their own, started with `run.sh` (needs Node.js 20+ and a bridge from one of the packages above, which `run.sh` finds by itself). Useful for Docker or if you want to start the parts yourself: `RR_PHOTOS=/mnt/photos ./run.sh`. Without a display it starts the bridge under `xvfb-run`, and it restarts the relay if it stops. It also works on Windows (`powershell -ExecutionPolicy Bypass -File .un.ps1`).
 
 ## Photo library and folder pickers
 
@@ -145,14 +150,14 @@ The badge next to *Editor | Files* shows the measured speed to the server. Once 
 
 | Variable | Default | |
 |---|---|---|
-| `RR_PHOTOS` | — (required by `run.sh`/`run.ps1`) | Photo library root on the server, also shown in the Files tab |
+| `RR_PHOTOS` | `~/Pictures` in the Linux service; required by `run.sh`/`run.ps1` | Photo folder on the server, shown in the Files tab and the pickers (the library chosen in the RapidRAW Web window comes first) |
 | `RR_PORT` / `RR_HOST` | `8780` / `0.0.0.0` | Listen address |
 | `RR_AUTH` | off | `user:pass` → HTTP Basic auth for UI, files and IPC |
 | `RR_CONFIG` | `<bridge data dir>/rrweb.json` | Where the photo library chosen in the RapidRAW Web window is stored |
 | `RR_ORIGINS` | — | Extra allowed browser origins, comma-separated, e.g. `https://photos.example.com` behind a reverse proxy that changes the `Host` header |
 | `RR_ROOTS` | photos + bridge data/cache dirs | Directories `/files` is allowed to serve |
 | `RR_WORK` | `<bridge cache dir>/remote` | Server-side mirror, cache and mount points for folders from browsing computers |
-| `RR_FUSE_BIN` | `fuse/<arch>/rrweb-fuse` in the server bundle | FUSE helper for on-demand folders (Linux) |
+| `RR_FUSE_BIN` | next to the bundled Node.js, or `fuse/<arch>/rrweb-fuse` in the server bundle | FUSE helper for on-demand folders (Linux) |
 | `RR_BRIDGE_PORT` | `8780` | Loopback port the bridge connects to (change only together with a rebuilt bridge) |
 | `RR_BRIDGE_BIN` | auto-detect | Path to `rapidraw-web-bridge` |
 | `RR_VERBOSE` | off | Log every IPC call with timing |
@@ -184,9 +189,9 @@ The IPC channel can do everything RapidRAW can do on the server (browse and writ
 
 ```bash
 git clone https://github.com/vedranius/rapidraw-web.git && cd rapidraw-web
-./rrweb/build.sh                                  # needs Rust, Node 20+, webkit2gtk-4.1 dev (on Linux it also builds rrweb-fuse)
+./rrweb/build.sh                                  # needs Rust, Node 20+, webkit2gtk-4.1 dev; all-in-one bridge (Linux: with rrweb-fuse)
 BUNDLES=deb,rpm,appimage ./rrweb/build.sh         # also build installer packages
-RR_PHOTOS=~/Pictures RR_VERBOSE=1 ./rrweb/run.sh
+src-tauri/target/release/rapidraw-web-bridge      # start it (or, with the relay in a terminal: RR_PHOTOS=~/Pictures RR_VERBOSE=1 ./rrweb/run.sh)
 ```
 
 ## Versioning and staying in sync with RapidRAW

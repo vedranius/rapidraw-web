@@ -2,6 +2,13 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.5.0
+
+- **Linux: one file.** The `.deb`, `.rpm` and `.AppImage` are now all-in-one like on Windows and macOS: RapidRAW, the web UI, Node.js and the on-demand folder helper in one package. On a desktop, start *RapidRAW Web Bridge* from the menu; it starts the server, opens the browser and asks for your photo library.
+- **Linux servers without a screen:** the `.deb`/`.rpm` install a systemd user service: `systemctl --user enable --now rapidraw-web`. The photo folder is `~/Pictures`, or set `RR_PHOTOS` with `systemctl --user edit rapidraw-web`.
+- The server bundle (`…_linux_server.tar.gz` with `run.sh`) is now optional, for Docker or starting the parts yourself.
+- The bundled Node.js is called `rrweb-node` (on Linux it is installed in `/usr/bin` and must not clash with a system Node.js). On Windows the firewall still asks about *Node.js JavaScript Runtime*.
+
 ## 1.4.1
 
 - **Folders from this computer, on demand: much more robust.**

@@ -1,7 +1,8 @@
-// All-in-one bridge (Windows, macOS): skida službeni Node.js (Tauri sidecar, SHA256 iz nodejs.org SHASUMS256)
+// All-in-one bridge (Windows, macOS, Linux): skida službeni Node.js (Tauri sidecar, SHA256 iz nodejs.org SHASUMS256)
 // i generira rrweb/bundle/tauri.bundle.json, overlay koji u bridge dodaje relay + web UI i dozvolu da bridge
 // sam pokrene relay. Overlay polja zamjenjuju (ne spajaju) upstream liste, pa se upstream resources/capabilities
-// čitaju i nadopunjuju.
+// čitaju i nadopunjuju. Linux: još rrweb-fuse (folderi s klijenta "na zahtjev"; prvo cargo build rrweb/fuse)
+// i systemd user servis za server bez ekrana (rrweb/linux/rapidraw-web.service) u .deb/.rpm.
 //   node rrweb/bundle/prepare.mjs      (RR_NODE_VERSION=v24.x.y za fiksnu verziju; default: zadnji LTS;
 //                                      RR_BUNDLE_PLATFORM=darwin-arm64 itd. za test druge platforme)
 import { createHash } from 'node:crypto';
@@ -11,7 +12,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const BIN = 'rrweb/bundle/bin';
-const NODE = '../rrweb/bundle/bin/node'; // ime sidecara; isto koristi rrweb/bridge/bridge.ts
+// ime sidecara; isto koristi rrweb/bridge/bridge.ts. Ne "node": .deb/.rpm instaliraju sidecare u /usr/bin
+const NODE = '../rrweb/bundle/bin/rrweb-node';
+const FUSE = '../rrweb/bundle/bin/rrweb-fuse';
 // platforma → [rust target triple, Node.js dist datoteka, putanja do binarke unutar arhive]
 const TARGETS = {
   'win32-x64': ['x86_64-pc-windows-msvc', 'win-x64/node.exe'],
@@ -40,7 +43,7 @@ const version = process.env.RR_NODE_VERSION
   ?? (await (await get('https://nodejs.org/dist/index.json')).json()).find((r) => r.lts).version;
 const [triple, distTpl, innerTpl] = TARGETS[platform];
 const dist = distTpl.replaceAll('{v}', version);
-const exe = `${BIN}/node-${triple}${os === 'win32' ? '.exe' : ''}`;
+const exe = `${BIN}/rrweb-node-${triple}${os === 'win32' ? '.exe' : ''}`;
 const stamp = `${exe}.version`; // koja je verzija/arhiva već raspakirana
 
 const sums = await (await get(`https://nodejs.org/dist/${version}/SHASUMS256.txt`)).text();
@@ -64,6 +67,13 @@ if (!existsSync(exe) || !existsSync(stamp) || readFileSync(stamp, 'utf8') !== `$
 }
 writeFileSync(`${BIN}/NODE-LICENSE.txt`, await (await get(`https://raw.githubusercontent.com/nodejs/node/${version}/LICENSE`)).text());
 
+if (os === 'linux') { // relay ga traži pored svoje Node binarke (rrweb/relay/remote.mjs)
+  const built = process.env.RR_FUSE_BUILT ?? 'rrweb/fuse/target/release/rrweb-fuse';
+  if (!existsSync(built)) throw new Error(`nema ${built}: prvo cargo build --release --manifest-path rrweb/fuse/Cargo.toml`);
+  copyFileSync(built, `${BIN}/rrweb-fuse-${triple}`);
+  chmodSync(`${BIN}/rrweb-fuse-${triple}`, 0o755);
+}
+
 const up = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
 const resources = up.bundle?.resources ?? [];
 const capabilities = up.app?.security?.capabilities;
@@ -72,10 +82,15 @@ if (!Array.isArray(resources) || !Array.isArray(capabilities)) {
 }
 const overlay = {
   bundle: {
-    externalBin: [...(up.bundle?.externalBin ?? []), NODE],
+    externalBin: [...(up.bundle?.externalBin ?? []), NODE, ...(os === 'linux' ? [FUSE] : [])],
     resources: [...resources, '../rrweb/dist-web', '../rrweb/relay', `../${BIN}/NODE-LICENSE.txt`],
     // macOS: ad-hoc potpis (nema Apple Developer ID); bez ikakvog potpisa Apple Silicon ne pokreće app
     ...(os === 'darwin' ? { macOS: { signingIdentity: '-' } } : {}),
+    // Linux: server bez ekrana (systemctl --user enable --now rapidraw-web); xvfb za WebKitGTK, fuse3 za "na zahtjev"
+    ...(os === 'linux' ? { linux: {
+      deb: { recommends: ['xvfb', 'fuse3'], files: { '/usr/lib/systemd/user/rapidraw-web.service': '../rrweb/linux/rapidraw-web.service' } },
+      rpm: { recommends: ['xorg-x11-server-Xvfb', 'fuse3'], files: { '/usr/lib/systemd/user/rapidraw-web.service': '../rrweb/linux/rapidraw-web.service' } },
+    } } : {}),
   },
   app: {
     security: {

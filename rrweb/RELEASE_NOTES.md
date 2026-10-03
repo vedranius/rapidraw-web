@@ -11,8 +11,9 @@ Install on the computer that has your photos and the GPU; open it from any brows
 | **Windows** 10/11, x64 | `…_windows_x64-setup.exe` | All-in-one installer. Start *RapidRAW Web Bridge* from the Start menu. |
 | **macOS**, Apple Silicon | `…_macos_arm64.dmg` | All-in-one app (experimental). Not notarized: the first time, right-click the app → *Open* (or *System Settings → Privacy & Security → Open Anyway*). |
 | **macOS**, Intel | `…_macos_x64.dmg` | Same as above. |
-| **Linux**, x64 | `…_linux_x64.deb` (Debian/Ubuntu), `.rpm` (Fedora/openSUSE) or `.AppImage` (any distro), **plus** `…_linux_server.tar.gz` | Bridge package + server bundle, started with `run.sh` (needs Node.js 20+); also runs headless. |
-| **Linux**, arm64 | `…_linux_arm64.deb` / `.rpm` / `.AppImage`, **plus** `…_linux_server.tar.gz` | Same as above. |
+| **Linux**, x64 | `…_linux_x64.deb` (Debian/Ubuntu), `.rpm` (Fedora/openSUSE) **or** `.AppImage` (any distro) | All-in-one, one file. Desktop: start *RapidRAW Web Bridge* from the menu. Server without a screen: `systemctl --user enable --now rapidraw-web`. |
+| **Linux**, arm64 | `…_linux_arm64.deb` / `.rpm` / `.AppImage` | Same as above. |
+| Linux, optional | `…_linux_server.tar.gz` | Relay + web UI with `run.sh`, for Docker or starting the parts yourself (needs Node.js 20+ and a bridge package). |
 
 Package version: `{{PKG_VERSION}}`, so installing a newer web release over an older one upgrades it, also on the same RapidRAW version.
 

@@ -103,9 +103,15 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
             libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf pkg-config xdg-utils
       - run: npm ci --no-audit --no-fund
+      # all-in-one kao na Windowsu/macOS-u: ugrađeni Node.js + relay + web UI + rrweb-fuse, systemd user servis
+      - run: npx vite build --config rrweb/vite.web.config.mjs
+      - run: npm ci --omit=dev --no-audit --no-fund
+        working-directory: rrweb/relay
+      - run: cargo build --release --manifest-path rrweb/fuse/Cargo.toml
+      - run: node rrweb/bundle/prepare.mjs
       - name: Version
         run: if [ -n "$TAG" ]; then node rrweb/version.mjs --check "$TAG"; else node rrweb/version.mjs; fi
-      - run: npx tauri build --bundles deb,rpm,appimage --config rrweb/tauri.bridge.json --config rrweb/tauri.version.json
+      - run: npx tauri build --bundles deb,rpm,appimage --config rrweb/tauri.bridge.json --config rrweb/tauri.version.json --config rrweb/bundle/tauri.bundle.json
       - uses: actions/upload-artifact@v4
         with:
           name: bridge-linux-${{ matrix.arch }}
@@ -114,7 +120,8 @@ jobs:
             src-tauri/target/release/bundle/rpm/*.rpm
             src-tauri/target/release/bundle/appimage/*.AppImage
 
-  # Windows i macOS: all-in-one (bridge sam pokreće ugrađeni relay: Node.js + relay + web UI, rrweb/bundle/prepare.mjs)
+  # Windows i macOS: all-in-one (bridge sam pokreće ugrađeni relay: Node.js + relay + web UI, rrweb/bundle/prepare.mjs);
+  # Linux paketi isto (gore), server bundle ostaje za Docker i ručno pokretanje s run.sh
   bridge-windows:
     name: Bridge Windows x64 (all-in-one)
     runs-on: windows-latest
