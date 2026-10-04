@@ -139,7 +139,7 @@ In both modes, everything RapidRAW writes (edits in `.rrdata`, exports, new fold
 
 ## Editing comes first
 
-RapidRAW makes thumbnails in the background with several workers; for an edited photo it renders the whole RAW on the GPU, the same GPU that renders your slider changes. rapidraw-web therefore hands thumbnails to RapidRAW itself: none while you edit (and for 15 seconds after your last change), one at a time while a photo is open in the editor, four at a time in the library. In a test with 60 edited Fuji RAFs in a local folder, opening a photo went from 5.6 to 2.9 seconds and slider previews got 30–50 % faster. The library's EXIF data of Fuji RAF files is read from the embedded JPEG's header (about 65 KB) instead of the whole file, unless the photo's `.rrdata` already holds it.
+RapidRAW makes thumbnails in the background with several workers; for an edited photo it renders the whole RAW on the GPU, the same GPU that renders your slider changes. rapidraw-web therefore hands thumbnails to RapidRAW itself: none while you edit (and for 15 seconds after your last change), one at a time while a photo is open in the editor, four at a time in the library. In a test with 60 edited Fuji RAFs in a local folder, opening a photo went from 5.6 to 2.9 seconds and slider previews got 30–50 % faster. While a photo opens, a panel at the top shows its progress (download from the computer you browse from, then decoding), and thumbnails that aren't ready yet say where they are (*Queued #3 · ~5 s*, *Rendering…*, *Paused while you edit*). The library's EXIF data of Fuji RAF files is read from the embedded JPEG's header (about 65 KB) instead of the whole file, unless the photo's `.rrdata` already holds it.
 
 ## Connection and preview quality
 

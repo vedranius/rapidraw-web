@@ -70,8 +70,9 @@ async function localExifHead(p) {
 const sidecarHasExif = (text) => { try { return !!JSON.parse(text)?.exif; } catch { return false; } };
 
 // locate(p) → { share, rel } za fajl u folderu "na zahtjev" ili null; offline(p) → je li njegov browser odspojen;
-// settings() → RapidRAW postavke; bridge(cmd, args) → poziv RapidRAW komande; work → radni folder (RR_WORK)
-export function createRaf({ locate, offline, settings, bridge, work }) {
+// fetching(p) → { fetched, total } dok se fajl dohvaća s klijenta; settings() → RapidRAW postavke;
+// bridge(cmd, args) → poziv RapidRAW komande; work → radni folder (RR_WORK)
+export function createRaf({ locate, offline, fetching = () => null, settings, bridge, work }) {
   let dir = process.env.RR_APP_CACHE ? path.join(process.env.RR_APP_CACHE, 'thumbnails') : null;
   let gen = 0;               // update_thumbnail_queue({ paths: [] }) poništava sve što čeka
   const queue = [];          // čekaju pripremu (RAF iz foldera "na zahtjev")
@@ -81,6 +82,9 @@ export function createRaf({ locate, offline, settings, bridge, work }) {
   const heavy = [];          // RapidRAW ih mora napraviti sam
   const out = new Map();     // predani RapidRAW-u → { timer, heavy }
   let done = 0;              // za napredak u UI-ju
+  const preparing = new Set(); // RAF thumbnail se upravo priprema (browser šalje ugrađeni JPEG)
+  let heavyMs = 0;           // prosječno trajanje thumbnaila koji RapidRAW radi sam (za procjenu u UI-ju)
+  const ema = (old, v) => (old ? old * 0.7 + v * 0.3 : v);
   let cfg = null;
   let cfgAt = 0;
   const exifCache = new Map(); // ključ fajla (veličina, vrijeme) → EXIF mapa
@@ -127,13 +131,14 @@ export function createRaf({ locate, offline, settings, bridge, work }) {
   }
 
   function submit(paths, isHeavy) {
-    for (const p of paths) out.set(p, { heavy: isHeavy, timer: setTimeout(() => finished(p), OUT_WAIT) });
+    for (const p of paths) out.set(p, { heavy: isHeavy, at: Date.now(), timer: setTimeout(() => finished(p), OUT_WAIT) });
     bridge('update_thumbnail_queue', { paths }).catch(() => paths.forEach(finished));
   }
 
-  function finished(p) {
+  function finished(p, ok = false) {
     const o = out.get(p);
     if (!o) return;
+    if (ok && o.heavy) heavyMs = ema(heavyMs, Date.now() - o.at);
     clearTimeout(o.timer);
     out.delete(p);
     done++;
@@ -163,11 +168,13 @@ export function createRaf({ locate, offline, settings, bridge, work }) {
     while (running < PARALLEL && queue.length) {
       const item = queue.pop();
       running++;
+      preparing.add(item.p);
       prepare(item)
         .catch((e) => { if (e.code !== 'ENOENT') console.warn(`[raf] thumbnail ${item.p}: ${e.message}`); return false; })
         .then((isCached) => {
           running--;
           pending.delete(item.p);
+          preparing.delete(item.p);
           if (item.gen === gen) (isCached ? cheap : heavy).push(item.p);
           pumpOut();
           pump();
@@ -227,7 +234,27 @@ export function createRaf({ locate, offline, settings, bridge, work }) {
     },
 
     // thumbnail-generated iz RapidRAW-a
-    generated(p) { finished(p); },
+    generated(p) { finished(p, true); },
+
+    // Stanje thumbnaila za UI (rrweb/files/progress.ts): u redu (mjesto, procjena), priprema, dohvat, renderiranje;
+    // gotovi i nepoznati se ne vraćaju
+    status(paths) {
+      const busy = editor.busy();
+      const limit = editor.recent() ? OUT_EDITOR : OUT_LIBRARY;
+      const res = {};
+      for (const p of paths) {
+        const o = out.get(p);
+        if (o) {
+          const dl = fetching(p);
+          res[p] = dl ? { state: 'downloading', ...dl } : { state: 'rendering', ms: Date.now() - o.at };
+        } else if (preparing.has(p)) res[p] = { state: 'preparing' };
+        else if (heavy.includes(p)) {
+          const pos = heavy.length - heavy.lastIndexOf(p); // predaje se od kraja reda
+          res[p] = { state: 'queued', pos, paused: busy, eta: busy ? null : Math.round(Math.ceil(pos / limit) * (heavyMs || 3000) / 1000) };
+        } else if (cheap.includes(p) || pending.has(p)) res[p] = { state: 'queued', paused: busy };
+      }
+      return res;
+    },
     // thumbnail-generation-complete: RapidRAW nema više ništa u redu (i one koji nisu uspjeli, pa se nisu javili)
     drained() { for (const p of [...out.keys()]) finished(p); },
     // napredak za UI dok relay još ima posla (null: neka UI vidi RapidRAW-ov)

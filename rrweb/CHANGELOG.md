@@ -2,6 +2,12 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.10.0
+
+- **See what's happening while a photo opens.** A small panel at the top shows the photo's name and progress: for folders used from the computer you browse from, *downloading 12 MB of 29 MB · 14 MB/s · ~1 s left*; then *decoding RAW… 0.6 s (usually ~1.5 s)*.
+- **Thumbnails that aren't ready yet say why:** *Queued #3 · ~5 s*, *Rendering…*, *Downloading 45 %*, *Fetching preview…* or *Paused while you edit*. The labels disappear as thumbnails arrive.
+- Going back from the editor to the library resumes thumbnails at once (before, they waited 15 s after the last edit).
+
 ## 1.9.1
 
 - Fixed: the folder pickers (*Add Folder*) and the Files tab could hang and show nothing while a folder from another computer was shared on demand but not connected (for example from a closed browser tab). Such folders are now shown as *not connected* and are not touched, operations on them fail at once instead of waiting, and RapidRAW's own checks of them no longer block for two minutes.

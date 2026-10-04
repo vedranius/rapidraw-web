@@ -41,6 +41,7 @@ export const editor = {
     return this.loads.size > 0 || Date.now() - this.last < EDIT_QUIET;
   },
   recent() { return Date.now() - this.last < EDIT_RECENT; },
+  left() { this.last = 0; }, // UI javlja povratak u library
   async idle(stop = () => false) { while (this.busy() && !stop()) await new Promise((r) => setTimeout(r, 300)); },
 };
 const RECONNECT_WAIT = 120000;  // koliko zahtjev čeka da se browser ponovno spoji
@@ -162,6 +163,7 @@ class Cached {
     const fd = await this.open();
     await fd.write(data, 0, data.length, off);
     this.share.stats.fetched += data.length;
+    this.share.recordFetch(data.length);
     for (let i = start; i < start + count; i++) this.have[i] = 1;
   }
 
@@ -220,12 +222,20 @@ class Cached {
       await fsp.utimes(dest, new Date(), new Date(this.mtime)).catch(() => {});
       this.file = dest;
       this.done = true;
+      this.completedAt = Date.now();
       const old = this.fd;
       this.fd = null;
       setTimeout(() => old?.close().catch(() => {}), 5000);
       this.share.stats.complete++;
     })();
     return this.completing;
+  }
+
+  // koliko je fajla već na serveru (za napredak u UI-ju)
+  fetchedBytes() {
+    let n = 0;
+    for (const h of this.have) n += h;
+    return Math.min(this.size, n * CHUNK);
   }
 
   async read(off, len) {
@@ -265,6 +275,7 @@ class Share {
     this.active = [0, 0, 0, 0];    // dohvata s klijenta u tijeku, po prioritetu (PRIO)
     this.waiting = [[], [], [], []];
     this.focus = null;             // rel fotke otvorene u editoru
+    this.samples = [];             // [vrijeme, bajtova] dohvata s klijenta, za brzinu u UI-ju
     this.offlineSince = Date.now(); // dok se browser ne spoji (attach)
     // fill: total = veličina cijelog foldera, filled = koliko je od toga već cijelo na serveru
     this.stats = { fetched: 0, complete: 0, uploaded: 0, pushed: 0, total: 0, filled: 0, filling: false, diskFull: false };
@@ -369,6 +380,20 @@ class Share {
     for (let q = 0; q < this.waiting.length; q++) {
       while (this.waiting[q].length && this.canStart(q)) { this.active[q]++; this.waiting[q].shift()(); }
     }
+  }
+
+  recordFetch(n) {
+    const now = Date.now();
+    this.samples.push([now, n]);
+    while (this.samples.length && now - this.samples[0][0] > 3000) this.samples.shift();
+  }
+
+  // bajtova/s u zadnje 3 s
+  rate() {
+    const now = Date.now();
+    const recent = this.samples.filter(([t]) => now - t <= 3000);
+    if (!recent.length) return 0;
+    return recent.reduce((s, [, n]) => s + n, 0) / Math.max(1, (now - recent[0][0]) / 1000);
   }
 
   async requestAt(p, head, data) {
@@ -826,6 +851,22 @@ export function createRemote({ validName, insideRoots, onChange = () => {} }) {
     offline(p) {
       const hit = typeof p === 'string' ? this.locate(p.split('?vc=')[0]) : null;
       return !!hit && !hit.share.agent && Date.now() - hit.share.offlineSince > 5000;
+    },
+    // Napredak otvaranja fotke za UI (rrweb/files/progress.ts): null za fotke izvan foldera "na zahtjev"
+    progress(p) {
+      const hit = typeof p === 'string' ? this.locate(p.split('?vc=')[0]) : null;
+      if (!hit) return null;
+      const { share, rel } = hit;
+      if (!share.agent && Date.now() - share.offlineSince > 5000) return { phase: 'offline' };
+      const c = share.files.get(rel);
+      if (c?.done) return { phase: 'decoding', completedAt: c.completedAt ?? 0 };
+      return { phase: 'downloading', fetched: c ? c.fetchedBytes() : 0, total: c?.size ?? 0, rate: Math.round(share.rate()) };
+    },
+    // fajl iz foldera "na zahtjev" koji se upravo dohvaća: { fetched, total } (thumbnaili u UI-ju)
+    fetching(p) {
+      const hit = typeof p === 'string' ? this.locate(p.split('?vc=')[0]) : null;
+      const c = hit?.share.files.get(hit.rel);
+      return c && !c.done && c.inflight.size ? { fetched: c.fetchedBytes(), total: c.size } : null;
     },
     // load_image iz editora: ako je fotka iz foldera "na zahtjev", dohvati je ispred svega ostalog
     focus(p) {

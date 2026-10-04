@@ -156,11 +156,25 @@ const remote = createRemote({ validName, insideRoots: (p) => files.within(p), on
 const raf = createRaf({
   locate: (p) => remote.locate(p),
   offline: (p) => remote.offline(p),
+  fetching: (p) => remote.fetching(p),
   settings: () => bridgeCall('load_settings', {}),
   bridge: bridgeCall,
   work: remote.work,
 });
-const LOCAL = { __rr_home: () => os.homedir(), __rr_ping: () => Date.now(), ...files.commands, ...remote.commands };
+// Napredak za UI (rrweb/files/progress.ts): otvaranje fotke i thumbnaili koji još nisu gotovi
+let decodeMs = 0; // prosječno dekodiranje RAW-a (load_image bez čekanja na dohvat s klijenta)
+const progressCommands = {
+  __rr_progress: ({ path: p }) => ({ ...(remote.progress(p) ?? { phase: 'decoding' }), decodeMs: Math.round(decodeMs) }),
+  __rr_thumbs: ({ paths }) => raf.status(Array.isArray(paths) ? paths.slice(0, 300) : []),
+  __rr_view: ({ mode }) => { if (mode === 'library') editor.left(); return null; },
+};
+function loadDone(f) {
+  if (f.cmd !== 'load_image' || !f.started) return;
+  const from = Math.max(f.started, remote.progress(f.path)?.completedAt ?? 0);
+  const ms = Date.now() - from;
+  if (ms > 0 && ms < 120000) decodeMs = decodeMs ? decodeMs * 0.7 + ms * 0.3 : ms;
+}
+const LOCAL = { ...progressCommands, __rr_home: () => os.homedir(), __rr_ping: () => Date.now(), ...files.commands, ...remote.commands };
 
 // Poziv RapidRAW komande iz samog relaya (Files tab: postavke, brisanje u koš)
 function bridgeCall(cmd, args) {
@@ -226,7 +240,7 @@ wssBridge.on('connection', (ws) => {
       const r = data.readUInt32LE(0);
       const f = inflight.get(r); inflight.delete(r);
       if (!f) return;
-      if (f.cmd === 'load_image') editor.loaded(r);
+      if (f.cmd === 'load_image') { editor.loaded(r); loadDone(f); }
       data.writeUInt32LE(f.id, 0);           // prepiši relayId → id klijenta
       f.client.send(data, { binary: true });
       log(f, data.length - 4);
@@ -259,7 +273,7 @@ wssBridge.on('connection', (ws) => {
     }
     const f = inflight.get(msg.id); inflight.delete(msg.id);
     if (!f) return;
-    if (f.cmd === 'load_image') editor.loaded(msg.id);
+    if (f.cmd === 'load_image') { editor.loaded(msg.id); if (!('error' in msg)) loadDone(f); }
     msg.id = f.id;
     f.client.send(JSON.stringify(msg));
     log(f);
@@ -308,7 +322,7 @@ wssClient.on('connection', (ws, req) => {
       editor.loading(rid);
       remote.focus(args?.path);
     }
-    inflight.set(rid, { client: ws, id, cmd, t0: process.hrtime.bigint() });
+    inflight.set(rid, { client: ws, id, cmd, t0: process.hrtime.bigint(), ...(cmd === 'load_image' ? { path: args?.path, started: Date.now() } : {}) });
     bridge.send(JSON.stringify({ id: rid, cmd, args }));
   });
   ws.on('close', () => {
