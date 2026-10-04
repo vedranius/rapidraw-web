@@ -166,7 +166,8 @@ let decodeMs = 0; // prosječno dekodiranje RAW-a (load_image bez čekanja na do
 const progressCommands = {
   __rr_progress: ({ path: p }) => ({ ...(remote.progress(p) ?? { phase: 'decoding' }), decodeMs: Math.round(decodeMs) }),
   __rr_thumbs: ({ paths }) => raf.status(Array.isArray(paths) ? paths.slice(0, 300) : []),
-  __rr_view: ({ mode }) => { if (mode === 'library') editor.left(); return null; },
+  __rr_view: ({ mode }) => { if (mode === 'library' || mode === 'editor') editor.setView(mode); return null; },
+  __rr_thumbs_summary: () => raf.summary(),
 };
 function loadDone(f) {
   if (f.cmd !== 'load_image' || !f.started) return;

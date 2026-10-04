@@ -2,6 +2,13 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.11.0
+
+- **While a photo is open in the editor, no heavy thumbnails are made at all** (edited photos, which RapidRAW renders from the whole RAW on the GPU and, for folders used from another computer, after fetching the whole file). Only thumbnails RapidRAW already has in its cache still appear. Everything continues as soon as you go back to the library. Before, one at a time started after 15 s without changes and slowed the next slider move. Test with 40 edited RAFs: 9 thumbnails rendered during 30 s of editing before, 0 now.
+- **Visible first:** thumbnails of the tiles you see right now (library and filmstrip) jump to the front of the queue.
+- **How many are left, at the top:** *Thumbnails 37 · ~2 min* or *Thumbnails 18 · paused while editing*, also for thumbnails that aren't on screen.
+- The filmstrip in the editor also shows short labels on thumbnails that aren't ready (*Paused*, *#3 · 5 s*, *Rendering*).
+
 ## 1.10.0
 
 - **See what's happening while a photo opens.** A small panel at the top shows the photo's name and progress: for folders used from the computer you browse from, *downloading 12 MB of 29 MB · 14 MB/s · ~1 s left*; then *decoding RAW… 0.6 s (usually ~1.5 s)*.

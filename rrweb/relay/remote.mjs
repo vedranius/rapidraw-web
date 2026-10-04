@@ -41,8 +41,16 @@ export const editor = {
     return this.loads.size > 0 || Date.now() - this.last < EDIT_QUIET;
   },
   recent() { return Date.now() - this.last < EDIT_RECENT; },
-  left() { this.last = 0; }, // UI javlja povratak u library
-  async idle(stop = () => false) { while (this.busy() && !stop()) await new Promise((r) => setTimeout(r, 300)); },
+  // UI (rrweb/files/progress.ts) javlja prikaz: 'editor' ili 'library', i ponavlja ga svakih par sekundi
+  view: { mode: null, at: 0 },
+  setView(mode) {
+    if (mode === 'library' && this.view.mode === 'editor') this.last = 0; // povratak u library: pozadina odmah
+    this.view = { mode, at: Date.now() };
+  },
+  viewKnown() { return Date.now() - this.view.at < 30000; },
+  editing() { return this.viewKnown() && this.view.mode === 'editor'; }, // fotka je otvorena u editoru
+  // pozadinski posao (punjenje, priprema thumbnaila) čeka dok editor radi i dok je fotka otvorena
+  async idle(stop = () => false) { while ((this.busy() || this.editing()) && !stop()) await new Promise((r) => setTimeout(r, 300)); },
 };
 const RECONNECT_WAIT = 120000;  // koliko zahtjev čeka da se browser ponovno spoji
 const FILL_RESERVE = 5e9;       // punjenje u pozadini staje kad na serveru ostane manje od 5 GB

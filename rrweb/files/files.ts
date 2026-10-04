@@ -87,7 +87,7 @@ const panel = el('div', { id: 'rrf', hidden: true },
   drop, fileInput, sink);
 document.body.append(panel, tabs);
 mountNetwork(tabs);
-mountProgress();
+mountProgress(tabs);
 // točna verzija, kao tag i release na GitHubu
 tabs.append(el('a', { class: 'rrf-tag', href: `https://github.com/vedranius/rapidraw-web/releases/tag/${TAG}`, target: '_blank', rel: 'noopener', title: 'rapidraw-web version: open the release on GitHub' }, TAG));
 mountRemote(remoteBox, { open: (p) => load(p), refresh: () => { if (isOpen) load(listing.path, [...selected]); } });

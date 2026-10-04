@@ -1,17 +1,20 @@
-// Što se događa dok čekaš: kod otvaranja fotke (dohvat s računala koje je dijeli, pa dekodiranje RAW-a) i na
-// thumbnailima u libraryju koji još nisu gotovi (u redu, dohvat, renderiranje). Podatke daje relay
-// (__rr_progress, __rr_thumbs); RapidRAW-ov UI se ne dira, oznake se samo dodaju preko njegovih elemenata.
+// Što se događa dok čekaš: kod otvaranja fotke (dohvat s računala koje je dijeli, pa dekodiranje RAW-a), na
+// thumbnailima koji još nisu gotovi (library i filmstrip: u redu, dohvat, renderiranje) i ukupno u traci na vrhu.
+// Relayu javlja i prikaz (editor ili library), da dok je fotka otvorena ne radi teške thumbnaile.
+// Podatke daje relay (__rr_progress, __rr_thumbs, __rr_thumbs_summary); RapidRAW-ov UI se ne dira, oznake se samo
+// dodaju preko njegovih elemenata.
 import { call, onCall } from '../shim/transport';
 import { el, fmtSize } from './ui';
 
 type Load = { phase: 'downloading' | 'decoding' | 'offline'; fetched?: number; total?: number; rate?: number; decodeMs?: number };
 type Thumb = { state: 'queued' | 'preparing' | 'downloading' | 'rendering'; pos?: number; eta?: number | null; paused?: boolean; fetched?: number; total?: number };
+type Summary = { left: number; heavy: number; paused: boolean; eta: number };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const base = (p: string) => p.split('?vc=')[0].split(/[\\/]/).pop() ?? p;
 const secs = (s: number) => (s < 60 ? `${Math.max(1, Math.round(s))} s` : `${Math.round(s / 60)} min`);
 
-export function mountProgress() {
+export function mountProgress(tabs: HTMLElement) {
   const names = new Map<string, string>(); // naziv na pločici → putanja (iz update_thumbnail_queue)
 
   // --- otvaranje fotke u editoru ---
@@ -68,50 +71,79 @@ export function mountProgress() {
   let thumbTimer: ReturnType<typeof setTimeout> | null = null;
   function scheduleThumbs(ms = 600) { thumbTimer ??= setTimeout(() => { thumbTimer = null; updateThumbs(); }, ms); }
 
-  function label(t: Thumb) {
-    if (t.state === 'rendering') return 'Rendering…';
-    if (t.state === 'preparing') return 'Fetching preview…';
-    if (t.state === 'downloading') return `Downloading ${t.total ? Math.round(((t.fetched ?? 0) / t.total) * 100) : 0} %`;
-    if (t.paused) return 'Paused while you edit';
-    return t.pos ? `Queued #${t.pos}${t.eta ? ` · ~${secs(t.eta)}` : ''}` : 'Queued';
+  // short: filmstrip (male pločice)
+  function label(t: Thumb, short: boolean) {
+    if (t.state === 'rendering') return short ? 'Rendering' : 'Rendering…';
+    if (t.state === 'preparing') return short ? 'Preview…' : 'Fetching preview…';
+    if (t.state === 'downloading') return `${short ? '' : 'Downloading '}${t.total ? Math.round(((t.fetched ?? 0) / t.total) * 100) : 0} %`;
+    if (t.paused) return short ? 'Paused' : 'Paused while you edit';
+    if (!t.pos) return 'Queued';
+    return short ? `#${t.pos}${t.eta ? ` · ${secs(t.eta)}` : ''}` : `Queued #${t.pos}${t.eta ? ` · ~${secs(t.eta)}` : ''}`;
+  }
+
+  // Pločice bez thumbnaila: library grid (naziv u .truncate) i filmstrip u editoru (naziv u data-tooltip)
+  function waitingTiles() {
+    const res: { host: HTMLElement; tile: HTMLElement; path: string; short: boolean }[] = [];
+    const add = (tile: HTMLElement, host: HTMLElement, name: string, short: boolean) => {
+      const path = names.get(name);
+      if (tile.querySelector('img') || !path) { tile.querySelector('.rrt-badge')?.remove(); return; }
+      res.push({ host, tile, path, short });
+    };
+    for (const tile of document.querySelectorAll<HTMLElement>('[data-bench-id="thumbnail"]')) {
+      add(tile, (tile.firstElementChild as HTMLElement) ?? tile, tile.querySelector('.truncate')?.textContent?.trim() ?? '', false);
+    }
+    for (const tile of document.querySelectorAll<HTMLElement>('div[data-tooltip]')) {
+      if (tile.dataset.benchId || !tile.querySelector('svg.lucide-image, img') || !tile.offsetParent) continue;
+      add(tile, tile, tile.dataset.tooltip ?? '', true);
+    }
+    return res;
   }
 
   async function updateThumbs() {
-    const tiles = [...document.querySelectorAll<HTMLElement>('[data-bench-id="thumbnail"]')];
-    const waiting = new Map<HTMLElement, string>();
-    for (const tile of tiles) {
-      const old = tile.querySelector('.rrt-badge');
-      const name = tile.querySelector('.truncate')?.textContent?.trim() ?? '';
-      const path = names.get(name);
-      if (tile.querySelector('img') || !path) { old?.remove(); continue; }
-      waiting.set(tile, path);
-    }
-    if (waiting.size) {
-      const st = await call<Record<string, Thumb>>('__rr_thumbs', { paths: [...new Set(waiting.values())] }).catch(() => ({} as Record<string, Thumb>));
-      for (const [tile, path] of waiting) {
+    const waiting = waitingTiles();
+    if (waiting.length) {
+      const st = await call<Record<string, Thumb>>('__rr_thumbs', { paths: [...new Set(waiting.map((w) => w.path))] }).catch(() => ({} as Record<string, Thumb>));
+      for (const { host, tile, path, short } of waiting) {
         const t = st[path];
         let badge = tile.querySelector<HTMLElement>('.rrt-badge');
         if (!t || tile.querySelector('img')) { badge?.remove(); continue; }
         if (!badge) {
-          badge = el('div', { class: 'rrt-badge' });
-          (tile.firstElementChild ?? tile).append(badge);
+          badge = el('div', { class: `rrt-badge${short ? ' short' : ''}` });
+          host.append(badge);
         }
-        badge.textContent = label(t);
+        badge.textContent = label(t, short);
       }
     }
     // dok ima pločica bez slike, osvježavaj; inače čekaj sljedeći zahtjev za thumbnailima
-    if (waiting.size && document.visibilityState === 'visible') scheduleThumbs(1000);
-    else if (waiting.size) scheduleThumbs(3000);
+    if (waiting.length && document.visibilityState === 'visible') scheduleThumbs(1000);
+    else if (waiting.length) scheduleThumbs(3000);
   }
+
+  // --- ukupno, u traci na vrhu (i za thumbnaile koji se ne vide) ---
+  const total = el('span', { class: 'rrf-thumbs', hidden: true, title: 'Thumbnails still to make. Heavy ones (edited photos) wait while a photo is open in the editor, so editing stays fast.' });
+  tabs.insertBefore(total, tabs.querySelector('.rrf-tag'));
+  setInterval(async () => {
+    if (document.visibilityState !== 'visible') return;
+    const s = await call<Summary>('__rr_thumbs_summary').catch(() => null);
+    if (!s || !s.left) { total.hidden = true; return; }
+    total.hidden = false;
+    total.textContent = s.paused && s.heavy ? `Thumbnails ${s.left} · paused while editing` : `Thumbnails ${s.left}${s.eta ? ` · ~${secs(s.eta)}` : ''}`;
+  }, 2000);
   // pločice se pojavljuju i pri pomicanju (virtualni grid)
   document.addEventListener('scroll', () => scheduleThumbs(300), { capture: true, passive: true });
 
-  // Povratak iz editora u library: relay odmah nastavlja s thumbnailima (inače čeka da editor utihne)
-  let inEditor = false;
+  // Prikaz za relay: dok je fotka otvorena u editoru nema teških thumbnaila; povratak u library ih odmah nastavlja.
+  // Javlja se pri promjeni i svakih 5 s (relay bez javljanja >30 s, npr. zatvorena kartica, radi kao prije)
+  let inEditor: boolean | null = null;
+  let sentAt = 0;
   setInterval(() => {
     // editor ostaje u DOM-u i kad se vratiš u library (samo skriven)
     const now = !!document.querySelector<HTMLElement>('[data-bench-id="back-to-library"]')?.offsetParent;
-    if (inEditor && !now) { call('__rr_view', { mode: 'library' }).catch(() => {}); scheduleThumbs(300); }
+    if (now !== inEditor || Date.now() - sentAt > 5000) {
+      call('__rr_view', { mode: now ? 'editor' : 'library' }).catch(() => {});
+      sentAt = Date.now();
+      if (!now) scheduleThumbs(300);
+    }
     inEditor = now;
   }, 1000);
 }
