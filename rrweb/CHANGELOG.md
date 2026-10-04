@@ -6,7 +6,7 @@ Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names
 
 - **The filmstrip fills up while you edit.** Before, no thumbnails were made at all while a photo was open in the editor. Now they are made in short pauses between your edits (no change and no photo opening for about 1.5 s):
   - quick thumbnails (from the cache or the embedded JPEG) for every photo;
-  - full renders only for the photos next to the open one in the filmstrip: the next 20 first, then the previous 5. When you move on to the next photo, its thumbnail is usually ready, and for folders used from another computer the photo is already on the server, so it opens faster.
+  - full renders only for the photos next to the open one in the filmstrip: the next 20 first, then the previous 5. When you move on to the next photo, its thumbnail is usually ready. For an edited photo in a folder used from another computer, rendering its thumbnail also brings the photo to the server, so it then opens faster.
   
   The other photos continue in the library. The top bar shows *Thumbnails 30 · between edits, 12 in library*.
 - **It adapts to the server.** It starts with one thumbnail at a time. rapidraw-web measures how long slider previews and opening a photo take while a thumbnail is being made, compared with the time without one. If editing gets noticeably slower, it makes fewer at once and waits longer before starting (up to 8 s). If editing stays fast, it makes more at once (up to a quarter of the CPU threads, at most 4) and starts sooner. The server log (`relay.log`) records every change.
