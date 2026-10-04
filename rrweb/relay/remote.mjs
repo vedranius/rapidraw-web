@@ -41,14 +41,18 @@ export const editor = {
     return this.loads.size > 0 || Date.now() - this.last < EDIT_QUIET;
   },
   recent() { return Date.now() - this.last < EDIT_RECENT; },
-  // UI (rrweb/files/progress.ts) javlja prikaz: 'editor' ili 'library', i ponavlja ga svakih par sekundi
-  view: { mode: null, at: 0 },
-  setView(mode) {
-    if (mode === 'library' && this.view.mode === 'editor') this.last = 0; // povratak u library: pozadina odmah
-    this.view = { mode, at: Date.now() };
+  // UI (rrweb/files/progress.ts) javlja prikaz: 'editor' ili 'library', i ponavlja ga svakih par sekundi.
+  // Svaka kartica (klijent) posebno: fotka je otvorena ako je otvorena u bilo kojoj
+  views: new Map(), // klijent → { mode, at }
+  setView(mode, who = null) {
+    const was = this.editing();
+    this.views.set(who, { mode, at: Date.now() });
+    if (was && !this.editing()) this.last = 0; // povratak u library: pozadina odmah
   },
-  viewKnown() { return Date.now() - this.view.at < 30000; },
-  editing() { return this.viewKnown() && this.view.mode === 'editor'; }, // fotka je otvorena u editoru
+  dropView(who) { this.views.delete(who); },
+  fresh() { return [...this.views.values()].filter((v) => Date.now() - v.at < 30000); },
+  viewKnown() { return this.fresh().length > 0; },
+  editing() { return this.fresh().some((v) => v.mode === 'editor'); }, // fotka je otvorena u editoru
   // pozadinski posao (punjenje, priprema thumbnaila) čeka dok editor radi i dok je fotka otvorena
   async idle(stop = () => false) { while ((this.busy() || this.editing()) && !stop()) await new Promise((r) => setTimeout(r, 300)); },
 };

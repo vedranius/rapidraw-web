@@ -166,7 +166,7 @@ let decodeMs = 0; // prosječno dekodiranje RAW-a (load_image bez čekanja na do
 const progressCommands = {
   __rr_progress: ({ path: p }) => ({ ...(remote.progress(p) ?? { phase: 'decoding' }), decodeMs: Math.round(decodeMs) }),
   __rr_thumbs: ({ paths }) => raf.status(Array.isArray(paths) ? paths.slice(0, 300) : []),
-  __rr_view: ({ mode }) => { if (mode === 'library' || mode === 'editor') editor.setView(mode); return null; },
+  __rr_view: ({ mode }, ws) => { if (mode === 'library' || mode === 'editor') editor.setView(mode, ws); return null; },
   __rr_thumbs_summary: () => raf.summary(),
 };
 function loadDone(f) {
@@ -224,9 +224,19 @@ if (PORT !== BRIDGE_PORT) {
 
 // WebSocket bez 'error' listenera baca grešku (neispravan okvir, prekinuta veza kroz tunel) i ruši cijeli relay
 const quiet = (ws, what) => ws.on('error', (e) => console.warn(`[relay] ${what}: ${e.message}`));
-// tuneli i proxyji (Cloudflare: 100 s) zatvaraju WebSocket koji miruje
-const keepalive = (ws) => {
-  const t = setInterval(() => { if (ws.readyState === 1) ws.ping(); }, 20000);
+// tuneli i proxyji (Cloudflare: 100 s) zatvaraju WebSocket koji miruje. Veza koja tiho umre (TCP bez ijednog
+// odgovora, npr. Wi-Fi ili filtar na računalu) se inače drži minutama: tko ne odgovori na ping se izbaci
+const keepalive = (ws, what) => {
+  let alive = true;
+  const ok = () => { alive = true; };
+  ws.on('pong', ok);
+  ws.on('message', ok);
+  const t = setInterval(() => {
+    if (ws.readyState !== 1) return;
+    if (!alive) { console.warn(`[relay] ${what} not responding, closing the connection`); ws.terminate(); return; }
+    alive = false;
+    ws.ping();
+  }, 15000);
   ws.on('close', () => clearInterval(t));
 };
 
@@ -294,13 +304,13 @@ wssBridge.on('connection', (ws) => {
 wssClient.on('connection', (ws, req) => {
   clients.add(ws);
   quiet(ws, 'client');
-  keepalive(ws);
+  keepalive(ws, 'client');
   console.log(`[relay] client +1 (${clients.size})`);
   ws.on('message', async (data) => {
     let id, cmd, args;
     try { ({ id, cmd, args } = JSON.parse(data)); } catch { return; }
     if (LOCAL[cmd]) {
-      try { ws.send(JSON.stringify({ id, result: (await LOCAL[cmd](args ?? {})) ?? null })); }
+      try { ws.send(JSON.stringify({ id, result: (await LOCAL[cmd](args ?? {}, ws)) ?? null })); }
       catch (e) { ws.send(JSON.stringify({ id, error: e.message ?? String(e) })); }
       return;
     }
@@ -332,6 +342,7 @@ wssClient.on('connection', (ws, req) => {
   });
   ws.on('close', () => {
     clients.delete(ws);
+    editor.dropView(ws);
     for (const [r, f] of inflight) if (f.client === ws) { inflight.delete(r); editor.loaded(r); }
   });
 });

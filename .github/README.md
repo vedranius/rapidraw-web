@@ -147,6 +147,8 @@ RapidRAW makes thumbnails in the background with several workers; for an edited 
 
 The badge next to *Editor | Files* shows the measured speed to the server. Once per browser tab it measures download and upload speed (several parallel connections, like a speed test) and ping, and recommends RapidRAW's **preview size** and **live preview quality** (*Settings → Processing*). Download carries the previews; folders used from the computer you browse from travel at its upload speed.
 
+If the connection to the server stops answering (a connection can die silently, without either side noticing), the badge shows *Reconnecting…*. The browser opens a new connection within about 20 seconds and repeats the requests that were waiting, such as opening a photo or a preview.
+
 Through a tunnel such as Cloudflare, everything between the server and your browser also passes the server's internet **upload**, even when you are at home on the same network. At home, the LAN address (`http://<server>:8780`) is usually much faster.
 
 | Connection | Recommended |

@@ -2,7 +2,7 @@
 // live previewa (livePreviewQuality: performance / high / full); backend ih čita kod svakog rendera.
 // Jednom po kartici (i na klik) mjeri ping te brzinu preuzimanja (previewi) i slanja (folderi s ovog računala),
 // predloži postavke, a za vrijeme rada prati stvarne previewe (apply_adjustments) i javi kad postanu spori.
-import { call, onTiming } from '../shim/transport';
+import { call, onConnection, onTiming } from '../shim/transport';
 import { el } from './ui';
 
 type Quality = 'performance' | 'high' | 'full';
@@ -84,6 +84,9 @@ export function mountNetwork(tabs: HTMLElement) {
   for (const v of RESOLUTIONS) res.append(el('option', { value: String(v) }, `${v} px`));
   for (const q of ['performance', 'high', 'full'] as Quality[]) qual.append(el('option', { value: q }, QUALITY_LABEL[q]));
 
+  // veza sa serverom ne odgovara (transport.ts sam otvara novu): bedž to pokaže
+  let connected = true;
+
   function render() {
     const r = last && recommend(last.mbps, last.rtt);
     if (document.activeElement !== res && document.activeElement !== qual) {
@@ -92,8 +95,8 @@ export function mountNetwork(tabs: HTMLElement) {
     }
     const p = previewStats();
     const slow = p && p.ms > 400;
-    badge.textContent = !last ? '…' : `↓${mbit(last.mbps)}${last.up ? ` ↑${mbit(last.up)}` : ''} Mb/s`;
-    badge.className = `rrn-badge${(r && differs(r)) || slow ? ' warn' : ''}`;
+    badge.textContent = !connected ? 'Reconnecting…' : !last ? '…' : `↓${mbit(last.mbps)}${last.up ? ` ↑${mbit(last.up)}` : ''} Mb/s`;
+    badge.className = `rrn-badge${!connected || (r && differs(r)) || slow ? ' warn' : ''}`;
     const c = current();
     panel.replaceChildren(
       el('b', {}, 'Connection to the server'),
@@ -150,5 +153,5 @@ export function mountNetwork(tabs: HTMLElement) {
   if (last && last.up === undefined) last = null; // starije mjerenje, bez uploada
   if (last) loadSettings().then(render);
   else setTimeout(test, 1500); // jednom po kartici, nakon što se RapidRAW učita
-  render();
+  onConnection((v) => { connected = v; render(); });
 }

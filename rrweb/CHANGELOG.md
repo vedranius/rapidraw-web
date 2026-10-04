@@ -2,6 +2,11 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.12.1
+
+- **Fixed: everything could stop for minutes (thumbnail labels, opening a photo kept loading) when the connection between the browser and the server died silently.** In the reported case one connection stopped carrying any data at all, while the other connections between the two computers kept working. Neither side noticed for about 3 minutes, and the photo being opened at that moment failed. Now the browser checks the server whenever it hears nothing for 5 s. If there is no answer, it opens a new connection after about 19 s in total. Requests that were waiting and are safe to repeat (opening a photo, previews, listings, reading data) are sent again on the new connection instead of failing. Meanwhile the badge shows *Reconnecting…*. The server also closes connections that stop answering its pings (within 30 s).
+- When several tabs or computers use the same server, a photo counts as open while it is open in any of them. Before, a tab showing the library could restart heavy thumbnails while another tab was editing.
+
 ## 1.12.0
 
 - **Fixed: sliders sometimes took seconds to update in folders used from another computer (on demand), even on a LAN.** After every change RapidRAW saves your edit next to the photo and reads the photo's details. It does this on its main thread, so all the rendering waits until it finishes. On an on-demand folder, each such check made the server ask your browser for the whole folder listing again: about 1 s for a folder with 1330 files, and up to 10 s while the browser was also sending other data. The rendering itself took 0.1–0.5 s. The server now answers these checks from the listing it already has and refreshes it in the background. Its own changes (saved edits, renames, deletions) go straight into that listing. Checking a photo went from 1–1.2 s to 1 ms on the server. The browser also lists big folders faster.
