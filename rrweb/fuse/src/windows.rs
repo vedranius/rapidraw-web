@@ -241,7 +241,10 @@ impl FileSystemContext for Fs {
             let mut add = |name: &str, v: &Value| -> Result<()> {
                 entry.reset();
                 fill(entry.file_info_mut(), v);
-                entry.set_name(name)?;
+                // bez završnog NUL-a: set_name ga upiše u ime, pa nastavak listanja od markera ("ime" < "ime\0")
+                // uvijek iznova vrati zadnji unos i WinFsp se vrti u krug (popis veći od ~64 KB, oko 480 fajlova)
+                let wide: Vec<u16> = name.encode_utf16().collect();
+                entry.set_name_raw(wide.as_slice())?;
                 lock.write(&mut entry)
             };
             let here = json!({"kind": "dir"});
