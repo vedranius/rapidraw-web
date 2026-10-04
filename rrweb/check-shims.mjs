@@ -49,7 +49,7 @@ for (const [what, ok] of [
   ['JPEG kvaliteta 75, downscale na dulju stranicu', fm.includes('JpegEncoder::new_with_quality(&mut buf, 75)') && fm.includes('downscale_f32_image(image, target_width, target_width)')],
   ['UI traži thumbnailove s update_thumbnail_queue({ paths })', ui.includes("invoke('update_thumbnail_queue', { paths: pathsToSend })")],
   ['UI čita EXIF s read_exif_for_paths({ paths })', nav.includes('invoke(Invokes.ReadExifForPaths, { paths: chunk })')],
-  ['EXIF RAW-a: prvo kamadak-exif (extract_metadata), pa rawler', /if is_raw_file\(path\)\s*&& let Some\(map\) = extract_metadata\(file_bytes\)/.test(ex) && /if !map\.is_empty\(\) \{\s*return Some\(map\);\s*\}\s*let metadata = read_raw_metadata\(file_bytes\)\?;/.test(ex)],
+  ['EXIF RAW-a: prvo kamadak-exif (extract_metadata), pa rawler', /if is_raw_file\(path\)\s*&& let Some\(map\) = extract_metadata\(file_bytes\)/.test(ex) && /if !map\.is_empty\(\) \{(?:(?!\n    \}\n)[\s\S]){0,600}?return Some\(map\);\s*\}\s*let metadata = read_raw_metadata\(file_bytes\)\?;/.test(ex)],
 ]) if (!ok) problems.push(`RapidRAW thumbnail/EXIF se promijenio (${what}): prilagodi rrweb/relay/raf.mjs`);
 // rrweb/files/adjust.ts: kružić pokraj slidera traži slider po markupu i prepoznaje preskočene preglede
 const slider = readFileSync('src/components/ui/Slider.tsx', 'utf8');
