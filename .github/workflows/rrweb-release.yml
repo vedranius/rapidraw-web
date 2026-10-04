@@ -175,7 +175,13 @@ jobs:
       - run: node rrweb/bundle/prepare.mjs
       - name: Version
         run: if [ -n "$TAG" ]; then node rrweb/version.mjs --check "$TAG"; else node rrweb/version.mjs; fi
-      - run: npx tauri build --bundles dmg --config rrweb/tauri.bridge.json --config rrweb/tauri.version.json --config rrweb/bundle/tauri.bundle.json
+      # hdiutil na GitHubovim macOS runnerima povremeno padne ("bundle_dmg.sh"): drugi pokušaj samo ponovno pakira
+      - run: |
+          for i in 1 2; do
+            npx tauri build --bundles dmg --config rrweb/tauri.bridge.json --config rrweb/tauri.version.json --config rrweb/bundle/tauri.bundle.json && exit 0
+            echo "::warning::DMG bundling failed (attempt $i)"; sleep 15
+          done
+          exit 1
       - uses: actions/upload-artifact@v4
         with:
           name: bridge-macos-${{ matrix.arch }}
