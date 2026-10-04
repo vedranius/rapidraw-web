@@ -323,12 +323,16 @@ class Share {
     }
   }
 
+  // Čeka najviše do RECONNECT_WAIT nakon prekida; folder koji je odspojen dulje odmah javlja grešku (inače bi svaki
+  // pregled foldera i svaki RapidRAW-ov stat na njemu visio po dvije minute)
   online() {
     if (this.agent) return Promise.resolve();
     if (this.stopped) return Promise.reject(fail('EIO', 'stopped'));
+    const left = this.offlineSince + RECONNECT_WAIT - Date.now();
+    if (left <= 0) return Promise.reject(fail('EIO', 'client folder is not connected'));
     return new Promise((resolve, reject) => {
       const w = () => { clearTimeout(t); resolve(); };
-      const t = setTimeout(() => { this.waiters.delete(w); reject(fail('EIO', 'client folder is not connected')); }, RECONNECT_WAIT);
+      const t = setTimeout(() => { this.waiters.delete(w); reject(fail('EIO', 'client folder is not connected')); }, left);
       w.fail = () => { clearTimeout(t); reject(fail('EIO', 'stopped')); };
       this.waiters.add(w);
     });
@@ -831,13 +835,13 @@ export function createRemote({ validName, insideRoots, onChange = () => {} }) {
     // putanja na mountu foldera "na zahtjev" → { share, rel } (rrweb/relay/raf.mjs)
     locate(p) {
       for (const s of shares.values()) {
-        if (s.mode !== 'ondemand' || !p.startsWith(s.view + path.sep)) continue;
+        if (s.mode !== 'ondemand' || (p !== s.view && !p.startsWith(s.view + path.sep))) continue;
         const rel = p.slice(s.view.length + 1).split(path.sep).join('/');
         try { return { share: s, rel: checkRel(rel) }; } catch { return null; }
       }
       return null;
     },
-    labels: () => Object.fromEntries([...shares.values()].map((s) => [s.view, `${s.name} (this computer)`])),
+    labels: () => Object.fromEntries([...shares.values()].map((s) => [s.view, `${s.name} (this computer${s.agent ? '' : ', not connected'})`])),
     async shutdown() { for (const s of shares.values()) await s.stop().catch(() => {}); },
   };
 }

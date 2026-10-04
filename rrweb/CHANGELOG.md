@@ -2,6 +2,12 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.9.1
+
+- Fixed: the folder pickers (*Add Folder*) and the Files tab could hang and show nothing while a folder from another computer was shared on demand but not connected (for example from a closed browser tab). Such folders are now shown as *not connected* and are not touched, operations on them fail at once instead of waiting, and RapidRAW's own checks of them no longer block for two minutes.
+- The Files tab also lists folders shared from other browsers or tabs, with *Stop* (also on plain-HTTP addresses, where adding folders isn't possible).
+- The exact version (`rapidraw-v<RapidRAW>-web-v<web>`, as on GitHub) is shown at the top, linked to its release.
+
 ## 1.9.0
 
 - **Editing comes first in every folder**, not only in on-demand ones: thumbnails are handed to RapidRAW by rapidraw-web, none while you edit (and for 15 s after your last change), one at a time while a photo is open, four at a time in the library. Thumbnails of edited photos are rendered from the whole RAW on the GPU and used to slow the sliders down. Test with 60 edited RAFs in a local folder: opening a photo 5.6 → 2.9 s, slider previews 30–50 % faster, no thumbnail work while editing.

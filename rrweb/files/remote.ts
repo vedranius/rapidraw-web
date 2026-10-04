@@ -323,7 +323,25 @@ export function mountRemote(box: HTMLElement, hooks: { open(path: string): void;
           ...(!a || !info ? [el('button', { onclick: () => resume(s) }, 'Reconnect')] : []),
           el('button', { onclick: () => stopShare(s) }, 'Stop')));
     }));
-    if (!saved.length) list.append(el('p', { class: 'rrf-note' }, 'Use photos from this computer: they stay here, RapidRAW on the server edits them.'));
+    // folderi koje je na server dodao neki drugi browser ili tab (ili ovaj prije brisanja podataka stranice)
+    for (const info of server.filter((i) => !saved.some((s) => s.id === i.id))) {
+      list.append(el('div', { class: 'rrr-item' },
+        el('button', { class: 'rrr-name', title: info.view, onclick: () => hooks.open(info.view) },
+          el('span', { class: `rrr-dot${info.online ? ' on' : ''}` }), info.name),
+        el('div', { class: 'rrr-status' }, info.online
+          ? 'Shared from another browser or tab'
+          : 'Shared from another browser or tab · not connected (its photos can\'t be opened until it reconnects)'),
+        el('div', { class: 'rrr-actions' }, el('button', { onclick: () => stopOther(info) }, 'Stop'))));
+    }
+    if (!saved.length && !server.length) list.append(el('p', { class: 'rrf-note' }, 'Use photos from this computer: they stay here, RapidRAW on the server edits them.'));
+  }
+
+  async function stopOther(info: ShareInfo) {
+    const what = info.keep ? 'The copy on the server is kept.' : 'The temporary copy on the server is deleted; the photos on that computer stay.';
+    if (!confirm(`Stop using "${info.name}" (shared from another browser or tab)?\n\n${what}`)) return;
+    await call('__rr_share_stop', { id: info.id }).catch(() => {});
+    await refresh();
+    hooks.refresh();
   }
 
   async function refresh() {
@@ -431,11 +449,13 @@ export function mountRemote(box: HTMLElement, hooks: { open(path: string): void;
   }
 
   box.append(el('div', { class: 'rrf-h rrr-h' }, 'This computer'));
-  if (!supported()) {
-    box.append(el('p', { class: 'rrf-note' }, window.isSecureContext
+  if (!supported()) { // dodavanje ne ide, ali folderi s drugih računala se i dalje vide (i mogu ugasiti)
+    box.append(list, el('p', { class: 'rrf-note' }, window.isSecureContext
       ? 'Using a folder from this computer needs Chrome or Edge.'
-      : 'Using a folder from this computer needs HTTPS (or localhost) and Chrome or Edge.'));
-    return { refresh: async () => {} };
+      : 'Using a folder from this computer needs HTTPS (or localhost) and Chrome or Edge. On your own network, Chrome can treat this address as secure: chrome://flags/#unsafely-treat-insecure-origin-as-secure'));
+    refresh();
+    setInterval(() => { if (box.isConnected) refresh(); }, 5000);
+    return { refresh };
   }
   box.append(list, el('button', { class: 'rrr-add', onclick: dialog }, '+ Use a folder from this computer'));
 
@@ -452,6 +472,6 @@ export function mountRemote(box: HTMLElement, hooks: { open(path: string): void;
       if ((await (s.handle as Dir).queryPermission?.({ mode: 'readwrite' })) === 'granted') activate(s).catch(() => {});
     }
   })();
-  setInterval(() => { if (box.isConnected && saved.length) refresh(); }, 3000);
+  setInterval(() => { if (box.isConnected && (saved.length || server.length)) refresh(); }, 3000);
   return { refresh };
 }

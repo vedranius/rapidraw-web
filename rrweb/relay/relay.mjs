@@ -148,6 +148,7 @@ const files = createFiles({
   library: () => config.library ?? null,
   extraRoots: () => [...(process.env.RR_PHOTOS ? [process.env.RR_PHOTOS] : []), ...remote.roots()],
   labels: () => remote.labels(),
+  offline: (p) => remote.offline(p),
 });
 // Folderi s klijentskog računala (browser je pohrana): rrweb/relay/remote.mjs
 const remote = createRemote({ validName, insideRoots: (p) => files.within(p), onChange: () => files.invalidate() });

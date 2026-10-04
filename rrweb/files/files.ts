@@ -9,6 +9,7 @@ import './files.css';
 
 declare const __RR_VERSION__: string;
 declare const __RR_WEB_VERSION__: string;
+const TAG = `rapidraw-v${__RR_VERSION__}-web-v${__RR_WEB_VERSION__}`;
 
 type SortKey = 'name' | 'size' | 'mtime';
 
@@ -72,7 +73,7 @@ const panel = el('div', { id: 'rrf', hidden: true },
   el('aside', {}, el('div', { class: 'rrf-h' }, 'Photo folders'), rootsBox,
     el('p', { class: 'rrf-note' }, 'Your photo library and the folders you open in RapidRAW are listed here.'),
     remoteBox,
-    el('p', { class: 'rrf-ver' }, `RapidRAW ${__RR_VERSION__} · web ${__RR_WEB_VERSION__}`)),
+    el('p', { class: 'rrf-ver' }, TAG)),
   el('section', {},
     crumbs,
     el('div', { class: 'rrf-bar' }, b.up, b.refresh, sep(), b.upload, b.mkdir, sep(), b.download, sep(),
@@ -85,6 +86,8 @@ const panel = el('div', { id: 'rrf', hidden: true },
   drop, fileInput, sink);
 document.body.append(panel, tabs);
 mountNetwork(tabs);
+// točna verzija, kao tag i release na GitHubu
+tabs.append(el('a', { class: 'rrf-tag', href: `https://github.com/vedranius/rapidraw-web/releases/tag/${TAG}`, target: '_blank', rel: 'noopener', title: 'rapidraw-web version: open the release on GitHub' }, TAG));
 mountRemote(remoteBox, { open: (p) => load(p), refresh: () => { if (isOpen) load(listing.path, [...selected]); } });
 
 function setMessage(text = '', error = false) {

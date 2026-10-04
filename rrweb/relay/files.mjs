@@ -57,8 +57,10 @@ async function addToZip(zip, p, name) {
 
 // settings(): RapidRAW postavke (preko bridgea), bridge(cmd, args): poziv RapidRAW komande,
 // library(): photo library folder ili null, extraRoots(): dodatni folderi (RR_PHOTOS, folderi s klijenta),
-// labels(): { putanja: naziv } za prikaz
-export function createFiles({ settings, bridge, library = () => null, extraRoots = () => [], labels = () => ({}) }) {
+// labels(): { putanja: naziv } za prikaz, offline(p): je li p u folderu s računala koje nije spojeno
+// (takav folder se ne dira: svaka operacija na njemu bi čekala da se računalo vrati)
+const NOT_CONNECTED = 'This folder is on a computer that is not connected right now. Open RapidRAW Web there (Files → This computer → Reconnect).';
+export function createFiles({ settings, bridge, library = () => null, extraRoots = () => [], labels = () => ({}), offline = () => false }) {
   let cached = { at: 0, roots: [] };
 
   async function roots() {
@@ -66,8 +68,13 @@ export function createFiles({ settings, bridge, library = () => null, extraRoots
     const s = await settings().catch(() => ({}));
     const real = [];
     // library prvi, da je uvijek na vrhu popisa
-    for (const p of [library(), ...extraRoots(), ...(s.rootFolders ?? []), ...(s.pinnedFolders ?? []), s.lastRootPath]) {
+    const extra = extraRoots();
+    for (const p of [library(), ...extra, ...(s.rootFolders ?? []), ...(s.pinnedFolders ?? []), s.lastRootPath]) {
       if (!p) continue;
+      if (offline(p)) { // folder s odspojenog računala: prikaži ga (označen u labels), ali ga ne diraj
+        if (extra.includes(p) && !real.includes(p)) real.push(p);
+        continue;
+      }
       try {
         const r = await fsp.realpath(p);
         if ((await fsp.stat(r)).isDirectory() && !real.includes(r)) real.push(r);
@@ -79,6 +86,7 @@ export function createFiles({ settings, bridge, library = () => null, extraRoots
 
   async function within(p) {
     if (typeof p !== 'string' || !p) throw new Error('Missing path');
+    if (offline(p)) throw new Error(NOT_CONNECTED);
     const real = await fsp.realpath(p);
     if (!(await roots()).some((r) => inside(real, r))) throw new Error(`Outside the photo folders: ${p}`);
     return real;
