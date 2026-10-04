@@ -27,6 +27,44 @@ GPU + photo storage
 - **Rendering happens in RapidRAW on the server.** Moving a slider sends the adjustment; the server's GPU renders it and sends back a compressed preview — a few hundred KB, a few milliseconds on a gigabit LAN.
 - **Zero changes to RapidRAW's code.** Everything lives in new files (`rrweb/`, `.github/`). The bridge is the regular RapidRAW backend that loads a 3 KB relay page instead of its UI. Upstream updates merge cleanly.
 
+## What you get
+
+- **The full RapidRAW editor in a browser**, on any laptop, tablet or mini PC in your network (or anywhere, through a VPN or tunnel). Nothing to install on that device.
+- **All processing on the server**: RAW decoding, every slider, masks, AI tools and exports run on the server's CPU and GPU. The browser only shows the previews.
+- **One-file installers**: Windows (`setup.exe`), Linux (`.deb`, `.rpm`, `.AppImage`, with a service for headless servers) and macOS (experimental). Each contains RapidRAW, the web UI and Node.js.
+- **Photo library and folder pickers** for the server's folders, so you never type server paths.
+- **[Files tab](#files-tab)**: download exports (also as `.zip`), upload, rename, copy, move and delete in the photo folders. RapidRAW's edit files go along.
+- **[Folders from the computer you browse from](#use-a-folder-from-this-computer)**: edit photos that stay on your laptop. They are either copied to the server in the background, or mounted on demand so you can start right away (Linux and Windows servers). Edits and exports are saved back into that folder.
+- **[Editing comes first](#editing-comes-first)**: thumbnails are scheduled around your work, the visible ones first, and while a photo is open only in the pauses between edits. Thumbnails of the photos next to it in the filmstrip come first. How much runs at once adapts to the server.
+- **Fast Fuji RAF browsing**: thumbnails come from the camera's embedded JPEG, and EXIF from its 65 KB header instead of the whole 30–45 MB file.
+- **You can see what is happening**: progress while a photo opens (download, then decoding), labels on thumbnails that aren't ready, the number of thumbnails left in the top bar, and a ring with a percentage next to the slider you just moved.
+- **[Connection badge](#connection-and-preview-quality)**: measures download, upload and ping, and recommends RapidRAW's preview size and quality for your connection. If a connection dies silently, it shows *Reconnecting…*, and the browser reconnects and repeats what was waiting.
+- **The exact version** (`rapidraw-v<RapidRAW>-web-v<web>`) is shown at the top, linked to its release.
+- **Always the current RapidRAW**: every RapidRAW release is rebuilt automatically with this web layer.
+
+## How it differs from RapidRAW on your computer
+
+| | RapidRAW (desktop app) | rapidraw-web |
+|---|---|---|
+| Where the editor runs | A window on the computer in front of you | A browser tab on any device; the editor is the same React UI |
+| Who does the work | That computer's CPU and GPU | The server's CPU and GPU |
+| Where the photos are | That computer's disks | The server's disks, or a folder on the browsing computer (copied or mounted on demand) |
+| Thumbnails | Several workers start as soon as a folder opens, even while you edit | Scheduled around your editing, the visible ones and the photos next to the open one first, adapted to the server |
+| Fuji RAF thumbnails and EXIF | The whole RAW is decoded for the thumbnail and read for the EXIF (RapidRAW 1.6.4) | The embedded JPEG for thumbnails (unedited photos), its 65 KB header for the EXIF |
+| Slider preview | Drawn directly in the window (on Windows and macOS straight from the GPU) | Rendered on the server, sent as a JPEG (a few ms on a LAN) |
+| Extras | — | Files tab, folders from the browsing computer, progress labels, connection badge |
+
+## Why it can feel faster than RapidRAW installed on your laptop
+
+It is the same RapidRAW. What changes is where it runs and how its work is ordered:
+
+1. **Stronger hardware does the work.** Every slider change is a full GPU render, and opening a RAW is CPU-heavy decoding. A thin laptop usually has integrated graphics and a low-power CPU. A server with a dedicated GPU can render the same change several times faster, and the laptop only has to show a JPEG.
+2. **Your photo gets the machine to itself.** Desktop RapidRAW makes thumbnails with several workers as soon as a folder opens. For an edited photo, a thumbnail is a whole-RAW decode plus a GPU render, competing with the photo you are editing. rapidraw-web hands thumbnails over in small numbers and holds them back while you edit. In a test with 60 edited Fuji RAFs in a server folder, opening a photo went from 5.6 to 2.9 s, and slider previews got 30–50 % faster than with RapidRAW's own scheduling on the same machine.
+3. **Less work for Fuji RAF libraries.** Thumbnails of unedited RAFs come from the embedded JPEG, and the library's EXIF from a 65 KB header, instead of decoding or reading every 30–45 MB file.
+4. **Previews sized to your screen.** The preview size and quality follow your screen and connection.
+
+Where it is *not* faster: each preview has to travel over the network, which takes a few milliseconds on a LAN and more over the internet. On the same powerful computer, desktop RapidRAW shows a change without that trip. rapidraw-web helps most when the device in front of you is weaker than the server, or when your photos live on the server.
+
 ## Quick start
 
 Download from the [Releases](https://github.com/vedranius/rapidraw-web/releases) page. Any GPU with Vulkan, DX12 or Metal works, including integrated Intel graphics.
