@@ -1,8 +1,10 @@
 // Thumbnaili i EXIF za library, tako da fotka otvorena u editoru uvijek ima prednost.
-//  - Raspored: sve thumbnaile (iz UI-ja update_thumbnail_queue) relay predaje RapidRAW-u sam. Dok je fotka otvorena u
-//    editoru (remote.mjs: editor) ne predaje nijedan koji RapidRAW mora napraviti sam (iz cijelog RAW-a, na GPU-u, uz
-//    dohvat cijelog fajla za foldere "na zahtjev"); samo one koje ima u cacheu. U libraryju OUT_LIBRARY odjednom, prvo
-//    pločice koje se vide (UI ih javlja). UI vidi relayev napredak, a gore u traci i ukupno stanje (summary).
+//  - Raspored: sve thumbnaile (iz UI-ja update_thumbnail_queue) relay predaje RapidRAW-u sam. U libraryju OUT_LIBRARY
+//    odjednom, prvo pločice koje se vide (UI ih javlja). Dok je fotka otvorena u editoru (remote.mjs: editor) radi
+//    samo u pauzama editiranja (tune.gapMs bez radnje, ništa se ne otvara): lagane (iz cachea, ugrađeni JPEG) za sve,
+//    a one koje RapidRAW mora napraviti sam (cijeli RAW, GPU, za foldere "na zahtjev" i dohvat cijelog fajla) samo
+//    za fotke oko otvorene u filmstripu (UI: ahead, prvo sljedeće), tune.k odjednom. Koliko odjednom i kolika pauza
+//    prilagođava se mjerenju na tom serveru (editTiming). UI vidi relayev napredak, a gore i ukupno stanje (summary).
 //  - Fuji RAF: RapidRAW ugrađeni JPEG i EXIF čita samo iz TIFF RAW-ova (NEF, ARW, CR2, DNG); za RAF dekodira cijeli
 //    RAW, a EXIF za library (read_exif_for_paths, za sve fotke u folderu) čita preko rawlera iz cijelog fajla.
 //    · thumbnail (folderi "na zahtjev", fotke bez .rrdata): browser izreže ugrađeni JPEG, smanji ga na RapidRAW-ove
@@ -13,13 +15,18 @@
 // Mora pratiti src-tauri/src/file_management.rs i exif_processing.rs; rrweb/check-shims.mjs ruši build ako se promijene.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { blake3 } from '@noble/hashes/blake3.js';
 import { PRIO, editor } from './remote.mjs';
 
 const PARALLEL = 4;       // pripreme RAF thumbnaila odjednom (browser ih dekodira paralelno)
 const OUT_LIBRARY = 4;    // thumbnaila koje RapidRAW radi odjednom dok si u libraryju
-const OUT_EDITOR = 1;     // …dok je fotka otvorena u editoru, a editor miruje
+const OUT_EDITOR = 1;     // …stariji UI koji ne javlja prikaz, dok editor miruje
+// teških odjednom dok je fotka otvorena, najviše (prema broju jezgri: 12 niti → 3, 4 niti → 1); kreće od 1
+const OUT_EDITOR_MAX = Math.max(1, Math.min(4, Math.floor(os.cpus().length / 4)));
+const SEED_EDITOR = 2;    // pripreme RAF thumbnaila odjednom dok je fotka otvorena
+const NEAR_TTL = 30000;   // popis fotki oko otvorene (UI ga javlja svake sekunde dok ima pločica bez thumbnaila)
 const OUT_WAIT = 60000;   // thumbnail koji se nikad nije javio (greška) ne smije zauvijek zauzeti mjesto
 const EXIF_PARALLEL = 8;
 // EXIF polja koja opisuju ugrađeni JPEG, a ne RAW (dimenzije previewa, kompresija…)
@@ -85,6 +92,19 @@ export function createRaf({ locate, offline, fetching = () => null, settings, br
   const preparing = new Set(); // RAF thumbnail se upravo priprema (browser šalje ugrađeni JPEG)
   let heavyMs = 0;           // prosječno trajanje thumbnaila koji RapidRAW radi sam (za procjenu u UI-ju)
   const ema = (old, v) => (old ? old * 0.7 + v * 0.3 : v);
+  let near = { list: [], at: 0 }; // fotke oko otvorene u filmstripu, prvo sljedeće (UI)
+  const nearby = () => (Date.now() - near.at < NEAR_TTL ? near.list : []);
+  // Rad dok je fotka otvorena: k teških odjednom, nakon gapMs bez radnje u editoru. Obrada slidera ili otvaranje fotke
+  // dok RapidRAW radi takav thumbnail sporije nego inače (base: bez thumbnaila) → manje odjednom i dulja pauza;
+  // tri thumbnaila bez smetnje → jedan više (do OUT_EDITOR_MAX) i kraća pauza
+  const tune = { k: 1, gapMs: 1500, clean: 0, base: {} };
+  const heavyOut = () => [...out.values()].filter((o) => o.heavy);
+  function retune(k, gapMs, why) {
+    if (k === tune.k && gapMs === tune.gapMs) return;
+    tune.k = k;
+    tune.gapMs = gapMs;
+    console.log(`[raf] while editing: ${k} thumbnail${k > 1 ? 's' : ''} at a time, after ${(gapMs / 1000).toFixed(1)} s without changes (${why})`);
+  }
   let cfg = null;
   let cfgAt = 0;
   const exifCache = new Map(); // ključ fajla (veličina, vrijeme) → EXIF mapa
@@ -121,7 +141,7 @@ export function createRaf({ locate, offline, fetching = () => null, settings, br
     const small = path.join(dir, `${h}_small.jpg`);
     const medium = path.join(dir, `${h}_medium.jpg`);
     if (fs.existsSync(small) && fs.existsSync(medium)) return true;
-    await editor.idle(() => raf.share.stopped);
+    await editor.gap(() => tune.gapMs, () => raf.share.stopped);
     const { head, data } = await raf.share.requestAt(PRIO.SEED, { op: 'thumb', path: raf.rel, sizes: [c.small, c.medium], quality: 0.75 });
     const [a, b] = head.lens;
     await fsp.mkdir(dir, { recursive: true });
@@ -130,8 +150,8 @@ export function createRaf({ locate, offline, fetching = () => null, settings, br
     return true;
   }
 
-  function submit(paths, isHeavy) {
-    for (const p of paths) out.set(p, { heavy: isHeavy, at: Date.now(), timer: setTimeout(() => finished(p), OUT_WAIT) });
+  function submit(paths, isHeavy, inEditor = false) {
+    for (const p of paths) out.set(p, { heavy: isHeavy, inEditor, hit: false, at: Date.now(), timer: setTimeout(() => finished(p), OUT_WAIT) });
     bridge('update_thumbnail_queue', { paths }).catch(() => paths.forEach(finished));
   }
 
@@ -139,29 +159,44 @@ export function createRaf({ locate, offline, fetching = () => null, settings, br
     const o = out.get(p);
     if (!o) return;
     if (ok && o.heavy) heavyMs = ema(heavyMs, Date.now() - o.at);
+    if (ok && o.inEditor && !o.hit && ++tune.clean >= 3) {
+      tune.clean = 0;
+      retune(Math.min(OUT_EDITOR_MAX, tune.k + 1), Math.max(1000, Math.round(tune.gapMs * 0.8)), 'editing stayed fast');
+    }
     clearTimeout(o.timer);
     out.delete(p);
     done++;
     pumpOut();
   }
 
-  // koliko teških thumbnaila RapidRAW smije raditi odjednom: dok je fotka otvorena nijedan (stariji UI koji ne javlja
-  // prikaz: jedan, kad editor miruje)
-  const heavyLimit = () => (editor.busy() || editor.editing() ? 0
-    : editor.viewKnown() ? OUT_LIBRARY : editor.recent() ? OUT_EDITOR : OUT_LIBRARY);
+  // koliko teških thumbnaila RapidRAW smije raditi odjednom: dok je fotka otvorena tune.k u pauzi editiranja
+  // (stariji UI koji ne javlja prikaz: jedan, kad editor miruje)
+  const heavyLimit = () => (editor.editing() ? (editor.open(tune.gapMs) ? tune.k : 0)
+    : editor.busy() ? 0 : editor.viewKnown() ? OUT_LIBRARY : editor.recent() ? OUT_EDITOR : OUT_LIBRARY);
 
   // Predaja RapidRAW-u prema tome što radi editor; fotke iz foldera čiji browser nije spojen čekaju
   function pumpOut() {
-    if (editor.busy()) return;
+    const editing = editor.editing();
+    if (!editor.open(tune.gapMs)) return;
     const ready = (p) => !offline(p);
     const now = cheap.filter(ready);
     if (now.length) { cheap.splice(0, cheap.length, ...cheap.filter((p) => !ready(p))); submit(now, false); }
     const limit = heavyLimit();
-    let active = [...out.values()].filter((o) => o.heavy).length;
-    for (let i = heavy.length - 1; i >= 0 && active < limit; i--) { // zadnje traženi (vidljivi) prvi, kao i RapidRAW
-      if (!ready(heavy[i])) continue;
-      submit(heavy.splice(i, 1), true);
-      active++;
+    let active = heavyOut().length;
+    if (editing) { // samo fotke oko otvorene, prvo sljedeće
+      for (const p of nearby()) {
+        if (active >= limit) break;
+        const i = heavy.indexOf(p);
+        if (i < 0 || !ready(p)) continue;
+        submit(heavy.splice(i, 1), true, true);
+        active++;
+      }
+    } else {
+      for (let i = heavy.length - 1; i >= 0 && active < limit; i--) { // zadnje traženi (vidljivi) prvi, kao i RapidRAW
+        if (!ready(heavy[i])) continue;
+        submit(heavy.splice(i, 1), true);
+        active++;
+      }
     }
     if (!busyWork()) done = 0;
   }
@@ -169,20 +204,24 @@ export function createRaf({ locate, offline, fetching = () => null, settings, br
 
   const busyWork = () => queue.length + running + cheap.length + heavy.length + out.size > 0;
 
-  // vidljive pločice na kraj redova (predaje se od kraja), da dođu prve
+  // tražene pločice na kraj redova (predaje se od kraja), prva tražena posljednja, da dođe prva
   function prioritize(paths) {
-    const want = new Set(paths);
-    if (!want.size) return;
-    for (const arr of [heavy, cheap]) {
-      const rest = arr.filter((p) => !want.has(p));
-      if (rest.length !== arr.length) arr.splice(0, arr.length, ...rest, ...arr.filter((p) => want.has(p)));
-    }
-    const rest = queue.filter((i) => !want.has(i.p));
-    if (rest.length !== queue.length) queue.splice(0, queue.length, ...rest, ...queue.filter((i) => want.has(i.p)));
+    const rank = new Map();
+    paths.forEach((p, i) => { if (!rank.has(p)) rank.set(p, i); });
+    if (!rank.size) return;
+    const order = (arr, key) => {
+      const want = arr.filter((x) => rank.has(key(x)));
+      if (!want.length) return;
+      want.sort((a, b) => rank.get(key(b)) - rank.get(key(a)));
+      arr.splice(0, arr.length, ...arr.filter((x) => !rank.has(key(x))), ...want);
+    };
+    order(heavy, (p) => p);
+    order(cheap, (p) => p);
+    order(queue, (i) => i.p);
   }
 
   function pump() {
-    while (running < PARALLEL && queue.length) {
+    while (running < (editor.editing() ? SEED_EDITOR : PARALLEL) && queue.length) {
       const item = queue.pop();
       running++;
       preparing.add(item.p);
@@ -254,12 +293,16 @@ export function createRaf({ locate, offline, fetching = () => null, settings, br
     generated(p) { finished(p, true); },
 
     // Stanje thumbnaila za UI (rrweb/files/progress.ts): u redu (mjesto, procjena), priprema, dohvat, renderiranje;
-    // gotovi i nepoznati se ne vraćaju
-    status(paths) {
-      prioritize(paths); // to su pločice koje se upravo vide: na početak reda
+    // gotovi i nepoznati se ne vraćaju. paths: pločice koje se upravo vide; ahead: u editoru fotke oko otvorene u
+    // filmstripu, prvo sljedeće (samo one smiju teške thumbnaile dok je fotka otvorena)
+    status(paths, ahead) {
+      if (Array.isArray(ahead)) near = { list: ahead.filter((p) => typeof p === 'string').slice(0, 40), at: Date.now() };
+      prioritize([...(Array.isArray(ahead) ? near.list : []), ...paths]); // na početak reda
       pumpOut();
-      const busy = editor.busy() || editor.editing();
-      const limit = Math.max(1, heavyLimit() || OUT_LIBRARY);
+      const editing = editor.editing();
+      const nearSet = new Set(editing ? nearby() : []);
+      const busy = !editing && editor.busy();
+      const limit = editing ? tune.k : Math.max(1, heavyLimit() || OUT_LIBRARY);
       const res = {};
       for (const p of paths) {
         const o = out.get(p);
@@ -268,8 +311,10 @@ export function createRaf({ locate, offline, fetching = () => null, settings, br
           res[p] = dl ? { state: 'downloading', ...dl } : { state: 'rendering', ms: Date.now() - o.at };
         } else if (preparing.has(p)) res[p] = { state: 'preparing' };
         else if (heavy.includes(p)) {
-          const pos = heavy.length - heavy.lastIndexOf(p); // predaje se od kraja reda
-          res[p] = { state: 'queued', pos, paused: busy, eta: busy ? null : Math.round(Math.ceil(pos / limit) * (heavyMs || 3000) / 1000) };
+          // u editoru: mjesto među fotkama oko otvorene; ostale čekaju library
+          const pos = editing ? near.list.filter((q) => heavy.includes(q)).indexOf(p) + 1 : heavy.length - heavy.lastIndexOf(p);
+          const paused = busy || (editing && !nearSet.has(p));
+          res[p] = { state: 'queued', pos: pos || undefined, paused, eta: paused ? null : Math.round(Math.ceil(pos / limit) * (heavyMs || 3000) / 1000) };
         } else if (cheap.includes(p) || pending.has(p)) res[p] = { state: 'queued', paused: busy };
       }
       return res;
@@ -281,11 +326,28 @@ export function createRaf({ locate, offline, fetching = () => null, settings, br
 
     // ukupno stanje za traku na vrhu: koliko ih je još, procjena, stoji li zbog editora
     summary() {
-      const outHeavy = [...out.values()].filter((o) => o.heavy).length;
+      const outHeavy = heavyOut().length;
       const left = queue.length + running + cheap.length + heavy.length + out.size;
-      const paused = editor.busy() || editor.editing();
+      const editing = editor.editing();
+      const paused = !editing && editor.busy();
       const eta = Math.round(Math.ceil((heavy.length + outHeavy) / OUT_LIBRARY) * (heavyMs || 3000) / 1000);
-      return { left, heavy: heavy.length + outHeavy, paused, eta: left ? eta : 0 };
+      // u editoru: koliko ih se radi u pauzama (lagani i oni oko otvorene), ostali čekaju library
+      const nearSet = new Set(editing ? nearby() : []);
+      const later = editing ? heavy.filter((p) => !nearSet.has(p)).length : 0;
+      return { left, heavy: heavy.length + outHeavy, paused, eta: left && !editing ? eta : 0, editing, later };
+    },
+
+    // Trajanje obrade u editoru (relay.mjs): 'interactive' i 'final' pregled, 'load' (dekodiranje fotke). Sporije nego
+    // inače dok RapidRAW radi thumbnail predan u editoru → manje odjednom, dulja pauza
+    editTiming(kind, ms) {
+      const running = heavyOut();
+      const base = tune.base[kind] ?? 0;
+      if (!running.length) { tune.base[kind] = ema(base, ms); return; }
+      if (!base || !running.some((o) => o.inEditor) || ms <= base * 1.5 + 40) return;
+      for (const o of running) o.hit = true;
+      tune.clean = 0;
+      retune(Math.max(1, tune.k - 1), Math.min(8000, Math.round(tune.gapMs * 1.5)),
+        `${kind === 'load' ? 'opening a photo' : 'a slider preview'} took ${Math.round(ms)} ms instead of ~${Math.round(base)} ms`);
     },
 
     // read_exif_for_paths iz UI-ja (library čita EXIF svih fotki u folderu): RAF-ovi iz ugrađenog JPEG-a,

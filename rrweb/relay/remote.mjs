@@ -41,6 +41,15 @@ export const editor = {
     return this.loads.size > 0 || Date.now() - this.last < EDIT_QUIET;
   },
   recent() { return Date.now() - this.last < EDIT_RECENT; },
+  // ms bez ijedne radnje u editoru (0 dok se fotka otvara)
+  idleFor() {
+    this.busy(); // čisti zaboravljena otvaranja
+    return this.loads.size ? 0 : Date.now() - this.last;
+  },
+  // Smije li pozadinski posao krenuti: dok je fotka otvorena samo u pauzi editiranja (gapMs bez radnje, ništa se ne
+  // otvara), inače kad editor miruje EDIT_QUIET
+  open(gapMs) { return this.editing() ? this.idleFor() >= gapMs : !this.busy(); },
+  async gap(gapMs, stop = () => false) { while (!this.open(gapMs()) && !stop()) await new Promise((r) => setTimeout(r, 250)); },
   // UI (rrweb/files/progress.ts) javlja prikaz: 'editor' ili 'library', i ponavlja ga svakih par sekundi.
   // Svaka kartica (klijent) posebno: fotka je otvorena ako je otvorena u bilo kojoj
   views: new Map(), // klijent → { mode, at }

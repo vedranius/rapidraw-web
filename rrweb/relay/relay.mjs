@@ -165,7 +165,7 @@ const raf = createRaf({
 let decodeMs = 0; // prosječno dekodiranje RAW-a (load_image bez čekanja na dohvat s klijenta)
 const progressCommands = {
   __rr_progress: ({ path: p }) => ({ ...(remote.progress(p) ?? { phase: 'decoding' }), decodeMs: Math.round(decodeMs) }),
-  __rr_thumbs: ({ paths }) => raf.status(Array.isArray(paths) ? paths.slice(0, 300) : []),
+  __rr_thumbs: ({ paths, ahead }) => raf.status(Array.isArray(paths) ? paths.slice(0, 300) : [], ahead),
   __rr_view: ({ mode }, ws) => { if (mode === 'library' || mode === 'editor') editor.setView(mode, ws); return null; },
   __rr_thumbs_summary: () => raf.summary(),
 };
@@ -174,6 +174,7 @@ function loadDone(f) {
   const from = Math.max(f.started, remote.progress(f.path)?.completedAt ?? 0);
   const ms = Date.now() - from;
   if (ms > 0 && ms < 120000) decodeMs = decodeMs ? decodeMs * 0.7 + ms * 0.3 : ms;
+  if (ms > 0 && ms < 120000) raf.editTiming('load', ms);
 }
 const LOCAL = { ...progressCommands, __rr_home: () => os.homedir(), __rr_ping: () => Date.now(), ...files.commands, ...remote.commands };
 
@@ -253,8 +254,10 @@ wssBridge.on('connection', (ws) => {
       if (!f) return;
       if (f.cmd === 'load_image') { editor.loaded(r); loadDone(f); }
       // pregled nakon promjene je gotov na serveru; UI (rrweb/files/adjust.ts) od sad broji prijenos
-      if (f.cmd === 'apply_adjustments' && f.id) {
-        f.client.send(JSON.stringify({ event: '__rr_rendered', payload: { id: f.id, ms: Math.round(Number(process.hrtime.bigint() - f.t0) / 1e6), bytes: data.length - 4 } }));
+      if (f.cmd === 'apply_adjustments') {
+        const ms = Number(process.hrtime.bigint() - f.t0) / 1e6;
+        raf.editTiming(f.interactive ? 'interactive' : 'final', ms);
+        if (f.id) f.client.send(JSON.stringify({ event: '__rr_rendered', payload: { id: f.id, ms: Math.round(ms), bytes: data.length - 4 } }));
       }
       data.writeUInt32LE(f.id, 0);           // prepiši relayId → id klijenta
       f.client.send(data, { binary: true });
@@ -337,7 +340,8 @@ wssClient.on('connection', (ws, req) => {
       editor.loading(rid);
       remote.focus(args?.path);
     }
-    inflight.set(rid, { client: ws, id, cmd, t0: process.hrtime.bigint(), ...(cmd === 'load_image' ? { path: args?.path, started: Date.now() } : {}) });
+    inflight.set(rid, { client: ws, id, cmd, t0: process.hrtime.bigint(), ...(cmd === 'load_image' ? { path: args?.path, started: Date.now() } : {}),
+      ...(cmd === 'apply_adjustments' ? { interactive: !!args?.isInteractive } : {}) });
     bridge.send(JSON.stringify({ id: rid, cmd, args }));
   });
   ws.on('close', () => {

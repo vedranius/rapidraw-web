@@ -1,6 +1,7 @@
 // Što se događa dok čekaš: kod otvaranja fotke (dohvat s računala koje je dijeli, pa dekodiranje RAW-a), na
 // thumbnailima koji još nisu gotovi (library i filmstrip: u redu, dohvat, renderiranje) i ukupno u traci na vrhu.
-// Relayu javlja i prikaz (editor ili library), da dok je fotka otvorena ne radi teške thumbnaile.
+// Relayu javlja i prikaz (editor ili library) i, u editoru, fotke oko otvorene u filmstripu: dok je fotka otvorena
+// relay thumbnaile radi samo u pauzama editiranja, a teške samo za te fotke (prvo sljedeće).
 // Podatke daje relay (__rr_progress, __rr_thumbs, __rr_thumbs_summary); RapidRAW-ov UI se ne dira, oznake se samo
 // dodaju preko njegovih elemenata.
 import { call, onCall } from '../shim/transport';
@@ -8,7 +9,7 @@ import { el, fmtSize } from './ui';
 
 type Load = { phase: 'downloading' | 'decoding' | 'offline'; fetched?: number; total?: number; rate?: number; decodeMs?: number };
 type Thumb = { state: 'queued' | 'preparing' | 'downloading' | 'rendering'; pos?: number; eta?: number | null; paused?: boolean; fetched?: number; total?: number };
-type Summary = { left: number; heavy: number; paused: boolean; eta: number };
+type Summary = { left: number; heavy: number; paused: boolean; eta: number; editing?: boolean; later?: number };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const base = (p: string) => p.split('?vc=')[0].split(/[\\/]/).pop() ?? p;
@@ -16,6 +17,7 @@ const secs = (s: number) => (s < 60 ? `${Math.max(1, Math.round(s))} s` : `${Mat
 
 export function mountProgress(tabs: HTMLElement) {
   const names = new Map<string, string>(); // naziv na pločici → putanja (iz update_thumbnail_queue)
+  let openPath = '';                         // fotka otvorena u editoru (zadnji load_image)
 
   // --- otvaranje fotke u editoru ---
   const pill = el('div', { class: 'rrl-load', hidden: true });
@@ -61,6 +63,7 @@ export function mountProgress(tabs: HTMLElement) {
       scheduleThumbs();
     }
     if (cmd !== 'load_image' || typeof a?.path !== 'string') return;
+    openPath = a.path;
     const cur: Cur = { path: a.path, t0: performance.now(), decodeFrom: 0, downloaded: false };
     current = cur;
     watchLoad(cur);
@@ -99,10 +102,29 @@ export function mountProgress(tabs: HTMLElement) {
     return res;
   }
 
+  // Filmstrip u editoru: fotke oko otvorene, do 20 sljedećih pa 5 prethodnih. Ćelije su virtualne (vidljive i 16 sa
+  // svake strane), redom po položaju; otvorena je ona s njenim nazivom (ili istaknuta)
+  function aroundOpen(): string[] {
+    const tiles = [...document.querySelectorAll<HTMLElement>('div[data-tooltip]')]
+      .filter((t) => !t.dataset.benchId && t.offsetParent && t.querySelector('svg.lucide-image, img'))
+      .map((t) => ({ t, x: t.getBoundingClientRect().left }))
+      .sort((a, b) => a.x - b.x)
+      .map((e) => e.t);
+    let i = openPath ? tiles.findIndex((t) => t.dataset.tooltip === base(openPath)) : -1;
+    if (i < 0) i = tiles.findIndex((t) => t.classList.contains('ring-accent'));
+    if (i < 0) return [];
+    const res: string[] = [];
+    const add = (t?: HTMLElement) => { const p = t && names.get(t.dataset.tooltip ?? ''); if (p) res.push(p); };
+    for (let k = 1; k <= 20; k++) add(tiles[i + k]);
+    for (let k = 1; k <= 5; k++) add(tiles[i - k]);
+    return res;
+  }
+
   async function updateThumbs() {
     const waiting = waitingTiles();
     if (waiting.length) {
-      const st = await call<Record<string, Thumb>>('__rr_thumbs', { paths: [...new Set(waiting.map((w) => w.path))] }).catch(() => ({} as Record<string, Thumb>));
+      const args = { paths: [...new Set(waiting.map((w) => w.path))], ...(inEditor ? { ahead: aroundOpen() } : {}) };
+      const st = await call<Record<string, Thumb>>('__rr_thumbs', args).catch(() => ({} as Record<string, Thumb>));
       for (const { host, tile, path, short } of waiting) {
         const t = st[path];
         let badge = tile.querySelector<HTMLElement>('.rrt-badge');
@@ -120,14 +142,18 @@ export function mountProgress(tabs: HTMLElement) {
   }
 
   // --- ukupno, u traci na vrhu (i za thumbnaile koji se ne vide) ---
-  const total = el('span', { class: 'rrf-thumbs', hidden: true, title: 'Thumbnails still to make. Heavy ones (edited photos) wait while a photo is open in the editor, so editing stays fast.' });
+  const TOTAL_TITLE = 'Thumbnails still to make. In the library, the ones you can see come first.';
+  const EDITOR_TITLE = 'While a photo is open, thumbnails are made only in short pauses between your edits: quick ones for every photo, full renders only for the photos next to this one in the filmstrip. The rest continue in the library. How many at a time adapts to this server, so editing stays fast.';
+  const total = el('span', { class: 'rrf-thumbs', hidden: true, title: TOTAL_TITLE });
   tabs.insertBefore(total, tabs.querySelector('.rrf-tag'));
   setInterval(async () => {
     if (document.visibilityState !== 'visible') return;
     const s = await call<Summary>('__rr_thumbs_summary').catch(() => null);
     if (!s || !s.left) { total.hidden = true; return; }
     total.hidden = false;
-    total.textContent = s.paused && s.heavy ? `Thumbnails ${s.left} · paused while editing` : `Thumbnails ${s.left}${s.eta ? ` · ~${secs(s.eta)}` : ''}`;
+    total.title = s.editing ? EDITOR_TITLE : TOTAL_TITLE;
+    total.textContent = s.editing ? `Thumbnails ${s.left} · between edits${s.later ? `, ${s.later} in library` : ''}`
+      : s.paused && s.heavy ? `Thumbnails ${s.left} · paused while editing` : `Thumbnails ${s.left}${s.eta ? ` · ~${secs(s.eta)}` : ''}`;
   }, 2000);
   // pločice se pojavljuju i pri pomicanju (virtualni grid)
   document.addEventListener('scroll', () => scheduleThumbs(300), { capture: true, passive: true });
