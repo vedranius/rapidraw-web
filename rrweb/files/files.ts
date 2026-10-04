@@ -5,6 +5,7 @@ import { call, emitLocal } from '../shim/transport';
 import { baseName, collator, copyText, el, errText, fmtSize, icon, joinPath, ls, rootName, type Item, type Listing } from './ui';
 import { mountNetwork } from './network';
 import { mountProgress } from './progress';
+import { mountAdjustProgress } from './adjust';
 import { mountRemote } from './remote';
 import './files.css';
 
@@ -88,6 +89,7 @@ const panel = el('div', { id: 'rrf', hidden: true },
 document.body.append(panel, tabs);
 mountNetwork(tabs);
 mountProgress(tabs);
+mountAdjustProgress();
 // točna verzija, kao tag i release na GitHubu
 tabs.append(el('a', { class: 'rrf-tag', href: `https://github.com/vedranius/rapidraw-web/releases/tag/${TAG}`, target: '_blank', rel: 'noopener', title: 'rapidraw-web version: open the release on GitHub' }, TAG));
 mountRemote(remoteBox, { open: (p) => load(p), refresh: () => { if (isOpen) load(listing.path, [...selected]); } });

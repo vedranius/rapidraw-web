@@ -139,7 +139,17 @@
 .rrl-bar > i { display: block; height: 100%; background: #9c9; transition: width .3s; }
 #rrf-tabs .rrf-thumbs { align-self: center; padding: 0 6px; color: #b9a46a; font-size: 11px; white-space: nowrap; }
 @media (max-width: 720px) { #rrf-tabs .rrf-thumbs { display: none; } }
-.rrt-badge.short { left: 2px; right: 2px; bottom: 2px; padding: 1px 3px; font-size: 9px; }
-.rrt-badge { position: absolute; left: 6px; right: 6px; bottom: 6px; z-index: 5; padding: 2px 6px; border-radius: 6px;
-  background: rgba(0, 0, 0, .62); color: #ddd; font-size: 10px; font-weight: 600; line-height: 1.4; text-align: center;
+/* gore lijevo, da ne prekriva naziv fotke na dnu pločice */
+.rrt-badge.short { top: 2px; left: 2px; max-width: calc(100% - 4px); padding: 1px 3px; font-size: 9px; }
+.rrt-badge { position: absolute; top: 6px; left: 6px; max-width: calc(100% - 12px); z-index: 5; padding: 2px 6px; border-radius: 6px;
+  background: rgba(0, 0, 0, .62); color: #ddd; font-size: 10px; font-weight: 600; line-height: 1.4;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+/* obrada promjene: kružić pokraj slidera, natpis za ostale promjene (rrweb/files/adjust.ts) */
+.rre-ring { position: fixed; left: 0; top: 0; z-index: 2147483000; display: flex; align-items: center; gap: 3px;
+  color: #d0b46c; font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 14px; pointer-events: none; }
+.rre-ring svg { width: 14px; height: 14px; transform: rotate(-90deg); }
+.rre-ring circle { fill: none; stroke-width: 2.2; }
+.rre-ring .bg { stroke: rgba(128, 128, 128, .3); }
+.rre-ring .fg { stroke: currentColor; transition: stroke-dashoffset .12s linear; }
+.rre-ring.slow { color: #e08a5a; }
+.rre-ring.done { color: #8c8; }

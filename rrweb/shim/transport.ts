@@ -10,9 +10,11 @@ const queue: string[] = [];
 const timings = new Set<(cmd: string, ms: number, bytes: number) => void>();
 export const onTiming = (fn: (cmd: string, ms: number, bytes: number) => void) => timings.add(fn);
 const done = (p: Pending, bytes: number) => timings.forEach((fn) => fn(p.cmd, performance.now() - p.t0, bytes));
-// početak poziva (rrweb/files/progress.ts: otvaranje fotke, putanje thumbnaila); result se ne smije ostaviti neuhvaćen
-const starts = new Set<(cmd: string, args: unknown, result: Promise<unknown>) => void>();
-export const onCall = (fn: (cmd: string, args: unknown, result: Promise<unknown>) => void) => starts.add(fn);
+// početak poziva (rrweb/files/progress.ts: otvaranje fotke, putanje thumbnaila; adjust.ts: obrada promjena, id za
+// __rr_rendered); result se ne smije ostaviti neuhvaćen
+type Start = (cmd: string, args: unknown, result: Promise<unknown>, id: number) => void;
+const starts = new Set<Start>();
+export const onCall = (fn: Start) => starts.add(fn);
 let ws: WebSocket;
 let seq = 0;
 let backoff = 250;
@@ -60,7 +62,7 @@ export function call<T>(cmd: string, args: unknown = {}): Promise<T> {
     pending.set(id, { res, rej, cmd, t0: performance.now() });
     ws.readyState === WebSocket.OPEN ? ws.send(frame) : queue.push(frame);
   });
-  starts.forEach((fn) => { try { fn(cmd, args, result); } catch { /* promatrač ne smije srušiti poziv */ } });
+  starts.forEach((fn) => { try { fn(cmd, args, result, id); } catch { /* promatrač ne smije srušiti poziv */ } });
   return result;
 }
 

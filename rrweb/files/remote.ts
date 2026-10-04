@@ -122,13 +122,18 @@ class Agent {
     switch (h.op) {
       case 'list': {
         const entries = [];
+        const files: [string, FileSystemFileHandle][] = [];
         for await (const [n, handle] of (await this.dir(h.path)).entries()) {
           if (n.startsWith('.')) continue;
           if (handle.kind === 'directory') entries.push({ name: n, kind: 'dir' });
-          else {
-            const f = await handle.getFile();
-            entries.push({ name: n, kind: 'file', size: f.size, mtime: f.lastModified });
-          }
+          else files.push([n, handle as FileSystemFileHandle]);
+        }
+        // getFile() jedan po jedan je spor na velikim folderima (1330 fajlova ~1 s): po 64 paralelno
+        for (let i = 0; i < files.length; i += 64) {
+          await Promise.all(files.slice(i, i + 64).map(async ([n, handle]) => {
+            const f = await handle.getFile().catch(() => null); // u međuvremenu obrisan
+            if (f) entries.push({ name: n, kind: 'file', size: f.size, mtime: f.lastModified });
+          }));
         }
         return [{ entries }];
       }

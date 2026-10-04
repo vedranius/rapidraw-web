@@ -54,7 +54,11 @@ export const editor = {
 };
 const RECONNECT_WAIT = 120000;  // koliko zahtjev čeka da se browser ponovno spoji
 const FILL_RESERVE = 5e9;       // punjenje u pozadini staje kad na serveru ostane manje od 5 GB
+// Popis foldera s klijenta: readdir (RapidRAW lista folder) traži svježiji od LIST_TTL; stat jednog fajla uzima
+// spremljeni popis (do LIST_STALE star) i osvježava ga u pozadini kad je stariji od LIST_REFRESH
 const LIST_TTL = 3000;
+const LIST_REFRESH = 15000;
+const LIST_STALE = 10 * 60 * 1000;
 const ERRNO = { ENOENT: 2, EIO: 5, EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENOTEMPTY: 39, EACCES: 13 };
 
 // server bundle: fuse/<arch>/; all-in-one paket: sidecar pored ugrađenog Node.js-a (/usr/bin, AppImage usr/bin, Windows install)
@@ -271,6 +275,8 @@ class Share {
     this.q = 0;
     this.pending = new Map();
     this.lists = new Map();        // rel dir → { at, entries: Map }
+    this.listing = new Map();      // rel dir → dohvat popisa u tijeku (dijele ga svi koji čekaju)
+    this.listGen = new Map();      // rel dir → broj izmjena sa servera (dohvat stariji od izmjene ne smije je poništiti)
     this.files = new Map();        // rel → Cached (ondemand)
     this.local = new Set();        // rel fajlova napisanih na serveru (ondemand overlay)
     this.created = new Set();      // rel fajlova koje je RapidRAW stvorio u ovoj sesiji (smiju se stvarno obrisati)
@@ -456,16 +462,50 @@ class Share {
     } finally { this.stats.filling = false; }
   }
 
-  async list(rel) {
+  // Popis velikog foldera traje (1330 fajlova: ~1 s, dok browser šalje i druge podatke i 10 s), a RapidRAW neke
+  // operacije na fajlovima radi na glavnoj niti (npr. spremanje postavki nakon svake promjene: stat i EXIF fotke),
+  // pa za to vrijeme stoji sve, i obrada slidera. Zato stat ne čeka novi popis: uzima spremljeni i osvježava ga u pozadini.
+  async list(rel, fresh = true) {
     const c = this.lists.get(rel);
-    if (c && Date.now() - c.at < LIST_TTL) return c.entries;
-    const { head } = await this.request({ op: 'list', path: rel });
-    const entries = new Map(head.entries.map((e) => [e.name, e]));
-    this.lists.set(rel, { at: Date.now(), entries });
-    return entries;
+    const age = c ? Date.now() - c.at : Infinity;
+    if (age < LIST_TTL) return c.entries;
+    if (!fresh && age < LIST_STALE) {
+      if (age >= LIST_REFRESH) this.fetchList(rel).catch(() => {});
+      return c.entries;
+    }
+    return this.fetchList(rel);
+  }
+
+  fetchList(rel) {
+    let p = this.listing.get(rel);
+    if (p) return p;
+    const gen = this.listGen.get(rel) ?? 0;
+    p = this.request({ op: 'list', path: rel }).then(({ head }) => {
+      const entries = new Map(head.entries.map((e) => [e.name, e]));
+      const old = this.lists.get(rel);
+      // za vrijeme dohvata server je nešto promijenio u folderu: zadrži popis s tom izmjenom, osvježi ga idući put
+      if ((this.listGen.get(rel) ?? 0) !== gen) {
+        if (old) { old.at = Math.min(old.at, Date.now() - LIST_REFRESH); return old.entries; }
+        this.lists.set(rel, { at: Date.now() - LIST_REFRESH, entries });
+        return entries;
+      }
+      this.lists.set(rel, { at: Date.now(), entries });
+      return entries;
+    }).finally(() => { if (this.listing.get(rel) === p) this.listing.delete(rel); });
+    this.listing.set(rel, p);
+    return p;
   }
 
   invalidate(rel) { this.lists.delete(rel); }
+
+  // Izmjena koju je napravio server (RapidRAW): odmah u spremljeni popis, bez novog dohvata s klijenta
+  patchList(dir, name, entry) {
+    this.listGen.set(dir, (this.listGen.get(dir) ?? 0) + 1);
+    const c = this.lists.get(dir);
+    if (!c) return;
+    if (entry) c.entries.set(name, { ...entry, name });
+    else c.entries.delete(name);
+  }
 
   // Fajl napisan/izmijenjen na serveru → u folder na klijentu (u komadima)
   async push(rel, file) {
@@ -482,7 +522,7 @@ class Share {
     } finally { await fd.close(); }
     this.known.set(rel, `${st.size}:${Math.round(st.mtimeMs)}`);
     this.stats.pushed++;
-    this.invalidate(parentOf(rel));
+    this.patchList(parentOf(rel), nameOf(rel), { kind: 'file', size: st.size, mtime: Math.round(st.mtimeMs) });
   }
 
   // Slanja istog fajla idu jedno za drugim (FUSE release stiže asinkrono, nakon close), a brisanje i
@@ -518,7 +558,7 @@ class Share {
       const st = await fsp.stat(this.localPath(rel));
       return { kind: st.isDirectory() ? 'dir' : 'file', size: st.size, mtime: Math.round(st.mtimeMs) };
     }
-    const e = (await this.list(parentOf(rel))).get(nameOf(rel));
+    const e = (await this.list(parentOf(rel), false)).get(nameOf(rel));
     if (!e) throw fail('ENOENT');
     return { kind: e.kind, size: e.size ?? 0, mtime: e.mtime ?? this.started }; // folderi s klijenta nemaju datum
   }
@@ -580,7 +620,7 @@ class Share {
         await this.materialize(rel, false);
         this.created.add(rel);
         this.dirty.add(rel);
-        this.invalidate(parentOf(rel));
+        this.patchList(parentOf(rel), nameOf(rel), { kind: 'file', size: 0, mtime: Date.now() });
         return { kind: 'file', size: 0, mtime: Date.now() };
       }
       case 'write': {
@@ -603,7 +643,8 @@ class Share {
       case 'mkdir': {
         await this.request({ op: 'mkdir', path: rel });
         await fsp.mkdir(this.localPath(rel), { recursive: true });
-        this.invalidate(parentOf(rel));
+        this.patchList(parentOf(rel), nameOf(rel), { kind: 'dir' });
+        this.invalidate(rel);
         return { kind: 'dir', size: 0, mtime: Date.now() };
       }
       case 'unlink':
@@ -617,7 +658,8 @@ class Share {
         await this.files.get(rel)?.dispose();
         this.files.delete(rel);
         await fsp.rm(this.localPath(rel), { recursive: h.op === 'rmdir', force: true });
-        this.invalidate(parentOf(rel));
+        this.patchList(parentOf(rel), nameOf(rel), null);
+        if (h.op === 'rmdir') this.invalidate(rel);
         return {};
       }
       case 'rename': {
@@ -633,8 +675,11 @@ class Share {
         if (this.created.delete(from)) this.created.add(to);
         if (await exists(this.localPath(from))) await moveFile(this.localPath(from), this.localPath(to));
         if (remoteMissing && this.local.has(to) && !this.dirty.has(to)) await this.queuePush(to); // još nije bio poslan
-        this.invalidate(parentOf(from));
-        this.invalidate(parentOf(to));
+        const moved = this.lists.get(parentOf(from))?.entries.get(nameOf(from));
+        this.patchList(parentOf(from), nameOf(from), null);
+        this.patchList(parentOf(to), nameOf(to), moved ?? null);
+        if (!moved) this.invalidate(parentOf(to)); // nije bio u popisu: popis odredišta iznova s klijenta
+        for (const d of [...this.lists.keys()]) if (d === from || d.startsWith(`${from}/`)) this.invalidate(d);
         return {};
       }
       default: throw fail('EINVAL', `unknown op ${h.op}`);

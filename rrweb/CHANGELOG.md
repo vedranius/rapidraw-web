@@ -2,6 +2,13 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.12.0
+
+- **Fixed: sliders sometimes took seconds to update in folders used from another computer (on demand), even on a LAN.** After every change RapidRAW saves your edit next to the photo and reads the photo's details. It does this on its main thread, so all the rendering waits until it finishes. On an on-demand folder, each such check made the server ask your browser for the whole folder listing again: about 1 s for a folder with 1330 files, and up to 10 s while the browser was also sending other data. The rendering itself took 0.1–0.5 s. The server now answers these checks from the listing it already has and refreshes it in the background. Its own changes (saved edits, renames, deletions) go straight into that listing. Checking a photo went from 1–1.2 s to 1 ms on the server. The browser also lists big folders faster.
+- **Every change now shows its progress next to the slider:** a small ring with a percentage while the server renders the change and sends the preview. RapidRAW renders the whole image on the GPU in one pass and does not report how far along it is. The ring therefore fills by measured time: how long the same slider took before on this server, then the preview's transfer once the server reports it is done. If a change takes much longer than usual, the ring turns orange and shows the elapsed seconds. RapidRAW always renders only the newest state, so changes made in a row finish together with the last preview. Changes that don't come from a slider (curves, masks, crop…) show their name and progress at the top.
+- Labels on thumbnails that aren't ready (*Queued #3 · ~5 s*…) moved to the top-left corner, so they no longer cover the file name.
+- The server log (`relay.log`) also records RapidRAW commands that take longer than 1 s.
+
 ## 1.11.0
 
 - **While a photo is open in the editor, no heavy thumbnails are made at all** (edited photos, which RapidRAW renders from the whole RAW on the GPU and, for folders used from another computer, after fetching the whole file). Only thumbnails RapidRAW already has in its cache still appear. Everything continues as soon as you go back to the library. Before, one at a time started after 15 s without changes and slowed the next slider move. Test with 40 edited RAFs: 9 thumbnails rendered during 30 s of editing before, 0 now.

@@ -51,5 +51,13 @@ for (const [what, ok] of [
   ['UI čita EXIF s read_exif_for_paths({ paths })', nav.includes('invoke(Invokes.ReadExifForPaths, { paths: chunk })')],
   ['EXIF RAW-a: prvo kamadak-exif (extract_metadata), pa rawler', /if is_raw_file\(path\)\s*&& let Some\(map\) = extract_metadata\(file_bytes\)/.test(ex) && /if !map\.is_empty\(\) \{\s*return Some\(map\);\s*\}\s*let metadata = read_raw_metadata\(file_bytes\)\?;/.test(ex)],
 ]) if (!ok) problems.push(`RapidRAW thumbnail/EXIF se promijenio (${what}): prilagodi rrweb/relay/raf.mjs`);
+// rrweb/files/adjust.ts: kružić pokraj slidera traži slider po markupu i prepoznaje preskočene preglede
+const slider = readFileSync('src/components/ui/Slider.tsx', 'utf8');
+const lib = readFileSync('src-tauri/src/lib.rs', 'utf8');
+for (const [what, ok] of [
+  ['Slider: <div className="mb-2 group …"> s jednim <input type="range">', slider.includes('className={`mb-2 group ') && (slider.match(/type="range"/g) ?? []).length === 1],
+  ['Slider: naziv u prvom <span>, vrijednost u <div className="w-12 …">', /<span[\s\S]*?\{label\}/.test(slider) && slider.includes('<div className="w-12 text-right">')],
+  ['preskočen pregled: "Superseded or worker failed"', lib.includes('"Superseded or worker failed"')],
+]) if (!ok) problems.push(`RapidRAW editor se promijenio (${what}): prilagodi rrweb/files/adjust.ts`);
 if (problems.length) { console.error('rrweb shim check FAILED:\n  ' + [...new Set(problems)].join('\n  ')); process.exit(1); }
 console.log(`rrweb shim check OK (${Object.keys(SHIMS).length} modula)`);

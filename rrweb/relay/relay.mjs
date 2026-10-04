@@ -242,6 +242,10 @@ wssBridge.on('connection', (ws) => {
       const f = inflight.get(r); inflight.delete(r);
       if (!f) return;
       if (f.cmd === 'load_image') { editor.loaded(r); loadDone(f); }
+      // pregled nakon promjene je gotov na serveru; UI (rrweb/files/adjust.ts) od sad broji prijenos
+      if (f.cmd === 'apply_adjustments' && f.id) {
+        f.client.send(JSON.stringify({ event: '__rr_rendered', payload: { id: f.id, ms: Math.round(Number(process.hrtime.bigint() - f.t0) / 1e6), bytes: data.length - 4 } }));
+      }
       data.writeUInt32LE(f.id, 0);           // prepiši relayId → id klijenta
       f.client.send(data, { binary: true });
       log(f, data.length - 4);
@@ -336,9 +340,11 @@ const VERBOSE = !!process.env.RR_VERBOSE;
 // Rad u editoru: dok traje (i par sekundi nakon), pozadina (thumbnaili, folderi s klijenta) miruje (remote.mjs: editor)
 const EDIT_CMDS = new Set(['load_image', 'apply_adjustments', 'generate_uncropped_preview', 'generate_mask_overlay',
   'generate_preset_preview', 'apply_denoising', 'generate_ai_foreground_mask', 'generate_ai_sky_mask', 'generate_ai_subject_mask']);
+// binarni odgovori (pregledi) uvijek; ostalo s RR_VERBOSE ili kad traje dulje od 1 s (RapidRAW neke komande radi na
+// glavnoj niti, pa spora komanda zaustavi i obradu slidera)
 function log(f, bytes) {
-  if (!VERBOSE && bytes === undefined) return;
   const ms = Number(process.hrtime.bigint() - f.t0) / 1e6;
+  if (!VERBOSE && bytes === undefined && ms < 1000) return;
   console.log(`[ipc] ${f.cmd} ${ms.toFixed(1)}ms${bytes !== undefined ? ` ${(bytes / 1024).toFixed(0)}KB` : ''}`);
 }
 
