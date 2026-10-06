@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   Cloud,
   Cpu,
+  Unplug,
   ExternalLink as ExternalLinkIcon,
   Server,
   Info,
@@ -271,6 +272,7 @@ const AiProviderSwitch = ({ selectedProvider, onProviderChange }: AiProviderSwit
       { id: 'cpu', label: t('settings.processing.ai.providers.cpu'), icon: Cpu },
       { id: 'ai-connector', label: t('settings.processing.ai.providers.aiConnector'), icon: Server },
       { id: 'cloud', label: t('settings.processing.ai.providers.cloud'), icon: Cloud },
+      { id: 'ai-free', label: t('settings.processing.ai.providers.aiFree'), icon: Unplug },
     ],
     [t],
   );
@@ -1319,6 +1321,184 @@ export default function SettingsPanel({
 
                   <div className="p-6 bg-surface rounded-xl shadow-md">
                     <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
+                      {t('settings.processing.ai.title')}
+                    </Text>
+                    <Text className="mb-4">{t('settings.processing.ai.description')}</Text>
+
+                    <AiProviderSwitch selectedProvider={aiProvider} onProviderChange={handleProviderChange} />
+
+                    <div className="mt-8">
+                      <AnimatePresence mode="wait">
+                        {aiProvider === 'cpu' && (
+                          <motion.div
+                            key="cpu"
+                            initial={{ opacity: 0, x: 10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -10 }}
+                            transition={{ duration: 0.2 }}
+                          >
+                            <Text variant={TextVariants.heading}>{t('settings.processing.ai.cpu.title')}</Text>
+                            <Text className="mt-1">{t('settings.processing.ai.cpu.description')}</Text>
+                            <Text as="ul" className="mt-3 space-y-1 list-disc list-inside">
+                              <li>{t('settings.processing.ai.cpu.feature1')}</li>
+                              <li>{t('settings.processing.ai.cpu.feature2')}</li>
+                              <li>{t('settings.processing.ai.cpu.feature3')}</li>
+                            </Text>
+                          </motion.div>
+                        )}
+
+                        {aiProvider === 'ai-free' && (
+                          <motion.div
+                            key="ai-free"
+                            initial={{ opacity: 0, x: 10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -10 }}
+                            transition={{ duration: 0.2 }}
+                          >
+                            <Text variant={TextVariants.heading}>{t('settings.processing.ai.aiFree.title')}</Text>
+                            <Text className="mt-1">{t('settings.processing.ai.aiFree.description')}</Text>
+                            <Text as="ul" className="mt-3 space-y-1 list-disc list-inside">
+                              <li>{t('settings.processing.ai.aiFree.feature1')}</li>
+                              <li>{t('settings.processing.ai.aiFree.feature2')}</li>
+                              <li>{t('settings.processing.ai.aiFree.feature3')}</li>
+                            </Text>
+                          </motion.div>
+                        )}
+
+                        {aiProvider === 'ai-connector' && (
+                          <motion.div
+                            key="ai-connector"
+                            initial={{ opacity: 0, x: 10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -10 }}
+                            transition={{ duration: 0.2 }}
+                          >
+                            <div className="space-y-8">
+                              <div>
+                                <Text variant={TextVariants.heading}>
+                                  {t('settings.processing.ai.connector.title')}
+                                </Text>
+                                <Text className="mt-1">{t('settings.processing.ai.connector.description')}</Text>
+                                <Text as="ul" className="mt-3 space-y-1 list-disc list-inside">
+                                  <li>{t('settings.processing.ai.connector.feature1')}</li>
+                                  <li>{t('settings.processing.ai.connector.feature2')}</li>
+                                  <li>{t('settings.processing.ai.connector.feature3')}</li>
+                                </Text>
+                              </div>
+                              <SettingItem
+                                label={t('settings.processing.ai.connector.address')}
+                                description={t('settings.processing.ai.connector.addressDesc')}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    className="grow"
+                                    id="ai-connector-address"
+                                    onBlur={() =>
+                                      onSettingsChange({ ...appSettings, aiConnectorAddress: aiConnectorAddress })
+                                    }
+                                    onChange={(e: any) => setAiConnectorAddress(e.target.value)}
+                                    onKeyDown={(e: any) => e.stopPropagation()}
+                                    placeholder="127.0.0.1:8188"
+                                    type="text"
+                                    value={aiConnectorAddress}
+                                    bgClassName="bg-bg-primary"
+                                  />
+                                  <Button
+                                    className="w-32"
+                                    disabled={testStatus.testing || !aiConnectorAddress}
+                                    onClick={handleTestConnection}
+                                  >
+                                    {testStatus.testing
+                                      ? t('settings.processing.ai.connector.testing')
+                                      : t('settings.processing.ai.connector.test')}
+                                  </Button>
+                                </div>
+                                {testStatus.message && (
+                                  <Text
+                                    color={testStatus.success ? TextColors.success : TextColors.error}
+                                    className="mt-2 flex items-center gap-2"
+                                  >
+                                    {testStatus.success === true && <Wifi size={16} />}
+                                    {testStatus.success === false && <WifiOff size={16} />}
+                                    {testStatus.message}
+                                  </Text>
+                                )}
+                              </SettingItem>
+                            </div>
+                          </motion.div>
+                        )}
+
+                        {aiProvider === 'cloud' && (
+                          <motion.div
+                            key="cloud"
+                            initial={{ opacity: 0, x: 10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -10 }}
+                            transition={{ duration: 0.2 }}
+                          >
+                            <Text variant={TextVariants.heading}>{t('settings.processing.ai.cloud.title')}</Text>
+                            <Text className="mt-1">{t('settings.processing.ai.cloud.description')}</Text>
+                            <Text as="ul" className="mt-3 space-y-1 list-disc list-inside">
+                              <li>{t('settings.processing.ai.cloud.feature1')}</li>
+                              <li>{t('settings.processing.ai.cloud.feature2')}</li>
+                              <li>{t('settings.processing.ai.cloud.feature3')}</li>
+                            </Text>
+
+                            <div className="mt-8">
+                              {authStatus === 'ready' && user && (
+                                <div className="p-6 bg-bg-primary rounded-xl border border-border-color shadow-inner">
+                                  <CloudDashboard />
+                                </div>
+                              )}
+
+                              {authStatus === 'ready' && !user && clerk && (
+                                <div className="w-full max-w-md">
+                                  <ClerkProvider
+                                    Clerk={clerk}
+                                    publishableKey={clerk.publishableKey}
+                                    routerPush={() => {}}
+                                    routerReplace={() => {}}
+                                  >
+                                    <SignInWhenReady />
+                                  </ClerkProvider>
+                                  <div className="mt-6">
+                                    <Text variant={TextVariants.small}>
+                                      {t('settings.processing.ai.cloud.signedOut.noAccount')}{' '}
+                                      <button
+                                        onClick={() => open('https://www.getrapidraw.com/cloud')}
+                                        className="text-accent hover:underline focus:outline-none"
+                                      >
+                                        {t('settings.processing.ai.cloud.signedOut.signup')}
+                                      </button>
+                                    </Text>
+                                  </div>
+                                </div>
+                              )}
+
+                              {(authStatus === 'idle' || authStatus === 'loading') && (
+                                <Text variant={TextVariants.small}>
+                                  {t('settings.processing.ai.cloud.statuses.connecting')}
+                                </Text>
+                              )}
+
+                              {authStatus === 'unsupported' && (
+                                <Text variant={TextVariants.small}>
+                                  {t('settings.processing.ai.cloud.statuses.unsupported')}
+                                </Text>
+                              )}
+
+                              {authStatus === 'unavailable' && (
+                                <Button onClick={initAuth}>{t('settings.processing.ai.cloud.statuses.retry')}</Button>
+                              )}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  </div>
+
+                  <div className="p-6 bg-surface rounded-xl shadow-md">
+                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
                       {t('settings.lenses.title')}
                     </Text>
                     <Text className="mb-6">{t('settings.lenses.description')}</Text>
@@ -2209,156 +2389,6 @@ export default function SettingsPanel({
                           )}
                         </AnimatePresence>
                       </div>
-                    </div>
-                  </div>
-
-                  <div className="p-6 bg-surface rounded-xl shadow-md">
-                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
-                      {t('settings.processing.ai.title')}
-                    </Text>
-                    <Text className="mb-4">{t('settings.processing.ai.description')}</Text>
-
-                    <AiProviderSwitch selectedProvider={aiProvider} onProviderChange={handleProviderChange} />
-
-                    <div className="mt-8">
-                      <AnimatePresence mode="wait">
-                        {aiProvider === 'cpu' && (
-                          <motion.div
-                            key="cpu"
-                            initial={{ opacity: 0, x: 10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            exit={{ opacity: 0, x: -10 }}
-                            transition={{ duration: 0.2 }}
-                          >
-                            <Text variant={TextVariants.heading}>{t('settings.processing.ai.cpu.title')}</Text>
-                            <Text className="mt-1">{t('settings.processing.ai.cpu.description')}</Text>
-                            <Text as="ul" className="mt-3 space-y-1 list-disc list-inside">
-                              <li>{t('settings.processing.ai.cpu.feature1')}</li>
-                              <li>{t('settings.processing.ai.cpu.feature2')}</li>
-                              <li>{t('settings.processing.ai.cpu.feature3')}</li>
-                            </Text>
-                          </motion.div>
-                        )}
-
-                        {aiProvider === 'ai-connector' && (
-                          <motion.div
-                            key="ai-connector"
-                            initial={{ opacity: 0, x: 10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            exit={{ opacity: 0, x: -10 }}
-                            transition={{ duration: 0.2 }}
-                          >
-                            <div className="space-y-8">
-                              <div>
-                                <Text variant={TextVariants.heading}>
-                                  {t('settings.processing.ai.connector.title')}
-                                </Text>
-                                <Text className="mt-1">{t('settings.processing.ai.connector.description')}</Text>
-                                <Text as="ul" className="mt-3 space-y-1 list-disc list-inside">
-                                  <li>{t('settings.processing.ai.connector.feature1')}</li>
-                                  <li>{t('settings.processing.ai.connector.feature2')}</li>
-                                  <li>{t('settings.processing.ai.connector.feature3')}</li>
-                                </Text>
-                              </div>
-                              <SettingItem
-                                label={t('settings.processing.ai.connector.address')}
-                                description={t('settings.processing.ai.connector.addressDesc')}
-                              >
-                                <div className="flex items-center gap-2">
-                                  <Input
-                                    className="grow"
-                                    id="ai-connector-address"
-                                    onBlur={() =>
-                                      onSettingsChange({ ...appSettings, aiConnectorAddress: aiConnectorAddress })
-                                    }
-                                    onChange={(e: any) => setAiConnectorAddress(e.target.value)}
-                                    onKeyDown={(e: any) => e.stopPropagation()}
-                                    placeholder="127.0.0.1:8188"
-                                    type="text"
-                                    value={aiConnectorAddress}
-                                    bgClassName="bg-bg-primary"
-                                  />
-                                  <Button
-                                    className="w-32"
-                                    disabled={testStatus.testing || !aiConnectorAddress}
-                                    onClick={handleTestConnection}
-                                  >
-                                    {testStatus.testing
-                                      ? t('settings.processing.ai.connector.testing')
-                                      : t('settings.processing.ai.connector.test')}
-                                  </Button>
-                                </div>
-                                {testStatus.message && (
-                                  <Text
-                                    color={testStatus.success ? TextColors.success : TextColors.error}
-                                    className="mt-2 flex items-center gap-2"
-                                  >
-                                    {testStatus.success === true && <Wifi size={16} />}
-                                    {testStatus.success === false && <WifiOff size={16} />}
-                                    {testStatus.message}
-                                  </Text>
-                                )}
-                              </SettingItem>
-                            </div>
-                          </motion.div>
-                        )}
-
-                        {aiProvider === 'cloud' && (
-                          <motion.div
-                            key="cloud"
-                            initial={{ opacity: 0, x: 10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            exit={{ opacity: 0, x: -10 }}
-                            transition={{ duration: 0.2 }}
-                          >
-                            <Text variant={TextVariants.heading}>{t('settings.processing.ai.cloud.title')}</Text>
-                            <Text className="mt-1">{t('settings.processing.ai.cloud.description')}</Text>
-                            <Text as="ul" className="mt-3 space-y-1 list-disc list-inside">
-                              <li>{t('settings.processing.ai.cloud.feature1')}</li>
-                              <li>{t('settings.processing.ai.cloud.feature2')}</li>
-                              <li>{t('settings.processing.ai.cloud.feature3')}</li>
-                            </Text>
-
-                            <div className="mt-8">
-                              {authStatus === 'ready' && user && (
-                                <div className="p-6 bg-bg-primary rounded-xl border border-border-color shadow-inner">
-                                  <CloudDashboard />
-                                </div>
-                              )}
-
-                              {authStatus === 'ready' && !user && clerk && (
-                                <div className="w-full max-w-md">
-                                  <ClerkProvider
-                                    Clerk={clerk}
-                                    publishableKey={clerk.publishableKey}
-                                    routerPush={() => {}}
-                                    routerReplace={() => {}}
-                                  >
-                                    <SignInWhenReady />
-                                  </ClerkProvider>
-                                  <div className="mt-6">
-                                    <Text variant={TextVariants.small}>
-                                      {t('settings.processing.ai.cloud.signedOut.noAccount')}{' '}
-                                      <button
-                                        onClick={() => open('https://www.getrapidraw.com/cloud')}
-                                        className="text-accent hover:underline focus:outline-none"
-                                      >
-                                        {t('settings.processing.ai.cloud.signedOut.signup')}
-                                      </button>
-                                    </Text>
-                                  </div>
-                                </div>
-                              )}
-
-                              {(authStatus === 'idle' || authStatus === 'loading') && (
-                                <Text variant={TextVariants.small}>Connecting…</Text>
-                              )}
-
-                              {authStatus === 'unavailable' && <Button onClick={initAuth}>Retry connection</Button>}
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
                     </div>
                   </div>
 

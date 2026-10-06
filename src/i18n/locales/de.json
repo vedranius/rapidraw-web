@@ -973,6 +973,7 @@
       "noMatch": "Keine Bilder gefunden, die Ihrem Filter entsprechen.",
       "rating": {
         "all": "Alle anzeigen",
+        "andDownSuffix": "& niedriger",
         "andUpSuffix": "& höher",
         "fiveOnly": "Nur 5",
         "fourAndUp": "4 & höher",
@@ -1053,6 +1054,11 @@
         "filterByFileType": "Nach Dateityp filtern",
         "filterByFlag": "Nach Markierung filtern",
         "filterByRating": "Nach Bewertung filtern",
+        "ratingOperator": {
+          "eq": "Genau diese Bewertung",
+          "gte": "Diese Bewertung oder höher",
+          "lte": "Diese Bewertung oder niedriger"
+        },
         "groupEditedFiles": "Include edited files in groups",
         "groupIgnoreMetadata": "Ignore mismatched EXIF dates",
         "groupOff": "Off",
@@ -1730,6 +1736,11 @@
             "upgradeBtn": "Upgrade auf der Website",
             "upgradeDesc": "Um Cloud-KI-Funktionen zu nutzen, benötigen Sie ein Cloud-Abonnement."
           },
+          "statuses": {
+            "connecting": "Verbinden…",
+            "retry": "Verbindung erneut versuchen",
+            "unsupported": "Die Cloud-Anmeldung ist derzeit nur auf dem Desktop verfügbar."
+          },
           "title": "Cloud-Dienst"
         },
         "connector": {
@@ -1752,9 +1763,17 @@
           "feature3": "Einfaches CPU-basiertes generatives Ersetzen",
           "title": "Integrierte KI (CPU)"
         },
+        "aiFree": {
+          "description": "Schaltet alle KI-Funktionen aus. Sämtliche KI-Bedienelemente werden ausgeblendet, sodass RapidRAW als rein klassischer RAW-Editor arbeitet.",
+          "feature1": "Keine KI-Masken, Linsenunschärfe oder generativen Edits in der Oberfläche",
+          "feature2": "Vorhandene KI-Bearbeitungen werden weiterhin normal dargestellt",
+          "feature3": "Eine aufgeräumtere, fokussiertere Oberfläche",
+          "title": "KI-frei"
+        },
         "description": "Die KI von RapidRAW ist auf Flexibilität ausgelegt. Wählen Sie Ihren idealen Workflow.",
         "providers": {
           "aiConnector": "AI Connector",
+          "aiFree": "KI-frei",
           "cloud": "Cloud",
           "cpu": "CPU"
         },

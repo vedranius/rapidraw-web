@@ -218,6 +218,7 @@ export function useAiMasking() {
           path: selectedImage.path,
           rotation: adjustments.rotation,
           startPoint: [startPoint.x, startPoint.y],
+          skipRefinement: true,
           taskId: patchId,
         });
 
@@ -328,6 +329,9 @@ export function useAiMasking() {
 
     try {
       const transformAdjustments = getTransformAdjustments(adjustments);
+      const isInpaintMask = !!adjustments.aiPatches?.some((p: AiPatch) =>
+        p.subMasks.some((sm: SubMask) => sm.id === subMaskId),
+      );
       const newParameters = await invoke(Invokes.GenerateAiSubjectMask, {
         jsAdjustments: transformAdjustments,
         endPoint: [endPoint.x, endPoint.y],
@@ -337,6 +341,7 @@ export function useAiMasking() {
         path: selectedImage.path,
         rotation: adjustments.rotation,
         startPoint: [startPoint.x, startPoint.y],
+        skipRefinement: isInpaintMask,
         taskId: subMaskId,
       });
 

@@ -971,6 +971,7 @@
       "noMatch": "未找到匹配过滤条件的图像。",
       "rating": {
         "all": "显示全部",
+        "andDownSuffix": "及以下",
         "andUpSuffix": "及以上",
         "fiveOnly": "仅 5 星",
         "fourAndUp": "4 星及以上",
@@ -1051,6 +1052,11 @@
         "filterByFileType": "按文件类型过滤",
         "filterByFlag": "按标记过滤",
         "filterByRating": "按评分过滤",
+        "ratingOperator": {
+          "eq": "仅此评分",
+          "gte": "此评分及以上",
+          "lte": "此评分及以下"
+        },
         "groupEditedFiles": "Include edited files in groups",
         "groupIgnoreMetadata": "Ignore mismatched EXIF dates",
         "groupOff": "Off",
@@ -1728,6 +1734,11 @@
             "upgradeBtn": "在网站上升级",
             "upgradeDesc": "要使用云端 AI 功能，您需要订阅云端服务。"
           },
+          "statuses": {
+            "connecting": "正在连接…",
+            "retry": "重试连接",
+            "unsupported": "云端登录目前仅在桌面设备上可用。"
+          },
           "title": "云端服务"
         },
         "connector": {
@@ -1750,9 +1761,17 @@
           "feature3": "简单的 CPU 生成式替换",
           "title": "内置 AI（CPU）"
         },
+        "aiFree": {
+          "description": "关闭所有 AI 功能。所有与 AI 相关的控件都会从界面中隐藏，RapidRAW 将作为纯传统的 RAW 编辑器运行。",
+          "feature1": "界面中不显示 AI 蒙版、镜头模糊或生成式编辑",
+          "feature2": "现有的 AI 编辑仍会正常渲染",
+          "feature3": "更简洁、更专注的界面",
+          "title": "无 AI"
+        },
         "description": "RapidRAW 的 AI 专为灵活性而设计。选择您理想的工作流程，从快速的本地工具到强大的自托管。",
         "providers": {
           "aiConnector": "AI 连接器",
+          "aiFree": "无 AI",
           "cloud": "云端",
           "cpu": "CPU"
         },

@@ -522,17 +522,15 @@ export default function ColorPanel({
           actions={
             !isForMask && (
               <div className="flex items-center gap-1">
-                {asShotWhiteBalance && (
-                  <button
-                    onClick={toggleWhiteBalanceMode}
-                    className={`w-6 h-6 flex items-center justify-center rounded-md text-xs font-semibold transition-colors ${
-                      isKelvinMode ? 'bg-accent text-button-text' : 'hover:bg-bg-secondary text-text-secondary'
-                    }`}
-                    data-tooltip={t('adjustments.color.kelvinModeTooltip')}
-                  >
-                    K
-                  </button>
-                )}
+                <button
+                  onClick={toggleWhiteBalanceMode}
+                  className={`w-6 h-6 flex items-center justify-center rounded-md text-xs font-semibold transition-colors ${
+                    isKelvinMode ? 'bg-accent text-button-text' : 'hover:bg-bg-secondary text-text-secondary'
+                  }`}
+                  data-tooltip={t('adjustments.color.kelvinModeTooltip')}
+                >
+                  K
+                </button>
                 {toggleWbPicker && (
                   <button
                     onClick={toggleWbPicker}

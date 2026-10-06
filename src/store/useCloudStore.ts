@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { Clerk } from '@clerk/clerk-js';
 import { initClerk } from 'tauri-plugin-clerk';
 import { fetch } from '@tauri-apps/plugin-http';
+import { platform } from '@tauri-apps/plugin-os';
 
 export const CLOUD_API_BASE_URL = 'https://www.getrapidraw.com/api';
 
@@ -11,7 +12,7 @@ export interface CloudUsage {
   month: string;
 }
 
-type AuthStatus = 'idle' | 'loading' | 'ready' | 'unavailable';
+type AuthStatus = 'idle' | 'loading' | 'ready' | 'unavailable' | 'unsupported';
 
 interface CloudStoreState {
   authStatus: AuthStatus;
@@ -35,7 +36,19 @@ export const useCloudStore = create<CloudStoreState>((set, get) => ({
 
   initAuth: async () => {
     const { authStatus } = get();
-    if (authStatus === 'loading' || authStatus === 'ready') return;
+    if (authStatus === 'loading' || authStatus === 'ready' || authStatus === 'unsupported') return;
+
+    let os = '';
+    try {
+      os = platform();
+    } catch (_error) {
+      os = '';
+    }
+    if (os === 'android' || os === 'ios') {
+      set({ authStatus: 'unsupported' });
+      return;
+    }
+
     set({ authStatus: 'loading' });
     try {
       const clerk = await initClerk({

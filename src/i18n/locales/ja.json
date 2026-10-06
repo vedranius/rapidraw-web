@@ -971,6 +971,7 @@
       "noMatch": "フィルターに一致する画像が見つかりません。",
       "rating": {
         "all": "すべて表示",
+        "andDownSuffix": "以下",
         "andUpSuffix": "以上",
         "fiveOnly": "5のみ",
         "fourAndUp": "4以上",
@@ -1051,6 +1052,11 @@
         "filterByFileType": "ファイル形式でフィルター",
         "filterByFlag": "フラグでフィルター",
         "filterByRating": "評価でフィルター",
+        "ratingOperator": {
+          "eq": "この評価のみ",
+          "gte": "この評価以上",
+          "lte": "この評価以下"
+        },
         "groupEditedFiles": "Include edited files in groups",
         "groupIgnoreMetadata": "Ignore mismatched EXIF dates",
         "groupOff": "Off",
@@ -1728,6 +1734,11 @@
             "upgradeBtn": "Webサイトでアップグレード",
             "upgradeDesc": "クラウドAI機能を使用するには、クラウドサブスクリプションへの加入が必要です。"
           },
+          "statuses": {
+            "connecting": "接続中…",
+            "retry": "接続を再試行",
+            "unsupported": "クラウドへのサインインは現在、デスクトップでのみ利用可能です。"
+          },
           "title": "クラウドサービス"
         },
         "connector": {
@@ -1750,9 +1761,17 @@
           "feature3": "CPUベースの簡易生成塗りつぶし",
           "title": "内蔵AI (CPU)"
         },
+        "aiFree": {
+          "description": "すべてのAI機能をオフにします。AI関連のコントロールはすべてインターフェースから非表示になり、RapidRAWは純粋な従来型のRAWエディターとして動作します。",
+          "feature1": "AIマスク、レンズぼかし、生成編集をUIに表示しません",
+          "feature2": "既存のAI編集は引き続き通常どおり反映されます",
+          "feature3": "よりすっきりとした集中しやすいインターフェース",
+          "title": "AIなし"
+        },
         "description": "RapidRAWのAIは、優れた柔軟性を備えています。高速なローカル処理から本格的なセルフホストまで、最適なワークフローを選択してください。",
         "providers": {
           "aiConnector": "AI Connector",
+          "aiFree": "AIなし",
           "cloud": "クラウド",
           "cpu": "CPU"
         },

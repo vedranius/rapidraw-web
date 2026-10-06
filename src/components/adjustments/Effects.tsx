@@ -15,6 +15,7 @@ import AdjustmentSubSection from './AdjustmentSubSection';
 import { TextVariants } from '../../types/typography';
 import { DepthRangePicker } from '../ui/DepthRangePicker';
 import { useProcessStore } from '../../store/useProcessStore';
+import { useSettingsStore } from '../../store/useSettingsStore';
 
 interface EffectsPanelProps {
   adjustments: Adjustments;
@@ -194,6 +195,7 @@ export default function EffectsPanel({
     }
   };
 
+  const isAiFree = useSettingsStore((s) => s.appSettings?.aiProvider === 'ai-free');
   const hiddenTools = getHiddenAdjustmentTools(appSettings?.adjustmentLayout);
   const toolOrder = getAdjustmentToolOrder('effects', appSettings?.adjustmentLayout?.toolOrder);
 
@@ -241,7 +243,7 @@ export default function EffectsPanel({
 
       {!isForMask && (
         <>
-          {!hiddenTools.includes('lensBlur') && (
+          {!isAiFree && !hiddenTools.includes('lensBlur') && (
             <AdjustmentSubSection
               id="lensBlur"
               order={toolOrder.indexOf('lensBlur')}
