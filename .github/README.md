@@ -237,7 +237,7 @@ The IPC channel can do everything RapidRAW can do on the server (browse and writ
 - One active editing session at a time: RapidRAW's backend state is global, so two browsers editing different photos at once will interfere.
 - The folder/file pickers browse only the photo folders; other server paths can be typed in with *Type a path…*.
 - Desktop-only window features (window controls, native drag & drop from your OS) are no-ops. Tethering is not included.
-- *RapidRAW Cloud* (the optional paid generative cleanup) can't sign in from a browser yet: its sign-in only allows the desktop app. A self-hosted *AI connector* (RapidRAW-AI-Connector with ComfyUI, *Settings → Processing → AI*) works: RapidRAW on the server talks to it, so it can run on the same server.
+- *RapidRAW Cloud* (the optional paid generative cleanup) can't sign in from a browser: its sign-in is the desktop app's, and sends requests a browser isn't allowed to make to another site (CORS), so RapidRAW shows it as unavailable. A self-hosted *AI connector* (RapidRAW-AI-Connector with ComfyUI, *Settings → General → Generative AI → AI Connector*) works: RapidRAW on the server talks to it, so it can run on the same server.
 - RapidRAW's folder tree shows folders created in the Files tab after you reopen the parent folder. Uploading whole folders (as opposed to files) is not supported yet.
 - *Use a folder from this computer* needs Chrome or Edge and HTTPS (or `localhost`); on-demand mode needs a Linux or Windows server for now.
 

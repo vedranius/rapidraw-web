@@ -2,6 +2,11 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.14.1
+
+- **Fixed: RapidRAW Cloud's sign-in failed with "Maximum call stack size exceeded"** (in the browser console) instead of a plain "unavailable". The sign-in replaces the page's `fetch` and sends its requests through the HTTP plugin's `fetch`, which in the browser called the replaced one again, endlessly. It now uses the browser's own. Cloud sign-in still can't work from a browser (see the limitations in the README); the self-hosted AI connector does.
+- Docs: the AI settings are under *Settings → General → Generative AI*.
+
 ## 1.14.0
 
 - **RapidRAW 1.6.5** (Kelvin white balance, guided filter, pick and reject flags, reorderable panels, RapidRAW Cloud and more: see [its release](https://github.com/CyberTimon/RapidRAW/releases/tag/v1.6.5)). The automatic build for 1.6.5 had failed, because 1.6.5's cloud sign-in uses two Tauri functions the browser didn't have yet (`emit`, and `fetch` from the HTTP plugin). The build check now also looks inside the Tauri plugin packages RapidRAW uses.
