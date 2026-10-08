@@ -1,11 +1,12 @@
-// rrweb-fuse: folder s klijentskog računala (browser, File System Access API) kao disk na serveru, da ga
-// RapidRAW čita kao obične fajlove. Sam ne zna ništa o mreži: svaku operaciju šalje relayu
-// (rrweb/relay/remote.mjs) preko stdin/stdout i čeka odgovor; relay dohvaća bajtove s klijenta i cachea ih.
-//   rrweb-fuse <mountpoint>   Linux: FUSE (unix.rs, bez libfuse); Windows: WinFsp (windows.rs)
-//   rrweb-fuse --check        izlaz 0 = ovo računalo može montirati (Windows: WinFsp je instaliran)
-// Okvir u oba smjera: [u32 LE duljina JSON zaglavlja][u32 LE duljina podataka][zaglavlje][podaci].
-// Zaglavlje zahtjeva: {"id", "op", "path", ...}; odgovora: {"id", "err": errno} ili {"id", ...rezultat}.
-// Kraj stdina (relay je stao) = unmount i izlaz.
+// rrweb-fuse: a folder on the browsing computer (browser, File System Access API) as a disk on the server, so that
+// RapidRAW reads it like normal files. It knows nothing about the network itself: it sends every operation to the
+// relay (rrweb/relay/remote.mjs) over stdin/stdout and waits for the answer; the relay fetches the bytes from the
+// browsing computer and caches them.
+//   rrweb-fuse <mountpoint>   Linux: FUSE (unix.rs, without libfuse); Windows: WinFsp (windows.rs)
+//   rrweb-fuse --check        exit 0 = this computer can mount (Windows: WinFsp is installed)
+// Frame in both directions: [u32 LE length of the JSON header][u32 LE length of the data][header][data].
+// Request header: {"id", "op", "path", ...}; answer: {"id", "err": errno} or {"id", ...result}.
+// End of stdin (the relay stopped) = unmount and exit.
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -25,7 +26,7 @@ pub const EIO: i32 = 5;
 
 pub type Reply = (Value, Vec<u8>);
 
-/// Veza s relayem: zahtjevi idu na stdout, odgovori stižu na stdin (čita ih zasebna nit).
+/// Link to the relay: requests go to stdout, answers arrive on stdin (read by a separate thread).
 pub struct Link {
     out: Mutex<std::io::Stdout>,
     next: AtomicU64,
@@ -45,7 +46,7 @@ impl Link {
         out.flush()
     }
 
-    /// Zahtjev relayu; greška je POSIX errno (relay: ENOENT, EIO, …)
+    /// Request to the relay; an error is a POSIX errno (relay: ENOENT, EIO, …)
     pub fn call(&self, mut head: Value, data: &[u8]) -> Result<Reply, i32> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         head["id"] = json!(id);
@@ -55,14 +56,14 @@ impl Link {
             self.pending.lock().unwrap().remove(&id);
             return Err(EIO);
         }
-        let (reply, payload) = rx.recv().map_err(|_| EIO)?; // relay je stao
+        let (reply, payload) = rx.recv().map_err(|_| EIO)?; // the relay stopped
         match reply.get("err").and_then(Value::as_i64) {
             Some(e) => Err(e as i32),
             None => Ok((reply, payload)),
         }
     }
 
-    /// Čita odgovore sa stdina dok relay ne zatvori vezu
+    /// Reads answers from stdin until the relay closes the link
     pub fn read_replies(&self) {
         let mut input = std::io::stdin().lock();
         let mut len = [0u8; 8];
@@ -80,7 +81,7 @@ impl Link {
                 let _ = tx.send((head, data));
             }
         }
-        self.pending.lock().unwrap().clear(); // čekatelji dobiju EIO
+        self.pending.lock().unwrap().clear(); // waiting callers get EIO
     }
 
     pub fn mounted(&self) {

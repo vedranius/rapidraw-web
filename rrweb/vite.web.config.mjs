@@ -1,4 +1,4 @@
-// Browser build: isti RapidRAW UI, @tauri-apps/* zamijenjeni shimovima.
+// Browser build: the same RapidRAW UI, with @tauri-apps/* replaced by shims.
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -12,10 +12,10 @@ const shims = {
   '@tauri-apps/api/window': 'window', '@tauri-apps/api/path': 'path',
   '@tauri-apps/api/app': 'app', '@tauri-apps/plugin-dialog': 'dialog',
   '@tauri-apps/plugin-os': 'os', '@tauri-apps/plugin-process': 'process',
-  '@tauri-apps/plugin-shell': 'shell',
+  '@tauri-apps/plugin-shell': 'shell', '@tauri-apps/plugin-http': 'http',
 };
 
-// Files tab (rrweb/files) ide u upstream index.html kao dodatni script, bez diranja RapidRAW koda
+// The Files tab (rrweb/files) goes into RapidRAW's index.html as an extra script, without touching RapidRAW's code
 const filesTab = {
   name: 'rrweb-files-tab',
   transformIndexHtml: {
@@ -29,7 +29,7 @@ export default defineConfig({
   plugins: [tailwindcss(), react(), filesTab],
   define: {
     __RR_VERSION__: JSON.stringify(pkg.version),
-    __RR_WEB_VERSION__: JSON.stringify(readFileSync(r('./VERSION'), 'utf8').trim()),
+    __RR_WEB_VERSION__: JSON.stringify(readFileSync(r('./VERSION'), 'utf8').trim()), // fork: rrweb/VERSION
   },
   resolve: {
     alias: Object.entries(shims).map(([m, f]) => ({

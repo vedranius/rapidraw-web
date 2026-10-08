@@ -1,6 +1,6 @@
-// Windows: WinFsp (https://winfsp.dev, korisnik ga instalira jednom). Montira se na folder (WinFsp ga sam stvori,
-// ne smije postojati). Iste operacije prema relayu kao na Linuxu; Windows semantika: sigurnosni deskriptor
-// (svi smiju sve, kao na Linux mountu), brisanje tek na cleanup, listanje direktorija preko DirBuffera.
+// Windows: WinFsp (https://winfsp.dev, installed once by the user). Mounts on a folder (WinFsp creates it, it must
+// not exist). The same operations to the relay as on Linux; Windows semantics: a security descriptor (everyone may do
+// everything, like on the Linux mount), deleting only on cleanup, directory listing through a DirBuffer.
 use crate::{Link, Reply};
 use serde_json::{Value, json};
 use std::ffi::c_void;
@@ -40,7 +40,7 @@ fn nt(status: u32) -> FspError {
     FspError::NTSTATUS(status as i32)
 }
 
-/// errno iz relaya → NTSTATUS
+/// errno from the relay → NTSTATUS
 fn errno(e: i32) -> FspError {
     nt(match e {
         2 => STATUS_OBJECT_NAME_NOT_FOUND,
@@ -54,7 +54,7 @@ fn errno(e: i32) -> FspError {
     })
 }
 
-/// WinFsp DLL iz instalacijskog foldera (registry InstallDir); WinFsp ga ne stavlja u PATH
+/// The WinFsp DLL from its installation folder (registry InstallDir); WinFsp doesn't put it on PATH
 fn load_winfsp() -> std::result::Result<(), String> {
     let mut buf = [0u16; 260];
     let mut size = (buf.len() * 2) as u32;
@@ -75,7 +75,7 @@ pub fn check() -> std::result::Result<(), String> {
     load_winfsp()
 }
 
-/// "\\a\\b" → "a/b" (relay koristi "/" i "" za korijen)
+/// "\\a\\b" → "a/b" (the relay uses "/" and "" for the root)
 fn rel(name: &U16CStr) -> String {
     name.to_string_lossy().replace('\\', "/").trim_matches('/').to_string()
 }
@@ -107,13 +107,13 @@ fn fill(info: &mut FileInfo, v: &Value) {
 pub struct Handle {
     path: String,
     dir: bool,
-    dirty: AtomicBool,     // pisano: na cleanup relay šalje fajl natrag na klijenta
+    dirty: AtomicBool,     // written: on cleanup the relay sends the file back to the browsing computer
     entries: DirBuffer,
 }
 
 struct Fs {
     link: Arc<Link>,
-    sd: Vec<u8>, // samorelativni sigurnosni deskriptor za sve fajlove
+    sd: Vec<u8>, // self-relative security descriptor for all files
 }
 
 impl Fs {
@@ -234,15 +234,16 @@ impl FileSystemContext for Fs {
 
     fn read_directory(&self, context: &Handle, _pattern: Option<&U16CStr>, marker: DirMarker, buffer: &mut [u8]) -> Result<u32> {
         if marker.is_none() {
-            // prvo čitanje: cijeli popis u WinFsp-ov DirBuffer (on sortira, filtrira po patternu i nastavlja od markera)
+            // first read: the whole listing into WinFsp's DirBuffer (it sorts, filters by pattern and continues from the marker)
             let (v, _) = self.call(json!({"op": "readdir", "path": context.path}), &[])?;
             let lock = context.entries.acquire(true, None)?;
             let mut entry: DirInfo = DirInfo::new();
             let mut add = |name: &str, v: &Value| -> Result<()> {
                 entry.reset();
                 fill(entry.file_info_mut(), v);
-                // bez završnog NUL-a: set_name ga upiše u ime, pa nastavak listanja od markera ("ime" < "ime\0")
-                // uvijek iznova vrati zadnji unos i WinFsp se vrti u krug (popis veći od ~64 KB, oko 480 fajlova)
+                // without a trailing NUL: set_name writes it into the name, so continuing the listing from the marker
+                // ("name" < "name\0") always returns the last entry again and WinFsp loops forever (listings over
+                // ~64 KB, about 480 files)
                 let wide: Vec<u16> = name.encode_utf16().collect();
                 entry.set_name_raw(wide.as_slice())?;
                 lock.write(&mut entry)
@@ -280,7 +281,7 @@ impl FileSystemContext for Fs {
         _last_change_time: u64,
         file_info: &mut FileInfo,
     ) -> Result<()> {
-        self.info(&context.path, file_info) // vremena i atributi su s klijenta; promjene se ignoriraju
+        self.info(&context.path, file_info) // times and attributes come from the browsing computer; changes are ignored
     }
 
     fn set_delete(&self, context: &Handle, _file_name: &U16CStr, delete_file: bool) -> Result<()> {
@@ -327,7 +328,7 @@ impl FileSystemContext for Fs {
             if write_to_eof {
                 offset = size;
             }
-            if constrained_io { // paging I/O ne smije povećati fajl
+            if constrained_io { // paging I/O must not grow the file
                 if offset >= size {
                     return self.info(&context.path, file_info).map(|_| 0);
                 }
@@ -341,7 +342,7 @@ impl FileSystemContext for Fs {
     }
 
     fn get_volume_info(&self, out_volume_info: &mut VolumeInfo) -> Result<()> {
-        // stvarni prostor je na klijentu; javi dovoljno da programi ne odustanu od pisanja
+        // the real space is on the browsing computer; report enough that programs don't give up writing
         out_volume_info.total_size = 1 << 40;
         out_volume_info.free_size = 1 << 39;
         out_volume_info.set_volume_label("rrweb");
@@ -349,7 +350,7 @@ impl FileSystemContext for Fs {
     }
 }
 
-/// Sigurnosni deskriptor: vlasnik Administrators, svi (WD) smiju sve, kao 0644/0755 bez provjere korisnika na Linuxu
+/// Security descriptor: owner Administrators, everyone (WD) may do everything, like 0644/0755 without user checks on Linux
 fn security_descriptor() -> Vec<u8> {
     let mut psd = PSECURITY_DESCRIPTOR::default();
     let mut len = 0u32;
@@ -379,8 +380,8 @@ pub fn run(mountpoint: &str, link: Arc<Link>) {
         .sectors_per_allocation_unit(1)
         .max_component_length(255)
         .file_info_timeout(1000)
-        // case-sensitive: inače WinFsp neka imena (npr. izvor kod preimenovanja) šalje velikim slovima, a folder
-        // na klijentu (i lista u relayu) razlikuje velika i mala slova; RapidRAW koristi točna imena iz popisa
+        // case-sensitive: otherwise WinFsp sends some names (e.g. the source of a rename) in upper case, while the
+        // folder on the browsing computer (and the relay's listing) is case-sensitive; RapidRAW uses the exact names
         .case_sensitive_search(true)
         .case_preserved_names(true)
         .unicode_on_disk(true)
@@ -395,7 +396,7 @@ pub fn run(mountpoint: &str, link: Arc<Link>) {
         eprintln!("rrweb-fuse: mount {mountpoint}: {e:?}");
         std::process::exit(1);
     }
-    // operacije čekaju mrežu; ostale ne smiju stati
+    // operations wait for the network; the others must not stall
     if let Err(e) = host.start_with_threads(16) {
         eprintln!("rrweb-fuse: start: {e:?}");
         std::process::exit(1);

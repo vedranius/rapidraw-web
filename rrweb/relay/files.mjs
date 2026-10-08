@@ -1,8 +1,8 @@
-// rrweb Files tab (server): listanje, skidanje (fajl ili zip), upload, novi folder, preimenovanje, kopiranje,
-// premještanje i brisanje u koš (preko RapidRAW-a). Isti popis koriste i dijalozi za odabir foldera/fajlova u browseru.
-// Sve putanje moraju biti unutar foldera s fotografijama: photo library (odabran u RapidRAW Web prozoru na serveru),
-// RR_PHOTOS i folderi koje RapidRAW koristi (rootFolders, pinnedFolders, lastRootPath).
-// Fajl putuje sa svojim sidecarima kao u RapidRAW-u: <ime>.rrdata, <ime>.<id>.rrdata (virtualne kopije), <ime>.rrexif.
+// rrweb Files tab (server): listing, download (a file or a zip), upload, new folder, rename, copy, move and delete to
+// the trash (through RapidRAW). The folder/file pickers in the browser use the same listing.
+// Every path must be inside the photo folders: the photo library (chosen in the RapidRAW Web window on the server),
+// RR_PHOTOS and the folders RapidRAW uses (rootFolders, pinnedFolders, lastRootPath).
+// A file travels with its sidecars, as in RapidRAW: <name>.rrdata, <name>.<id>.rrdata (virtual copies), <name>.rrexif.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -51,14 +51,14 @@ async function addToZip(zip, p, name) {
     zip.addEmptyDirectory(name, { mtime: st.mtime });
     for (const e of await fsp.readdir(p)) await addToZip(zip, path.join(p, e), `${name}/${e.replace(/\\/g, '_')}`);
   } else {
-    zip.addFile(p, name, { compress: false, mtime: st.mtime }); // fotke su već komprimirane
+    zip.addFile(p, name, { compress: false, mtime: st.mtime }); // photos are already compressed
   }
 }
 
-// settings(): RapidRAW postavke (preko bridgea), bridge(cmd, args): poziv RapidRAW komande,
-// library(): photo library folder ili null, extraRoots(): dodatni folderi (RR_PHOTOS, folderi s klijenta),
-// labels(): { putanja: naziv } za prikaz, offline(p): je li p u folderu s računala koje nije spojeno
-// (takav folder se ne dira: svaka operacija na njemu bi čekala da se računalo vrati)
+// settings(): RapidRAW settings (through the bridge), bridge(cmd, args): call a RapidRAW command,
+// library(): photo library folder or null, extraRoots(): extra folders (RR_PHOTOS, folders from browsing computers),
+// labels(): { path: name } for display, offline(p): is p in a folder from a computer that is not connected
+// (such a folder is not touched: every operation on it would wait for the computer to come back)
 const NOT_CONNECTED = 'This folder is on a computer that is not connected right now. Open RapidRAW Web there (Files → This computer → Reconnect).';
 export function createFiles({ settings, bridge, library = () => null, extraRoots = () => [], labels = () => ({}), offline = () => false }) {
   let cached = { at: 0, roots: [] };
@@ -67,18 +67,18 @@ export function createFiles({ settings, bridge, library = () => null, extraRoots
     if (Date.now() - cached.at < 3000) return cached.roots;
     const s = await settings().catch(() => ({}));
     const real = [];
-    // library prvi, da je uvijek na vrhu popisa
+    // the library first, so it is always at the top
     const extra = extraRoots();
     for (const p of [library(), ...extra, ...(s.rootFolders ?? []), ...(s.pinnedFolders ?? []), s.lastRootPath]) {
       if (!p) continue;
-      if (offline(p)) { // folder s odspojenog računala: prikaži ga (označen u labels), ali ga ne diraj
+      if (offline(p)) { // a folder from a disconnected computer: show it (marked in labels), but don't touch it
         if (extra.includes(p) && !real.includes(p)) real.push(p);
         continue;
       }
       try {
         const r = await fsp.realpath(p);
         if ((await fsp.stat(r)).isDirectory() && !real.includes(r)) real.push(r);
-      } catch { /* folder više ne postoji */ }
+      } catch { /* the folder no longer exists */ }
     }
     cached = { at: Date.now(), roots: real.filter((r) => !real.some((o) => o !== r && inside(r, o))) };
     return cached.roots;
@@ -114,7 +114,7 @@ export function createFiles({ settings, bridge, library = () => null, extraRoots
         const st = await fsp.stat(path.join(real, e.name));
         const dir = st.isDirectory();
         items.push({ name: e.name, dir, size: dir ? 0 : st.size, mtime: st.mtimeMs, sidecar: !dir && isSidecar(e.name) });
-      } catch { /* pokvaren link, nema prava… */ }
+      } catch { /* broken link, no permission… */ }
     }
     return { path: real, roots: rs, library: lib, labels: names, sep: path.sep, crumbs, items };
   }
@@ -141,7 +141,7 @@ export function createFiles({ settings, bridge, library = () => null, extraRoots
   async function transfer({ paths, dest }, move) {
     const d = await within(dest);
     if (!(await fsp.stat(d)).isDirectory()) throw new Error('Destination is not a folder');
-    const plan = new Map(); // izvor → cilj
+    const plan = new Map(); // source → target
     for (const p of paths ?? []) {
       const src = await within(p);
       if (move) await notRoot(src, 'moved');
@@ -156,14 +156,14 @@ export function createFiles({ settings, bridge, library = () => null, extraRoots
       if (samePath(src, dst)) continue;
       if (!move) await fsp.cp(src, dst, CP);
       else await fsp.rename(src, dst).catch(async (e) => {
-        if (e.code !== 'EXDEV') throw e; // drugi disk: kopiraj pa obriši
+        if (e.code !== 'EXDEV') throw e; // another disk: copy, then delete
         await fsp.cp(src, dst, CP);
         await fsp.rm(src, { recursive: true });
       });
     }
   }
 
-  // U koš, preko RapidRAW-a (trash crate; uz fajl idu i njegovi sidecari)
+  // To the trash, through RapidRAW (trash crate; a file's sidecars go with it)
   async function remove({ paths }) {
     const files = [];
     const dirs = [];

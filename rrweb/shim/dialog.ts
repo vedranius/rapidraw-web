@@ -1,4 +1,4 @@
-// Dijalozi biraju putanju na SERVERU: preglednik foldera s fotografijama (rrweb/files/picker.ts), od photo librarya.
+// Dialogs choose a path on the SERVER: a browser of the photo folders (rrweb/files/picker.ts), starting in the photo library.
 import { pick } from '../files/picker';
 type Filter = { name: string; extensions: string[] };
 type OpenOpts = { directory?: boolean; multiple?: boolean; defaultPath?: string; title?: string; filters?: Filter[] };

@@ -1,4 +1,4 @@
-// Izvlači sva imena eventa koje frontend sluša → bridge ih prosljeđuje. Pokreće se pri svakom buildu.
+// Extracts every event name the frontend listens to → the bridge forwards them. Runs on every bridge build.
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const walk = (d) => readdirSync(d).flatMap((f) => {

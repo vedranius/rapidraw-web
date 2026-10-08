@@ -1,5 +1,5 @@
-// Prozor u browseru nema smisla: svaka metoda je async no-op.
-// Ako je zadnji argument callback (onResized, listen...), vraća unlisten fn.
+// A window makes no sense in a browser: every method is an async no-op.
+// If the last argument is a callback (onResized, listen...), it returns an unlisten fn.
 const stub: any = new Proxy({}, {
   get: (_t, prop) => {
     if (prop === 'label') return 'main';

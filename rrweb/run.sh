@@ -1,36 +1,35 @@
 #!/usr/bin/env bash
-# Pokreće relay + RapidRAW Web Bridge. Ctrl+C gasi oboje; relay se sam ponovno pokrene ako padne.
+# Starts the relay + RapidRAW Web Bridge. Ctrl+C stops both; the relay restarts by itself if it stops.
 #   RR_PHOTOS=/mnt/photos ./run.sh
-# Env: RR_PHOTOS (obavezno), RR_PORT, RR_HOST, RR_AUTH=user:pass, RR_VERBOSE=1, RR_BRIDGE_BIN
+# Env: RR_PHOTOS (required), RR_PORT, RR_HOST, RR_AUTH=user:pass, RR_VERBOSE=1, RR_BRIDGE_BIN
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ID=io.github.vedranius.rapidrawweb
-: "${RR_PHOTOS:?postavi RR_PHOTOS=/putanja/do/fotografija}"
-command -v node >/dev/null || { echo "Node.js 20+ nije instaliran"; exit 1; }
+: "${RR_PHOTOS:?set RR_PHOTOS=/path/to/photos}"
+command -v node >/dev/null || { echo "Node.js 20+ is not installed"; exit 1; }
 
 BIN="${RR_BRIDGE_BIN:-}"
 for c in "$HERE/../src-tauri/target/release/rapidraw-web-bridge" "$(command -v rapidraw-web-bridge || true)" "$HERE"/*.AppImage; do
   [ -z "$BIN" ] && [ -n "$c" ] && [ -x "$c" ] && BIN="$c"
 done
-[ -n "$BIN" ] || { echo "Ne nalazim rapidraw-web-bridge (postavi RR_BRIDGE_BIN)"; exit 1; }
+[ -n "$BIN" ] || { echo "rapidraw-web-bridge not found (set RR_BRIDGE_BIN)"; exit 1; }
 
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/$ID"; CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/$ID"
 mkdir -p "$DATA" "$CACHE"
 export RR_ROOTS="${RR_ROOTS:-$RR_PHOTOS:$DATA:$CACHE}"
-export RR_CONFIG="${RR_CONFIG:-$DATA/rrweb.json}"   # photo library folder iz RapidRAW Web prozora
-export RR_WORK="${RR_WORK:-$CACHE/remote}"          # folderi s klijentskog računala (mirror, cache, FUSE)
-export RR_APP_CACHE="${RR_APP_CACHE:-$CACHE}"       # RapidRAW-ov cache (thumbnails/ za brze RAF thumbnailove)
-export RR_LOG="${RR_LOG:-$DATA/logs/relay.log}"     # kopija ispisa relaya
+export RR_CONFIG="${RR_CONFIG:-$DATA/rrweb.json}"   # photo library folder from the RapidRAW Web window
+export RR_WORK="${RR_WORK:-$CACHE/remote}"          # folders from browsing computers (mirror, cache, FUSE)
+export RR_LOG="${RR_LOG:-$DATA/logs/relay.log}"     # copy of the relay's output
 
-# Headless server bez ekrana → Xvfb (WebKitGTK treba display; wgpu/Vulkan ga ne treba)
+# Headless server without a screen → Xvfb (WebKitGTK needs a display; wgpu/Vulkan doesn't)
 LAUNCH=()
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
-  command -v xvfb-run >/dev/null || { echo "Nema displaya: instaliraj xvfb (xvfb-run)"; exit 1; }
+  command -v xvfb-run >/dev/null || { echo "No display: install xvfb (xvfb-run)"; exit 1; }
   LAUNCH=(xvfb-run -a)
 fi
 
-# Relay koji padne pokreni ponovno (bridge i browser se sami ponovno spoje). Izlaz 0 = uredno gašenje;
-# ako pada odmah nakon pokretanja (npr. zauzet port), odustani.
+# Restart a relay that stops (the bridge and the browser reconnect by themselves). Exit 0 = a clean shutdown;
+# if it stops right after starting (e.g. the port is taken), give up.
 relay_loop() {
   local pid="" code quick=0 started
   trap '[ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; exit 0' TERM INT

@@ -1,6 +1,6 @@
-// Radi UNUTAR pravog RapidRAW (Tauri) procesa, umjesto UI-ja.
-// Prima pozive s relaya, zove pravi invoke(), vraća rezultat; prosljeđuje sve evente.
-// Ako relay ne radi (npr. pokrenut iz menija), pokreće ugrađeni (all-in-one paket) i otvara browser.
+// Runs INSIDE the real RapidRAW (Tauri) process, instead of its UI.
+// Receives calls from the relay, calls the real invoke(), returns the result; forwards every event.
+// If no relay is running (e.g. started from the menu), it starts the bundled one (all-in-one package) and opens a browser.
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { appCacheDir, appDataDir, delimiter, join, resourceDir } from '@tauri-apps/api/path';
@@ -12,25 +12,25 @@ import { EVENTS } from './events';
 declare const __RR_VERSION__: string;
 declare const __RR_WEB_VERSION__: string;
 const RELAY: string = import.meta.env.VITE_RR_RELAY ?? 'ws://127.0.0.1:8780/bridge';
-const DEFAULT_UI = `http://localhost:${new URL(RELAY).port || 80}`; // relay s drugim RR_PORT-om ispiše svoje adrese
-const NODE = '../rrweb/bundle/bin/rrweb-node'; // sidecar iz rrweb/bundle/prepare.mjs
+const DEFAULT_UI = `http://localhost:${new URL(RELAY).port || 80}`; // a relay with another RR_PORT prints its own addresses
+const NODE = '../rrweb/bundle/bin/rrweb-node'; // sidecar from rrweb/bundle/prepare.mjs
 const el = (id: string) => document.getElementById(id)!;
 let ws: WebSocket | undefined;
 let calls = 0;
 let failures = 0;
-let relay: 'external' | 'bundled' | 'none' | undefined; // tko je pokrenuo relay
+let relay: 'external' | 'bundled' | 'none' | undefined; // who started the relay
 let opened = false;
 let relayExited = false;
-let quickExits = 0; // ugrađeni relay koji pada odmah nakon pokretanja (npr. zauzet port) ne pokrećemo beskonačno
-let library: string | null | undefined; // undefined = relay još nije javio
-const urls = new Set<string>(); // "[relay] url …" linije ugrađenog relaya
+let quickExits = 0; // a bundled relay that stops right after starting (e.g. port taken) is not restarted forever
+let library: string | null | undefined; // undefined = the relay hasn't reported yet
+const urls = new Set<string>(); // "[relay] url …" lines of the bundled relay
 
 const send = (o: unknown) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o)); };
 EVENTS.forEach((ev) => listen(ev, (e) => send({ event: ev, payload: e.payload })));
 
-// Na Windowsu/macOS-u RapidRAW po defaultu crta preview izravno u nativni prozor (wgpu surface)
-// i vraća "WGPU_RENDER" umjesto slike → browser ništa ne vidi. Bridge ga zato uvijek drži isključenim.
-// Mora prije prvog obrade slike: GPU kontekst (i surface) se stvara lijeno.
+// On Windows/macOS RapidRAW by default draws the preview straight into the native window (wgpu surface) and returns
+// "WGPU_RENDER" instead of an image → the browser sees nothing. So the bridge always keeps it off.
+// Must happen before the first image is processed: the GPU context (and surface) is created lazily.
 type Settings = Record<string, unknown>;
 async function disableNativeRenderer() {
   const s = await invoke<Settings>('load_settings');
@@ -65,7 +65,6 @@ async function startBundledRelay() {
       RR_ROOTS: [await appDataDir(), await appCacheDir()].join(delimiter()),
       RR_CONFIG: await join(await appDataDir(), 'rrweb.json'),
       RR_WORK: await join(await appCacheDir(), 'remote'),
-      RR_APP_CACHE: await appCacheDir(),
       RR_LOG: await join(await appDataDir(), 'logs', 'relay.log'),
       RR_EXIT_WITH_PARENT: '1',
     };
@@ -79,7 +78,7 @@ async function startBundledRelay() {
     cmd.stderr.on('data', line);
     cmd.on('close', ({ code }) => {
       log(`[relay] stopped (exit ${code})`);
-      // pad relaya: pokreni ga ponovno, browser i bridge se sami ponovno spoje
+      // the relay crashed: start it again, the browser and the bridge reconnect by themselves
       quickExits = Date.now() - started < 10000 ? quickExits + 1 : 0;
       if (quickExits < 3) { status('Server stopped, restarting…'); setTimeout(startBundledRelay, 2000); return; }
       relayExited = true;
@@ -88,10 +87,10 @@ async function startBundledRelay() {
     await cmd.spawn();
     el('hint').textContent = 'Open RapidRAW in your browser (other devices: use your network address). Close this window to stop the server.';
   } catch (e) {
-    // Nema ugrađenog relaya (ručni build bez rrweb/bundle overlaya): relay pokreće run.sh / run.ps1
+    // No bundled relay (a build without the rrweb/bundle overlay): run.sh / run.ps1 start the relay
     relay = 'none';
     log(String(e));
-    el('hint').textContent = 'No bundled server in this build. Start rapidraw-web with run.sh / run.ps1 from the server bundle.';
+    el('hint').textContent = 'No bundled server in this build. Start the relay with rrweb/run.sh or rrweb/run.ps1.';
   }
 }
 
@@ -106,19 +105,19 @@ function connect() {
     if (relay !== 'bundled') el('hint').textContent = '';
   };
   sock.onclose = () => {
-    if (relay === undefined && ++failures >= 2) startBundledRelay(); // ~1 s čekanja da run.sh/run.ps1 stigne pokrenuti svoj relay
+    if (relay === undefined && ++failures >= 2) startBundledRelay(); // ~1 s to give run.sh/run.ps1 time to start its relay
     else if (!relayExited && (relay !== 'bundled' || opened)) status(`Server offline, retrying… (${RELAY})`);
     setTimeout(connect, 1000);
   };
   sock.onmessage = async (m) => {
     const msg = JSON.parse(m.data);
     if (msg.rr === 'library') {
-      // prva poruka ugrađenog relaya: otvori RapidRAW u browseru, osim na serveru bez ekrana
+      // the bundled relay's first message: open RapidRAW in the browser, except on a server without a screen
       if (relay === 'bundled' && !opened) {
         opened = true;
         if (!msg.headless) open([...urls][0] ?? DEFAULT_UI).catch(() => {});
       }
-      showLibrary(msg.path ?? msg.env); // s odabranim libraryjem prozor se minimizira, bez njega ostaje otvoren
+      showLibrary(msg.path ?? msg.env); // with a library chosen the window minimizes, without one it stays open
       return;
     }
     const { id, cmd, args } = msg;
@@ -140,7 +139,7 @@ function connect() {
   };
 }
 
-// Photo library: folder s fotografijama na OVOM računalu, uvijek prvi u Files tabu i dijalozima u browseru
+// Photo library: the folder with photos on THIS computer, always first in the Files tab and the pickers in the browser
 function showLibrary(path: string | null) {
   const first = library === undefined;
   library = path;

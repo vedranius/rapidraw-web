@@ -1,5 +1,5 @@
-// Windows: winfsp-x64.dll se učitava odgođeno (delayload), tek nakon što ga src/windows.rs nađe u WinFsp
-// instalaciji; bez toga se rrweb-fuse.exe ne bi ni pokrenuo na računalu bez WinFsp-a (i --check ne bi radio).
+// Windows: winfsp-x64.dll is delay-loaded, only after src/windows.rs has found it in the WinFsp installation;
+// otherwise rrweb-fuse.exe wouldn't even start on a computer without WinFsp (and --check wouldn't work).
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let dll = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {

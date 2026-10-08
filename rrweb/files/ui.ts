@@ -1,4 +1,4 @@
-// Zajedničko za Files tab i dijaloge za odabir foldera/fajlova (picker.ts)
+// Shared by the Files tab and the folder/file pickers (picker.ts)
 import { call } from '../shim/transport';
 
 export type Item = { name: string; dir: boolean; size: number; mtime: number; sidecar: boolean };
@@ -42,10 +42,10 @@ export function fmtSize(n: number) {
   return `${i ? n.toFixed(n < 10 ? 1 : 0) : n} ${u[i]}`;
 }
 
-// navigator.clipboard radi samo na https/localhost; preko LAN-a (http://192.168…) ide stari execCommand
+// navigator.clipboard works only on https/localhost; over a LAN (http://192.168…) the old execCommand is used
 export async function copyText(text: string) {
   if (window.isSecureContext && navigator.clipboard) {
-    try { await navigator.clipboard.writeText(text); return; } catch { /* fallback ispod */ }
+    try { await navigator.clipboard.writeText(text); return; } catch { /* fallback below */ }
   }
   const ta = el('textarea', { readonly: true, style: 'position:fixed;opacity:0' }) as HTMLTextAreaElement;
   ta.value = text;

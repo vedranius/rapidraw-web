@@ -1,8 +1,8 @@
-// "This computer": folder na računalu s browserom kao izvor i pohrana fotografija za RapidRAW na serveru.
-// Browser je agent (WebSocket /rfs): čita i piše u odabrani folder preko File System Access API-ja
-// (Chrome/Edge, samo na HTTPS-u ili localhostu). Server dio: rrweb/relay/remote.mjs.
-//  - transfer: cijeli folder se u pozadini kopira na server; editi i exporti se vraćaju u folder ovdje
-//  - ondemand: (Linux ili Windows server s WinFsp-om) fotke se dohvaćaju tek kad ih RapidRAW otvori
+// "This computer": a folder on the browsing computer as the source and storage of photos for RapidRAW on the server.
+// The browser is the agent (WebSocket /rfs): it reads and writes the chosen folder through the File System Access
+// API (Chrome/Edge, only on HTTPS or localhost). Server side: rrweb/relay/remote.mjs.
+//  - transfer: the whole folder is copied to the server in the background; edits and exports come back into the folder here
+//  - ondemand: (Linux server, or Windows server with WinFsp) photos are fetched only when RapidRAW opens them
 import { call, emitLocal } from '../shim/transport';
 import { pick } from './picker';
 import { el, errText, fmtSize } from './ui';
@@ -18,7 +18,7 @@ type Dir = FileSystemDirectoryHandle & { entries(): AsyncIterable<[string, any]>
 
 export const supported = () => 'showDirectoryPicker' in window && window.isSecureContext;
 
-// --- IndexedDB: odabrani folderi (handle) preživljavaju osvježavanje stranice ---
+// --- IndexedDB: chosen folders (handles) survive a page reload ---
 function db() {
   return new Promise<IDBDatabase>((resolve, reject) => {
     const r = indexedDB.open('rrweb', 1);
@@ -68,7 +68,7 @@ class Agent {
   files = new Map<string, { file: File; at: number }>();
   writers = new Map<string, FileSystemWritableFileStream>();
   progress?: Progress;
-  // onGone: server ne zna za ovaj folder (relay se ponovno pokrenuo) → ponovno ga prijavi
+  // onGone: the server doesn't know this folder (the relay restarted) → register it again
   constructor(public share: ShareInfo, public root: Dir, private onChange: () => void, private onGone?: () => void) {}
 
   connect() {
@@ -105,7 +105,7 @@ class Agent {
     return file;
   }
 
-  // Fuji RAF: gdje je ugrađeni JPEG (zaglavlje: pomak i duljina na 84 i 88, big-endian)
+  // Fuji RAF: where the embedded JPEG is (header: its offset and length at 84 and 88, big-endian)
   async rafPreview(rel: string) {
     const f = await this.file(rel);
     const head = new DataView(await f.slice(0, 92).arrayBuffer());
@@ -128,10 +128,10 @@ class Agent {
           if (handle.kind === 'directory') entries.push({ name: n, kind: 'dir' });
           else files.push([n, handle as FileSystemFileHandle]);
         }
-        // getFile() jedan po jedan je spor na velikim folderima (1330 fajlova ~1 s): po 64 paralelno
+        // getFile() one by one is slow on big folders (1330 files ~1 s): 64 in parallel
         for (let i = 0; i < files.length; i += 64) {
           await Promise.all(files.slice(i, i + 64).map(async ([n, handle]) => {
-            const f = await handle.getFile().catch(() => null); // u međuvremenu obrisan
+            const f = await handle.getFile().catch(() => null); // deleted meanwhile
             if (f) entries.push({ name: n, kind: 'file', size: f.size, mtime: f.lastModified });
           }));
         }
@@ -141,13 +141,13 @@ class Agent {
         try {
           const f = await this.file(h.path);
           return [{}, new Uint8Array(await f.slice(h.off, h.off + h.len).arrayBuffer())];
-        } catch { // File iz cachea je zastario (fajl se u međuvremenu promijenio): svjež pa još jednom
+        } catch { // the cached File is stale (the file changed meanwhile): get a fresh one and try once more
           this.files.delete(h.path);
           const f = await this.file(h.path);
           return [{}, new Uint8Array(await f.slice(h.off, h.off + h.len).arrayBuffer())];
         }
       }
-      case 'write': { // komadi istog fajla dijele jedan writable (inače Chrome kopira cijeli fajl za svaki komad)
+      case 'write': { // pieces of the same file share one writable (otherwise Chrome copies the whole file for each piece)
         let w = this.writers.get(h.path);
         if (!w || h.trunc) {
           await w?.close().catch(() => {});
@@ -160,7 +160,7 @@ class Agent {
         this.files.delete(h.path);
         return [{}];
       }
-      case 'rafexif': { // Fuji RAF: samo EXIF zaglavlje ugrađenog JPEG-a (SOI … APP1 Exif, EOI) za RapidRAW (rrweb/relay/raf.mjs)
+      case 'rafexif': { // Fuji RAF: only the EXIF header of the embedded JPEG (SOI … APP1 Exif, EOI) for RapidRAW (rrweb/relay/exif.mjs)
         const { f, off, len } = await this.rafPreview(h.path);
         const j = new Uint8Array(await f.slice(off, off + Math.min(len, 1 << 18)).arrayBuffer());
         const v = new DataView(j.buffer);
@@ -176,37 +176,13 @@ class Agent {
         }
         throw new DOMException('no EXIF in the embedded preview', 'TypeMismatchError');
       }
-      case 'thumb': { // Fuji RAF: ugrađeni JPEG smanjen na RapidRAW-ove thumbnaile (rrweb/relay/raf.mjs)
-        const { f, off, len } = await this.rafPreview(h.path);
-        const bmp = await createImageBitmap(f.slice(off, off + len, 'image/jpeg'), { imageOrientation: 'from-image' });
-        const [small, medium] = h.sizes as number[];
-        if (Math.max(bmp.width, bmp.height) < medium * 0.95) { bmp.close(); throw new DOMException('preview too small', 'TypeMismatchError'); }
-        // kao RapidRAW downscale_f32_image: dulja stranica = size, bez povećavanja; JPEG kvalitete 75
-        const fit = (src: ImageBitmap | OffscreenCanvas, size: number) => {
-          const r = Math.min(1, size / Math.max(src.width, src.height));
-          const c = new OffscreenCanvas(Math.max(1, Math.round(src.width * r)), Math.max(1, Math.round(src.height * r)));
-          const ctx = c.getContext('2d')!;
-          ctx.imageSmoothingQuality = 'high';
-          ctx.drawImage(src, 0, 0, c.width, c.height);
-          return c;
-        };
-        const m = fit(bmp, medium);
-        bmp.close();
-        const enc = async (c: OffscreenCanvas) => new Uint8Array(await (await c.convertToBlob({ type: 'image/jpeg', quality: h.quality ?? 0.75 })).arrayBuffer());
-        const a = await enc(fit(m, small));
-        const b = await enc(m);
-        const out = new Uint8Array(a.length + b.length);
-        out.set(a);
-        out.set(b, a.length);
-        return [{ lens: [a.length, b.length] }, out];
-      }
       case 'mkdir': await this.dir(h.path, true); return [{}];
       case 'remove': await (await this.dir(parent(h.path))).removeEntry(name(h.path), { recursive: !!h.recursive }); return [{}];
       case 'rename': {
         const src = await (await this.dir(parent(h.from))).getFileHandle(name(h.from));
         const destDir = await this.dir(parent(h.to), true);
         if ('move' in src) await (src as unknown as { move(d: Dir, n: string): Promise<void> }).move(destDir, name(h.to));
-        else { // stariji Chromium: kopija + brisanje
+        else { // older Chromium: copy + delete
           const w = await (await destDir.getFileHandle(name(h.to), { create: true })).createWritable();
           await w.write(await src.getFile());
           await w.close();
@@ -235,7 +211,7 @@ class Agent {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(reply);
   }
 
-  // transfer: cijeli folder (s podfolderima) na server; već prebačeno se preskače, pa se može nastaviti
+  // transfer: the whole folder (with subfolders) to the server; what is already there is skipped, so it can resume
   async transfer() {
     const have = await call<Record<string, { size: number; mtime: number }>>('__rr_share_have', { id: this.share.id });
     const list: { rel: string; file: File }[] = [];
@@ -263,7 +239,7 @@ class Agent {
       p.done++;
       p.bytes += file.size;
       this.onChange();
-      if (sinceRefresh >= 10) { sinceRefresh = 0; emitLocal('indexing-finished'); } // RapidRAW vidi nove fotke
+      if (sinceRefresh >= 10) { sinceRefresh = 0; emitLocal('indexing-finished'); } // RapidRAW sees the new photos
     }
     p.finished = true;
     p.current = undefined;
@@ -328,7 +304,7 @@ export function mountRemote(box: HTMLElement, hooks: { open(path: string): void;
           ...(!a || !info ? [el('button', { onclick: () => resume(s) }, 'Reconnect')] : []),
           el('button', { onclick: () => stopShare(s) }, 'Stop')));
     }));
-    // folderi koje je na server dodao neki drugi browser ili tab (ili ovaj prije brisanja podataka stranice)
+    // folders another browser or tab added to the server (or this one, before the site data was cleared)
     for (const info of server.filter((i) => !saved.some((s) => s.id === i.id))) {
       list.append(el('div', { class: 'rrr-item' },
         el('button', { class: 'rrr-name', title: info.view, onclick: () => hooks.open(info.view) },
@@ -363,14 +339,14 @@ export function mountRemote(box: HTMLElement, hooks: { open(path: string): void;
     agents.set(s.id, a);
     a.connect();
     if (s.mode === 'transfer') {
-      await new Promise((r) => setTimeout(r, 300)); // agent se spaja; upload ne treba agenta, ali povrat izmjena da
+      await new Promise((r) => setTimeout(r, 300)); // the agent connects; the upload doesn't need it, but sending changes back does
       a.transfer().catch((e) => { a.progress = { ...(a.progress ?? { done: 0, total: 0, bytes: 0, totalBytes: 0, started: Date.now() }), error: errText(e) }; render(); });
     }
     await refresh();
     hooks.refresh();
   }
 
-  // server se ponovno pokrenuo: isti id → isti put na serveru, pa RapidRAW-ovi pinovi i dalje rade
+  // the server restarted: same id → same path on the server, so RapidRAW's pinned folders keep working
   function reactivate(s: Saved) {
     if (!saved.includes(s)) return;
     activate(s).catch(() => setTimeout(() => reactivate(s), 3000));
@@ -454,7 +430,7 @@ export function mountRemote(box: HTMLElement, hooks: { open(path: string): void;
   }
 
   box.append(el('div', { class: 'rrf-h rrr-h' }, 'This computer'));
-  if (!supported()) { // dodavanje ne ide, ali folderi s drugih računala se i dalje vide (i mogu ugasiti)
+  if (!supported()) { // adding isn't possible, but folders from other computers are still shown (and can be stopped)
     box.append(list, el('p', { class: 'rrf-note' }, window.isSecureContext
       ? 'Using a folder from this computer needs Chrome or Edge.'
       : 'Using a folder from this computer needs HTTPS (or localhost) and Chrome or Edge. On your own network, Chrome can treat this address as secure: chrome://flags/#unsafely-treat-insecure-origin-as-secure'));
@@ -472,7 +448,7 @@ export function mountRemote(box: HTMLElement, hooks: { open(path: string): void;
     caps = await call<typeof caps>('__rr_share_caps').catch(() => caps);
     saved = await loadSaved();
     await refresh();
-    // dozvola za folder ostaje dok je kartica otvorena; nakon osvježavanja ponekad treba klik (Reconnect)
+    // permission for the folder lasts while the tab is open; after a reload it sometimes needs a click (Reconnect)
     for (const s of saved) {
       if ((await (s.handle as Dir).queryPermission?.({ mode: 'readwrite' })) === 'granted') activate(s).catch(() => {});
     }

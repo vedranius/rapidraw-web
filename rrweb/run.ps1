@@ -1,10 +1,10 @@
-# Pokreće relay + RapidRAW Web Bridge na Windowsu.
+# Starts the relay + RapidRAW Web Bridge on Windows.
 #   $env:RR_PHOTOS="D:\Photos"; .\run.ps1
 $ErrorActionPreference = "Stop"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Id = "io.github.vedranius.rapidrawweb"
-if (-not $env:RR_PHOTOS) { throw "Postavi `$env:RR_PHOTOS na folder s fotografijama" }
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw "Node.js 20+ nije instaliran" }
+if (-not $env:RR_PHOTOS) { throw "Set `$env:RR_PHOTOS to the folder with your photos" }
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw "Node.js 20+ is not installed" }
 
 $Bin = $env:RR_BRIDGE_BIN
 if (-not $Bin) {
@@ -15,14 +15,13 @@ if (-not $Bin) {
   )
   $Bin = $cands | Where-Object { Test-Path $_ } | Select-Object -First 1
 }
-if (-not $Bin) { throw "Ne nalazim rapidraw-web-bridge.exe (postavi `$env:RR_BRIDGE_BIN)" }
+if (-not $Bin) { throw "rapidraw-web-bridge.exe not found (set `$env:RR_BRIDGE_BIN)" }
 
 $Data = Join-Path $env:APPDATA $Id; $Cache = Join-Path $env:LOCALAPPDATA $Id
 New-Item -ItemType Directory -Force -Path $Data, $Cache | Out-Null
 if (-not $env:RR_ROOTS) { $env:RR_ROOTS = "$($env:RR_PHOTOS);$Data;$Cache" }
 if (-not $env:RR_CONFIG) { $env:RR_CONFIG = Join-Path $Data "rrweb.json" }
 if (-not $env:RR_WORK) { $env:RR_WORK = Join-Path $Cache "remote" }
-if (-not $env:RR_APP_CACHE) { $env:RR_APP_CACHE = $Cache }
 if (-not $env:RR_LOG) { $env:RR_LOG = Join-Path $Data "logs\relay.log" }
 
 $relay = Start-Process node -ArgumentList "`"$Here\relay\relay.mjs`"" -NoNewWindow -PassThru

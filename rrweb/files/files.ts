@@ -1,6 +1,6 @@
-// rrweb Files tab: rad s folderima fotografija na serveru (skidanje, upload, novi folder, preimenovanje,
-// kopiranje, premještanje, brisanje u koš) pored RapidRAW UI-ja. vite.web.config.mjs ga ubacuje u index.html.
-// Server dio: rrweb/relay/files.mjs.
+// rrweb Files tab: work with the photo folders on the server (download, upload, new folder, rename, copy, move,
+// delete to the trash) next to RapidRAW's UI. vite.web.config.mjs adds it to index.html.
+// Server side: rrweb/relay/files.mjs.
 import { call, emitLocal } from '../shim/transport';
 import { baseName, collator, copyText, el, errText, fmtSize, icon, joinPath, ls, rootName, type Item, type Listing } from './ui';
 import { mountNetwork } from './network';
@@ -23,7 +23,7 @@ let showSidecars = false;
 let sort: { key: SortKey; dir: 1 | -1 } = { key: 'name', dir: 1 };
 let isOpen = false;
 let busy = false;
-let changed = false; // disk izmijenjen → RapidRAW library treba osvježiti
+let changed = false; // disk changed → RapidRAW's library needs a refresh
 
 const join = (name: string) => joinPath(listing, name);
 function visible() {
@@ -90,7 +90,7 @@ document.body.append(panel, tabs);
 mountNetwork(tabs);
 mountProgress(tabs);
 mountAdjustProgress();
-// točna verzija, kao tag i release na GitHubu
+// the exact version, as the tag and release on GitHub
 tabs.append(el('a', { class: 'rrf-tag', href: `https://github.com/vedranius/rapidraw-web/releases/tag/${TAG}`, target: '_blank', rel: 'noopener', title: 'rapidraw-web version: open the release on GitHub' }, TAG));
 mountRemote(remoteBox, { open: (p) => load(p), refresh: () => { if (isOpen) load(listing.path, [...selected]); } });
 
@@ -140,11 +140,11 @@ async function load(path: string | null, keep: string[] = []) {
     render();
   } catch (e) {
     setMessage(errText(e), true);
-    if (path) return load(null); // folder je nestao ili je izvan dopuštenih
+    if (path) return load(null); // the folder is gone or outside the allowed ones
   }
 }
 
-// Izmjena na disku pa osvježavanje popisa; greška ide u statusnu traku
+// A change on disk, then a refresh of the listing; an error goes to the status bar
 async function act(label: string, fn: () => Promise<unknown>, keep?: string[]) {
   if (busy) return;
   busy = true;
@@ -306,11 +306,11 @@ function setTab(open: boolean) {
   if (open) load(listing.path, [...selected]);
   else if (changed) {
     changed = false;
-    emitLocal('indexing-finished'); // RapidRAW tada ponovno učita popis slika u trenutnom folderu
+    emitLocal('indexing-finished'); // RapidRAW then reloads the list of images in the current folder
   }
 }
 
-// Dok je Files tab otvoren, tipkovnica ne smije doći do RapidRAW-a (Delete bi npr. brisao odabrane slike u editoru)
+// While the Files tab is open, the keyboard must not reach RapidRAW (Delete would e.g. delete the selected images in the editor)
 window.addEventListener('keydown', (e) => {
   if (!isOpen) return;
   e.stopImmediatePropagation();

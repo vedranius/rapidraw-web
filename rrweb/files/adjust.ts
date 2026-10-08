@@ -1,33 +1,33 @@
-// Povratna informacija kod editiranja: dok se promjena obrađuje, pokraj slidera koji ju je napravio je kružić s
-// postotkom. RapidRAW obradi cijelu sliku na GPU-u u jednom prolazu i ne javlja dokle je stigao, pa se kružić puni
-// prema stvarnom vremenu: koliko je ista promjena (isti slider; pregled za vrijeme povlačenja ili konačni) prije
-// trajala na serveru, a kad relay javi da je server gotov (__rr_rendered: trajanje, veličina), ostatak je prijenos
-// pregleda prema izmjerenoj brzini. Traje li puno dulje nego inače, umjesto postotka piše proteklo vrijeme.
-// RapidRAW uvijek obrađuje samo najnovije stanje (starije preskače), pa sve promjene na čekanju završavaju s istim,
-// zadnjim pregledom. Promjene koje nisu sa slidera (krivulje, maske, rezanje…) imaju natpis na vrhu.
-// RapidRAW-ov UI se ne dira: oznake su iznad njega, poravnate sa sliderom.
+// Feedback while editing: while a change is being processed, a ring with a percentage sits next to the slider that
+// made it. RapidRAW renders the whole image on the GPU in one pass and doesn't report how far along it is, so the
+// ring fills by real time: how long the same change (same slider; preview while dragging or final) took on the
+// server before, and once the relay reports the server is done (__rr_rendered: duration, size), the rest is the
+// preview's transfer at the measured speed. If it takes much longer than usual, it shows the elapsed time instead.
+// RapidRAW always renders only the newest state (it skips older ones), so all pending changes finish with the same,
+// last preview. Changes that don't come from a slider (curves, masks, crop…) get a label at the top.
+// RapidRAW's UI is not touched: the marks sit above it, aligned with the slider.
 import { on, onCall } from '../shim/transport';
 import { el } from './ui';
 
 type Job = { id: number; t0: number; interactive: boolean; key: string; rendered?: { at: number; ms: number; bytes: number } };
 type Mark = { name: string; slider: HTMLElement | null; job: Job; shown: boolean; doneAt?: number; ring?: HTMLElement; clip?: HTMLElement | null };
 
-const SHOW_AFTER = 150; // brže promjene bez oznake (nema treptanja)
-const KEEP = 350;       // završena oznaka još toliko puna, pa nestaje; nova promjena istog slidera je preuzima
-const TOUCH_MS = 1500;  // promjena pripada slideru koji je dirnut najviše toliko prije
+const SHOW_AFTER = 150; // faster changes get no mark (no flicker)
+const KEEP = 350;       // a finished mark stays full this long, then disappears; a new change of the same slider takes it over
+const TOUCH_MS = 1500;  // a change belongs to the slider touched at most this long before
 const SUPERSEDED = 'Superseded or worker failed';
 const C = 2 * Math.PI * 6;
-// nazivi postavki koje nisu slideri (iz promijenjenih ključeva)
+// names of settings that aren't sliders (from the changed keys)
 const NAMES: Record<string, string> = {
   curves: 'Curves', hsl: 'Color mixer', colorGrading: 'Color grading', masks: 'Masks', aiPatches: 'AI edits',
   lutPath: 'LUT', lutData: 'LUT', crop: 'Crop', rotation: 'Rotate', flipHorizontal: 'Flip', flipVertical: 'Flip',
   orientationSteps: 'Rotate', aspectRatio: 'Crop',
 };
 const human = (k: string) => k.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().replace(/^./, (c) => c.toUpperCase());
-// velike vrijednosti (maske, AI zakrpe kao base64) se ne uspoređuju cijele
+// large values (masks, AI patches as base64) are not compared whole
 const str = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === 'string' && x.length > 256 ? `#${x.length}` : x)) ?? '';
 
-// Slider (RapidRAW ui/Slider): <div class="mb-2 group"><div>(naziv)(vrijednost)</div><div><input type=range></div></div>
+// Slider (RapidRAW ui/Slider): <div class="mb-2 group"><div>(label)(value)</div><div><input type=range></div></div>
 function sliderOf(t: EventTarget | null): HTMLElement | null {
   const box = t instanceof Element ? t.closest('div.group') : null;
   return box instanceof HTMLElement && box.querySelectorAll('input[type="range"]').length === 1 ? box : null;
@@ -43,21 +43,21 @@ function scrollParent(e: HTMLElement): HTMLElement | null {
 }
 
 export function mountAdjustProgress() {
-  // --- koji je slider zadnji dirnut ---
+  // --- which slider was touched last ---
   let touched: { slider: HTMLElement; at: number } | null = null;
   const touch = (ev: Event) => {
     const s = sliderOf(ev.target);
     if (s) touched = { slider: s, at: performance.now() };
-    else if (ev.type === 'pointerdown') touched = null; // klik na nešto drugo (krivulja, maska, slika)
+    else if (ev.type === 'pointerdown') touched = null; // a click on something else (curve, mask, image)
   };
   for (const t of ['pointerdown', 'wheel', 'keydown', 'input']) document.addEventListener(t, touch, { capture: true, passive: true });
-  // povlačenje može trajati dugo: slider ostaje "dirnut" dok je tipka miša dolje
+  // dragging can take long: the slider stays "touched" while the mouse button is down
   document.addEventListener('pointermove', (ev) => { if (touched && ev.buttons) touched.at = performance.now(); }, { capture: true, passive: true });
 
-  // --- naučeno trajanje i brzina ---
-  const learned = new Map<string, number>();         // `${naziv}|${interactive}` → ms na serveru
-  const bytesE = [300e3, 40e3];                       // [konačni, za vrijeme povlačenja] prosječna veličina pregleda
-  let rate = 0;                                       // B/ms prijenos pregleda do browsera
+  // --- learned duration and speed ---
+  const learned = new Map<string, number>();         // `${label}|${interactive}` → ms on the server
+  const bytesE = [300e3, 40e3];                       // [final, while dragging] average preview size
+  let rate = 0;                                       // B/ms preview transfer to the browser
   const ema = (k: string, v: number) => learned.set(k, learned.has(k) ? learned.get(k)! * 0.7 + v * 0.3 : v);
   const expectMs = (j: Job) => learned.get(`${j.key}|${+j.interactive}`) ?? learned.get(`|${+j.interactive}`) ?? (j.interactive ? 120 : 300);
 
@@ -71,10 +71,10 @@ export function mountAdjustProgress() {
     return { frac: share + (1 - share) * Math.min(0.95, (now - j.rendered.at) / Math.max(1, et)), slow, elapsed };
   }
 
-  // --- pozivi apply_adjustments ---
+  // --- apply_adjustments calls ---
   const jobs = new Map<number, Job>();
-  const marks = new Map<HTMLElement | string, Mark>(); // slider ili naziv promjene
-  let prev: Record<string, string> | null = null;      // zadnje poslane postavke (za naziv promjene koja nije sa slidera)
+  const marks = new Map<HTMLElement | string, Mark>(); // slider or name of the change
+  let prev: Record<string, string> | null = null;      // last settings sent (to name a change that isn't from a slider)
 
   function changed(adj: Record<string, unknown>) {
     const cur: Record<string, string> = {};
@@ -85,7 +85,7 @@ export function mountAdjustProgress() {
   }
 
   onCall((cmd, args, result, id) => {
-    if (cmd === 'load_image') { prev = null; return; } // prvi pregled nove fotke prati natpis otvaranja (progress.ts)
+    if (cmd === 'load_image') { prev = null; return; } // the first preview of a new photo is covered by the opening panel (progress.ts)
     if (cmd !== 'apply_adjustments') return;
     const a = args as { jsAdjustments?: Record<string, unknown>; isInteractive?: boolean };
     const keys = a?.jsAdjustments ? changed(a.jsAdjustments) : null;
@@ -95,8 +95,8 @@ export function mountAdjustProgress() {
     const name = slider ? labelOf(slider) : names.length && names.length <= 3 ? names.join(', ') : 'Preview';
     const job: Job = { id, t0: now, interactive: !!a?.isInteractive, key: name };
     jobs.set(id, job);
-    for (const m of marks.values()) if (m.doneAt === undefined) m.job = job; // promjene na čekanju stižu s ovim pregledom
-    // oznaka: promjena sa slidera ili prepoznata promjena (zum i veća rezolucija bez promjene je nemaju)
+    for (const m of marks.values()) if (m.doneAt === undefined) m.job = job; // pending changes arrive with this preview
+    // a mark: a change from a slider or a recognised change (zooming and a higher resolution without a change get none)
     if (slider || (keys && keys.length)) {
       const k = slider ?? name;
       const m = marks.get(k);
@@ -114,8 +114,8 @@ export function mountAdjustProgress() {
 
   function finish(job: Job, ok: boolean | null) {
     jobs.delete(job.id);
-    if (ok === null) return; // preskočen: oznake već čekaju noviji pregled
-    if (!ok) { // greška: RapidRAW je javlja sam, oznaka samo nestaje
+    if (ok === null) return; // skipped: the marks already wait for a newer preview
+    if (!ok) { // an error: RapidRAW reports it itself, the mark just disappears
       for (const [k, m] of marks) if (m.job === job) { m.ring?.remove(); marks.delete(k); }
       frame();
       return;
@@ -132,7 +132,7 @@ export function mountAdjustProgress() {
     frame();
   }
 
-  // --- prikaz ---
+  // --- display ---
   const pill = el('div', { class: 'rrl-load rre-pill', hidden: true });
   document.body.append(pill);
   let raf = 0;
@@ -165,7 +165,7 @@ export function mountAdjustProgress() {
         continue;
       }
       const r = ring(m);
-      // slider u desnom panelu: vrijednost (broj) je zadnji element prvog reda; kružić ide lijevo od nje
+      // slider in the right panel: the value (number) is the last element of the first row; the ring goes left of it
       const value = (m.slider.firstElementChild?.lastElementChild?.firstElementChild ?? m.slider) as HTMLElement;
       const box = value.getBoundingClientRect();
       const clip = m.clip?.getBoundingClientRect();

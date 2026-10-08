@@ -1,9 +1,10 @@
-// Što se događa dok čekaš: kod otvaranja fotke (dohvat s računala koje je dijeli, pa dekodiranje RAW-a), na
-// thumbnailima koji još nisu gotovi (library i filmstrip: u redu, dohvat, renderiranje) i ukupno u traci na vrhu.
-// Relayu javlja i prikaz (editor ili library) i, u editoru, fotke oko otvorene u filmstripu: dok je fotka otvorena
-// relay thumbnaile radi samo u pauzama editiranja, a teške samo za te fotke (prvo sljedeće).
-// Podatke daje relay (__rr_progress, __rr_thumbs, __rr_thumbs_summary); RapidRAW-ov UI se ne dira, oznake se samo
-// dodaju preko njegovih elemenata.
+// What happens while you wait: when a photo opens (fetched from the computer that shares it, then RAW decoding), on
+// thumbnails that aren't ready yet (library and filmstrip: queued, downloading, rendering) and in total in the top
+// bar. It also reports the view to the relay (editor or library) and, in the editor, the photos next to the open one
+// in the filmstrip: while a photo is open, the relay makes thumbnails only in the pauses between edits, and heavy ones
+// only for those photos (the next ones first).
+// The data comes from the relay (__rr_progress, __rr_thumbs, __rr_thumbs_summary); RapidRAW's UI is not touched, the
+// labels are only placed over its elements.
 import { call, onCall } from '../shim/transport';
 import { el, fmtSize } from './ui';
 
@@ -16,17 +17,17 @@ const base = (p: string) => p.split('?vc=')[0].split(/[\\/]/).pop() ?? p;
 const secs = (s: number) => (s < 60 ? `${Math.max(1, Math.round(s))} s` : `${Math.round(s / 60)} min`);
 
 export function mountProgress(tabs: HTMLElement) {
-  const names = new Map<string, string>(); // naziv na pločici → putanja (iz update_thumbnail_queue)
-  let openPath = '';                         // fotka otvorena u editoru (zadnji load_image)
+  const names = new Map<string, string>(); // name on the tile → path (from update_thumbnail_queue)
+  let openPath = '';                         // photo open in the editor (last load_image)
 
-  // --- otvaranje fotke u editoru ---
+  // --- opening a photo in the editor ---
   const pill = el('div', { class: 'rrl-load', hidden: true });
   document.body.append(pill);
   type Cur = { path: string; t0: number; decodeFrom: number; downloaded: boolean };
   let current: Cur | null = null;
 
   async function watchLoad(cur: Cur) {
-    await sleep(400); // brzo otvaranje bez treptanja
+    await sleep(400); // a quick opening without flicker
     while (current === cur) {
       const p = await call<Load>('__rr_progress', { path: cur.path }).catch(() => null);
       if (current !== cur) break;
@@ -47,7 +48,7 @@ export function mountProgress(tabs: HTMLElement) {
       text = `${name} · downloading ${fmtSize(p.fetched ?? 0)} of ${fmtSize(p.total)}`
         + (p.rate ? ` · ${fmtSize(p.rate)}/s · ~${secs(left / p.rate)} left` : '');
     } else if (p.phase === 'downloading') { cur.downloaded = true; text = `${name} · starting the download…`; } else {
-      cur.decodeFrom ||= cur.downloaded ? performance.now() : cur.t0; // lokalna fotka: dekodira se od početka
+      cur.decodeFrom ||= cur.downloaded ? performance.now() : cur.t0; // a local photo: decoding from the start
       const s = (performance.now() - cur.decodeFrom) / 1000;
       text = `${name} · decoding RAW… ${s.toFixed(1)} s${p.decodeMs ? ` (usually ~${(p.decodeMs / 1000).toFixed(1)} s)` : ''}`;
       if (p.decodeMs) frac = Math.min(0.95, s * 1000 / p.decodeMs);
@@ -70,11 +71,11 @@ export function mountProgress(tabs: HTMLElement) {
     result.then(() => {}, () => {}).finally(() => { if (current === cur) { current = null; pill.hidden = true; } });
   });
 
-  // --- thumbnaili koji još nisu gotovi ---
+  // --- thumbnails that aren't ready yet ---
   let thumbTimer: ReturnType<typeof setTimeout> | null = null;
   function scheduleThumbs(ms = 600) { thumbTimer ??= setTimeout(() => { thumbTimer = null; updateThumbs(); }, ms); }
 
-  // short: filmstrip (male pločice)
+  // short: filmstrip (small tiles)
   function label(t: Thumb, short: boolean) {
     if (t.state === 'rendering') return short ? 'Rendering' : 'Rendering…';
     if (t.state === 'preparing') return short ? 'Preview…' : 'Fetching preview…';
@@ -84,7 +85,7 @@ export function mountProgress(tabs: HTMLElement) {
     return short ? `#${t.pos}${t.eta ? ` · ${secs(t.eta)}` : ''}` : `Queued #${t.pos}${t.eta ? ` · ~${secs(t.eta)}` : ''}`;
   }
 
-  // Pločice bez thumbnaila: library grid (naziv u .truncate) i filmstrip u editoru (naziv u data-tooltip)
+  // Tiles without a thumbnail: the library grid (name in .truncate) and the filmstrip in the editor (name in data-tooltip)
   function waitingTiles() {
     const res: { host: HTMLElement; tile: HTMLElement; path: string; short: boolean }[] = [];
     const add = (tile: HTMLElement, host: HTMLElement, name: string, short: boolean) => {
@@ -102,8 +103,8 @@ export function mountProgress(tabs: HTMLElement) {
     return res;
   }
 
-  // Filmstrip u editoru: fotke oko otvorene, do 20 sljedećih pa 5 prethodnih. Ćelije su virtualne (vidljive i 16 sa
-  // svake strane), redom po položaju; otvorena je ona s njenim nazivom (ili istaknuta)
+  // Filmstrip in the editor: the photos next to the open one, up to 20 next and then 5 previous. The cells are virtual
+  // (visible ones and 16 on each side), ordered by position; the open one has its name (or is highlighted)
   function aroundOpen(): string[] {
     const tiles = [...document.querySelectorAll<HTMLElement>('div[data-tooltip]')]
       .filter((t) => !t.dataset.benchId && t.offsetParent && t.querySelector('svg.lucide-image, img'))
@@ -136,12 +137,12 @@ export function mountProgress(tabs: HTMLElement) {
         badge.textContent = label(t, short);
       }
     }
-    // dok ima pločica bez slike, osvježavaj; inače čekaj sljedeći zahtjev za thumbnailima
+    // while there are tiles without an image, keep refreshing; otherwise wait for the next thumbnail request
     if (waiting.length && document.visibilityState === 'visible') scheduleThumbs(1000);
     else if (waiting.length) scheduleThumbs(3000);
   }
 
-  // --- ukupno, u traci na vrhu (i za thumbnaile koji se ne vide) ---
+  // --- total, in the top bar (also for thumbnails that aren't visible) ---
   const TOTAL_TITLE = 'Thumbnails still to make. In the library, the ones you can see come first.';
   const EDITOR_TITLE = 'While a photo is open, thumbnails are made only in short pauses between your edits: quick ones for every photo, full renders only for the photos next to this one in the filmstrip. The rest continue in the library. How many at a time adapts to this server, so editing stays fast.';
   const total = el('span', { class: 'rrf-thumbs', hidden: true, title: TOTAL_TITLE });
@@ -155,15 +156,16 @@ export function mountProgress(tabs: HTMLElement) {
     total.textContent = s.editing ? `Thumbnails ${s.left} · between edits${s.later ? `, ${s.later} in library` : ''}`
       : s.paused && s.heavy ? `Thumbnails ${s.left} · paused while editing` : `Thumbnails ${s.left}${s.eta ? ` · ~${secs(s.eta)}` : ''}`;
   }, 2000);
-  // pločice se pojavljuju i pri pomicanju (virtualni grid)
+  // tiles also appear while scrolling (virtual grid)
   document.addEventListener('scroll', () => scheduleThumbs(300), { capture: true, passive: true });
 
-  // Prikaz za relay: dok je fotka otvorena u editoru nema teških thumbnaila; povratak u library ih odmah nastavlja.
-  // Javlja se pri promjeni i svakih 5 s (relay bez javljanja >30 s, npr. zatvorena kartica, radi kao prije)
+  // The view for the relay: while a photo is open in the editor, thumbnails wait for pauses; going back to the library
+  // resumes them at once. Reported on change and every 5 s (without a report for >30 s, e.g. a closed tab, the relay
+  // works as without this UI)
   let inEditor: boolean | null = null;
   let sentAt = 0;
   setInterval(() => {
-    // editor ostaje u DOM-u i kad se vratiš u library (samo skriven)
+    // the editor stays in the DOM after going back to the library (only hidden)
     const now = !!document.querySelector<HTMLElement>('[data-bench-id="back-to-library"]')?.offsetParent;
     if (now !== inEditor || Date.now() - sentAt > 5000) {
       call('__rr_view', { mode: now ? 'editor' : 'library' }).catch(() => {});

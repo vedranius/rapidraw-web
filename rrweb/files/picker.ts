@@ -1,5 +1,5 @@
-// Odabir foldera/fajla/odredišta na SERVERU za RapidRAW-ove dijaloge (rrweb/shim/dialog.ts): Add Folder, export,
-// uvoz, LUT-ovi, preseti. Kreće od photo librarya; putanja se može i upisati ručno ("Type a path…").
+// Choosing a folder/file/destination on the SERVER for RapidRAW's dialogs (rrweb/shim/dialog.ts): Add Folder, export,
+// import, LUTs, presets. Starts in the photo library; a path can also be typed in ("Type a path…").
 import { call } from '../shim/transport';
 import { collator, el, errText, icon, joinPath, ls, rootName, type Listing } from './ui';
 import './files.css';
@@ -9,7 +9,7 @@ export type PickOptions = {
   multiple?: boolean;
   title?: string;
   defaultPath?: string;
-  extensions?: string[]; // bez točke; prazno ili '*' = svi fajlovi
+  extensions?: string[]; // without the dot; empty or '*' = all files
 };
 
 const splitPath = (p: string) => {
@@ -87,7 +87,7 @@ export function pick(opts: PickOptions): Promise<string | string[] | null> {
         msg.textContent = next.roots.length ? '' : 'No photo folders yet. Choose the photo library in the RapidRAW Web window on the server, or type a path.';
         render();
       } catch (e) {
-        if (path) return load(null); // npr. defaultPath izvan foldera s fotografijama
+        if (path) return load(null); // e.g. a defaultPath outside the photo folders
         msg.textContent = errText(e);
       }
     }
@@ -112,7 +112,7 @@ export function pick(opts: PickOptions): Promise<string | string[] | null> {
       close(opts.multiple ? v.split(';').map((s) => s.trim()).filter(Boolean) : v.trim());
     }
 
-    // RapidRAW ne smije dobiti tipke dok je dijalog otvoren; tipkanje u polje za ime i dalje radi
+    // RapidRAW must not get keys while the dialog is open; typing into the name field still works
     function onKey(e: KeyboardEvent) {
       e.stopImmediatePropagation();
       if (e.key === 'Escape') { e.preventDefault(); close(null); }

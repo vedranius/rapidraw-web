@@ -1,4 +1,4 @@
-// Linux: FUSE preko fuser-a (bez libfuse, mount preko fusermount3)
+// Linux: FUSE through fuser (without libfuse, mounted through fusermount3)
 use crate::{Link, Reply};
 use fuser::{
     Config, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo, LockOwner,
@@ -22,7 +22,7 @@ fn call(link: &Link, head: Value, data: &[u8]) -> Result<Reply, Errno> {
     link.call(head, data).map_err(Errno::from_i32)
 }
 
-/// Inode ↔ putanja relativna na korijen dijeljenog foldera ("" = korijen, separator "/")
+/// Inode ↔ path relative to the root of the shared folder ("" = root, separator "/")
 struct Inodes {
     by_ino: HashMap<u64, String>,
     by_path: HashMap<String, u64>,
@@ -249,7 +249,7 @@ impl Filesystem for Fs {
         reply.ok();
     }
 
-    // Relay na release šalje izmijenjeni fajl natrag na klijenta
+    // On release the relay sends the changed file back to the browsing computer
     fn release(
         &self, _req: &Request, ino: INodeNo, _fh: FileHandle, _flags: OpenFlags, _lock_owner: Option<LockOwner>,
         _flush: bool, reply: ReplyEmpty,
@@ -265,7 +265,7 @@ impl Filesystem for Fs {
     }
 
     fn statfs(&self, _req: &Request, _ino: INodeNo, reply: ReplyStatfs) {
-        // stvarni prostor je na klijentu; javi dovoljno da programi ne odustanu od pisanja
+        // the real space is on the browsing computer; report enough that programs don't give up writing
         reply.statfs(1 << 30, 1 << 29, 1 << 29, 1 << 20, 1 << 19, 4096, 255, 4096);
     }
 }
@@ -288,7 +288,7 @@ pub fn run(mountpoint: &str, link: Arc<Link>) {
         MountOption::NoDev,
         MountOption::NoSuid,
     ];
-    config.n_threads = Some(8); // operacije čekaju mrežu; ostale ne smiju stati
+    config.n_threads = Some(8); // operations wait for the network; the others must not stall
     let session = fuser::spawn_mount(fs, mountpoint, &config).unwrap_or_else(|e| {
         eprintln!("rrweb-fuse: mount {mountpoint}: {e}");
         std::process::exit(1);
@@ -296,7 +296,7 @@ pub fn run(mountpoint: &str, link: Arc<Link>) {
     link.mounted();
     link.read_replies();
     if let Err(e) = session.umount_and_join() {
-        // zauzet (RapidRAW drži otvoren fajl): odvoji lijeno, inače ostaje "Transport endpoint is not connected"
+        // busy (RapidRAW keeps a file open): detach lazily, otherwise "Transport endpoint is not connected" stays
         eprintln!("rrweb-fuse: unmount: {e}; detaching lazily");
         let _ = std::process::Command::new("fusermount3").args(["-u", "-z", mountpoint]).status();
     }

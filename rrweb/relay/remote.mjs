@@ -1,12 +1,14 @@
-// "From this computer": folder na klijentskom računalu (browser, File System Access API) kao izvor i pohrana
-// fotografija za RapidRAW na serveru. Browser je "agent" (WebSocket /rfs) koji čita i piše u taj folder.
-//  - transfer: browser uploada cijeli folder u mirror na serveru (radi na svim OS-ovima). RapidRAW radi na mirroru,
-//              a novi i izmijenjeni fajlovi (editi .rrdata, exporti) automatski se vraćaju u folder na klijentu.
-//  - ondemand: Linux (FUSE) ili Windows (WinFsp), rrweb/fuse: folder klijenta je disk na serveru, bajtovi se
-//              dohvaćaju tek kad ih RapidRAW čita (chunk cache + read-ahead), a sve što RapidRAW zapiše ide ravno na klijenta.
-//  - keep:     kopija (dohvaćeni originali + editi) ostaje u odabranom folderu na serveru; inače privremeni
-//              cache u RR_WORK koji se briše na Stop.
-// Okvir na /rfs u oba smjera: [u32 LE q][u32 LE duljina JSON zaglavlja][zaglavlje][podaci].
+// "This computer": a folder on the browsing computer (browser, File System Access API) as the source and storage of
+// photos for RapidRAW on the server. The browser is the "agent" (WebSocket /rfs) that reads and writes that folder.
+//  - transfer: the browser uploads the whole folder into a mirror on the server (works on every OS). RapidRAW works
+//              on the mirror, and new and changed files (edits in .rrdata, exports) go back into the folder on the
+//              browsing computer automatically.
+//  - ondemand: Linux (FUSE) or Windows (WinFsp), rrweb/fuse: the folder is a disk on the server, bytes are fetched
+//              only when RapidRAW reads them (chunk cache + read-ahead), and everything RapidRAW writes goes straight
+//              back to the browsing computer.
+//  - keep:     a copy (fetched originals + edits) stays in a chosen folder on the server; otherwise a temporary
+//              cache in RR_WORK that is deleted on Stop.
+// Frames on /rfs in both directions: [u32 LE q][u32 LE length of the JSON header][header][data].
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -17,22 +19,23 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const WORK = path.resolve(process.env.RR_WORK ?? path.join(os.tmpdir(), 'rrweb-remote'));
-const CHUNK = 1 << 20;          // jedinica cachea i dohvaćanja = najveći komad u jednoj WebSocket poruci
-const MAX_RUN = 1;              // chunkova po zahtjevu: poruke ≤ 1 MB (proxyji/tuneli poput Cloudflarea)
-const PUSH = 1 << 20;           // veličina komada kod slanja fajla na klijenta
-const READS = 6;                // najviše dohvata s klijenta odjednom (po dijeljenom folderu; fokus ima svojih READS)
-// Prioriteti dohvata s klijenta: fotka otvorena u editoru, thumbnaili iz RAF-ova (raf.mjs), ostala čitanja
-// RapidRAW-a (thumbnaili editiranih fotki, EXIF…), punjenje u pozadini. Niži red ne kreće dok viši ima posla.
-export const PRIO = { FOCUS: 0, SEED: 1, READ: 2, FILL: 3 };
-const EDIT_QUIET = 15000;       // ms nakon zadnje radnje u editoru do nastavka pozadinskog posla
-const EDIT_RECENT = 120000;     // toliko nakon zadnje radnje fotka se smatra otvorenom (pozadina radi sporije)
-const LOAD_MAX = 60000;         // otvaranje fotke koje se nikad nije javilo ne smije zaustaviti pozadinu zauvijek
+const CHUNK = 1 << 20;          // unit of the cache and of fetching = the largest piece in one WebSocket message
+const MAX_RUN = 1;              // chunks per request: messages ≤ 1 MB (proxies/tunnels such as Cloudflare)
+const PUSH = 1 << 20;           // piece size when sending a file to the browsing computer
+const READS = 6;                // fetches from the browsing computer at a time (per shared folder; the focus has its own READS)
+// Priorities of fetches from the browsing computer: the photo open in the editor, metadata for the library
+// (exif.mjs), other RapidRAW reads (thumbnails…), the background fill. A lower class doesn't start while a higher
+// one has work.
+export const PRIO = { FOCUS: 0, META: 1, READ: 2, FILL: 3 };
+const EDIT_QUIET = 15000;       // ms after the last editor action until background work continues
+const EDIT_RECENT = 120000;     // this long after the last action a photo counts as open (the background works slower)
+const LOAD_MAX = 60000;         // a photo opening that never reported back must not stop the background forever
 
-// Editor (relay.mjs javlja otvaranje fotke i pomake slidera): dok radi, sve pozadinsko čeka, da otvorena
-// fotka ima cijelu vezu, a slideri CPU i GPU
+// Editor (relay.mjs reports photo opening and slider changes): while it works, everything in the background waits,
+// so the open photo gets the whole connection, and the sliders the CPU and GPU
 export const editor = {
   last: 0,
-  loads: new Map(),             // token → početak otvaranja
+  loads: new Map(),             // token → start of the opening
   touch() { this.last = Date.now(); },
   loading(token) { this.loads.set(token, Date.now()); this.touch(); },
   loaded(token) { if (this.loads.delete(token)) this.touch(); },
@@ -41,42 +44,44 @@ export const editor = {
     return this.loads.size > 0 || Date.now() - this.last < EDIT_QUIET;
   },
   recent() { return Date.now() - this.last < EDIT_RECENT; },
-  // ms bez ijedne radnje u editoru (0 dok se fotka otvara)
+  // ms without any editor action (0 while a photo opens)
   idleFor() {
-    this.busy(); // čisti zaboravljena otvaranja
+    this.busy(); // clears forgotten openings
     return this.loads.size ? 0 : Date.now() - this.last;
   },
-  // Smije li pozadinski posao krenuti: dok je fotka otvorena samo u pauzi editiranja (gapMs bez radnje, ništa se ne
-  // otvara), inače kad editor miruje EDIT_QUIET
+  // May background work start: while a photo is open only in a pause between edits (gapMs without an action,
+  // nothing opening), otherwise once the editor has been quiet for EDIT_QUIET
   open(gapMs) { return this.editing() ? this.idleFor() >= gapMs : !this.busy(); },
   async gap(gapMs, stop = () => false) { while (!this.open(gapMs()) && !stop()) await new Promise((r) => setTimeout(r, 250)); },
-  // UI (rrweb/files/progress.ts) javlja prikaz: 'editor' ili 'library', i ponavlja ga svakih par sekundi.
-  // Svaka kartica (klijent) posebno: fotka je otvorena ako je otvorena u bilo kojoj
-  views: new Map(), // klijent → { mode, at }
+  // The UI (rrweb/files/progress.ts) reports its view, 'editor' or 'library', and repeats it every few seconds.
+  // Every tab (client) separately: a photo is open if it is open in any of them
+  views: new Map(), // client → { mode, at }
   setView(mode, who = null) {
     const was = this.editing();
     this.views.set(who, { mode, at: Date.now() });
-    if (was && !this.editing()) this.last = 0; // povratak u library: pozadina odmah
+    if (was && !this.editing()) this.last = 0; // back in the library: the background continues at once
   },
   dropView(who) { this.views.delete(who); },
   fresh() { return [...this.views.values()].filter((v) => Date.now() - v.at < 30000); },
   viewKnown() { return this.fresh().length > 0; },
-  editing() { return this.fresh().some((v) => v.mode === 'editor'); }, // fotka je otvorena u editoru
-  // pozadinski posao (punjenje, priprema thumbnaila) čeka dok editor radi i dok je fotka otvorena
+  editing() { return this.fresh().some((v) => v.mode === 'editor'); }, // a photo is open in the editor
+  // background work (fill) waits while the editor works and while a photo is open
   async idle(stop = () => false) { while ((this.busy() || this.editing()) && !stop()) await new Promise((r) => setTimeout(r, 300)); },
 };
-const RECONNECT_WAIT = 120000;  // koliko zahtjev čeka da se browser ponovno spoji
-const FILL_RESERVE = 5e9;       // punjenje u pozadini staje kad na serveru ostane manje od 5 GB
-// Popis foldera s klijenta: readdir (RapidRAW lista folder) traži svježiji od LIST_TTL; stat jednog fajla uzima
-// spremljeni popis (do LIST_STALE star) i osvježava ga u pozadini kad je stariji od LIST_REFRESH
+const RECONNECT_WAIT = 120000;  // how long a request waits for the browser to reconnect
+const FILL_RESERVE = 5e9;       // the background fill stops when less than 5 GB is left on the server
+// Listing of a folder on the browsing computer: readdir (RapidRAW lists a folder) wants one fresher than LIST_TTL;
+// a stat of one file takes the stored listing (up to LIST_STALE old) and refreshes it in the background when it is
+// older than LIST_REFRESH
 const LIST_TTL = 3000;
 const LIST_REFRESH = 15000;
 const LIST_STALE = 10 * 60 * 1000;
 const ERRNO = { ENOENT: 2, EIO: 5, EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENOTEMPTY: 39, EACCES: 13 };
 
-// server bundle: fuse/<arch>/; all-in-one paket: sidecar pored ugrađenog Node.js-a (/usr/bin, AppImage usr/bin, Windows install)
+// server bundle: fuse/<arch>/; all-in-one package: a sidecar next to the bundled Node.js (/usr/bin, AppImage usr/bin,
+// Windows install)
 const WIN = process.platform === 'win32';
-const VERBOSE = !!process.env.RR_VERBOSE; // i FUSE operacije (bez read/write)
+const VERBOSE = !!process.env.RR_VERBOSE; // also FUSE operations (without read/write)
 const FUSE_NAME = WIN ? 'rrweb-fuse.exe' : 'rrweb-fuse';
 const FUSE_BIN = process.env.RR_FUSE_BIN ?? [
   path.join(here, '..', 'fuse', { x64: 'x86_64', arm64: 'aarch64' }[process.arch] ?? process.arch, FUSE_NAME),
@@ -87,7 +92,7 @@ let winCheck = { at: 0, ok: false };
 export function capabilities() {
   if (WIN) {
     if (!fs.existsSync(FUSE_BIN)) return { ondemand: false, reason: `rrweb-fuse not found (${FUSE_BIN}).` };
-    if (Date.now() - winCheck.at > 30000) { // rrweb-fuse --check: može li učitati WinFsp
+    if (Date.now() - winCheck.at > 30000) { // rrweb-fuse --check: can it load WinFsp
       const r = spawnSync(FUSE_BIN, ['--check'], { timeout: 10000, windowsHide: true, stdio: 'ignore' });
       winCheck = { at: Date.now(), ok: r.status === 0 };
     }
@@ -114,9 +119,9 @@ const parentOf = (rel) => (rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')
 const nameOf = (rel) => rel.slice(rel.lastIndexOf('/') + 1);
 const exists = (p) => fsp.lstat(p).then(() => true, () => false);
 
-// Mount čiji je rrweb-fuse nestao ("Transport endpoint is not connected") odvoji lijeno, da ga se može ponovno koristiti
+// A mount whose rrweb-fuse is gone ("Transport endpoint is not connected") is detached lazily, so it can be used again
 function lazyUnmount(dir) {
-  if (process.platform !== 'linux') return; // WinFsp mount nestaje s procesom
+  if (process.platform !== 'linux') return; // a WinFsp mount goes away with its process
   spawnSync('fusermount3', ['-u', '-z', dir], { stdio: 'ignore' });
 }
 
@@ -139,7 +144,7 @@ function frame(q, head, data) {
   return out;
 }
 
-// Djelomično dohvaćen fajl s klijenta: rijetki (sparse) fajl u stageu + bitmapa chunkova
+// A file partly fetched from the browsing computer: a sparse file in the stage + a bitmap of chunks
 class Cached {
   constructor(share, rel, size, mtime) {
     Object.assign(this, { share, rel, size, mtime });
@@ -147,15 +152,15 @@ class Cached {
     this.have = new Uint8Array(this.n);
     this.inflight = new Map();
     this.lastEnd = -1;
-    this.seq = 0;        // koliko je zaredom (slijedno) pročitano
+    this.seq = 0;        // how much was read in a row (sequentially)
     this.file = path.join(share.stage, rel);
-    this.fd = null;      // stage fajl (čitanje + pisanje dok se puni)
-    this.rfd = null;     // promise: gotov fajl u mirroru (otvara se jednom)
+    this.fd = null;      // stage file (read + write while it fills)
+    this.rfd = null;     // promise: the finished file in the mirror (opened once)
     this.done = false;
     this.completing = null;
   }
 
-  // jedan stage fd i kad više dohvata krene istodobno
+  // one stage fd even when several fetches start at once
   open() {
     if (this.done) return Promise.reject(fail('EIO', 'internal: stage reopened after completion'));
     this.opening ??= (async () => {
@@ -168,15 +173,16 @@ class Cached {
     return this.opening;
   }
 
-  // prio: PRIO.* (bez njega: fokus ako je ovo fotka otvorena u editoru, inače obično čitanje);
-  // slotted = slot je već zauzet (vidi fill)
+  // prio: PRIO.* (without it: the focus if this is the photo open in the editor, otherwise a normal read);
+  // slotted = the slot is already taken (see fill)
   async fetchRun(start, count, prio = this.share.isFocus(this.rel) ? PRIO.FOCUS : PRIO.READ, slotted = false) {
     const off = start * CHUNK;
     const len = Math.min(count * CHUNK, this.size - off);
     if (!slotted) await this.share.slot(prio);
     let data;
     try {
-      // prolazna greška čitanja na klijentu (npr. fajl upravo zapisan): pokušaj opet, jer greška kroz mmap ruši RapidRAW
+      // a passing read error in the browser (e.g. the file was just written): try again, since an error through
+      // mmap crashes RapidRAW
       for (let attempt = 0; ; attempt++) {
         try { ({ data } = await this.share.request({ op: 'read', path: this.rel, off, len })); break; } catch (e) {
           if (attempt >= 2 || e.code === 'ENOENT' || this.share.stopped) throw e;
@@ -196,8 +202,8 @@ class Cached {
     if (this.done || this.size === 0) return;
     const first = Math.floor(off / CHUNK);
     const last = Math.min(this.n - 1, Math.floor((off + Math.max(len, 1) - 1) / CHUNK));
-    // Read-ahead raste tek uz dulje slijedno čitanje (dekodiranje cijelog RAW-a); thumbnail treba samo
-    // početak fajla i ugrađeni JPEG, pa tada ne dohvaćamo unaprijed ništa.
+    // Read-ahead grows only with a longer sequential read (decoding a whole RAW); a thumbnail needs just the
+    // start of the file and the embedded JPEG, so then nothing is fetched ahead.
     this.seq = off === this.lastEnd ? this.seq + len : len;
     this.lastEnd = off + len;
     const ahead = this.seq < (2 << 20) ? 0 : this.seq < (8 << 20) ? 2 : 8;
@@ -211,21 +217,22 @@ class Cached {
       const start = i;
       const p = this.fetchRun(start, count).finally(() => { for (let k = start; k < start + count; k++) this.inflight.delete(k); });
       for (let k = start; k < start + count; k++) this.inflight.set(k, p);
-      if (start <= last) waits.push(p); else p.catch(() => {}); // read-ahead u pozadini
+      if (start <= last) waits.push(p); else p.catch(() => {}); // read-ahead in the background
       i += count;
     }
     await Promise.all(waits);
     if (!this.done && this.have.every(Boolean)) await this.complete();
   }
 
-  // Dohvaća sve chunkove koji fale: PRIO.FILL = punjenje u pozadini (čeka da editor miruje i da RapidRAW ništa
-  // drugo ne čita), PRIO.FOCUS = fotka upravo otvorena u editoru (cijela, paralelno, ispred svega)
+  // Fetches every missing chunk: PRIO.FILL = background fill (waits until the editor is quiet and RapidRAW reads
+  // nothing else), PRIO.FOCUS = the photo just opened in the editor (whole, in parallel, ahead of everything)
   async fill(prio = PRIO.FILL, parallel = 4) {
     const running = new Set();
     for (let i = 0; i < this.n && !this.done && !this.share.stopped; i++) {
       if (this.have[i] || this.inflight.has(i)) continue;
       if (prio === PRIO.FILL) await editor.idle(() => this.share.stopped);
-      // slot prije nego što chunk postane "inflight": inače bi čitanje za RapidRAW čekalo chunk koji stoji u redu
+      // take the slot before the chunk becomes "inflight": otherwise a read for RapidRAW would wait for a chunk that
+      // is still queued
       await this.share.slot(prio);
       if (this.have[i] || this.inflight.has(i) || this.done || this.share.stopped) { this.share.unslot(prio); continue; }
       const p = this.fetchRun(i, 1, prio, true).finally(() => { this.inflight.delete(i); running.delete(p); });
@@ -238,8 +245,8 @@ class Cached {
     if (!this.done && this.have.every(Boolean)) await this.complete();
   }
 
-  // Cijeli fajl je dohvaćen: premjesti ga u mirror (keep: folder na serveru). Otvoreni stage fd ostaje
-  // valjan i nakon premještanja, pa čitanja u tijeku ne smetaju; zatvara se tek malo kasnije.
+  // The whole file is fetched: move it into the mirror (keep: the server folder). The open stage fd stays valid
+  // after the move, so reads in progress aren't disturbed; it is closed a little later.
   complete() {
     this.completing ??= (async () => {
       const dest = path.join(this.share.mirror, this.rel);
@@ -256,7 +263,7 @@ class Cached {
     return this.completing;
   }
 
-  // koliko je fajla već na serveru (za napredak u UI-ju)
+  // how much of the file is already on the server (for the progress in the UI)
   fetchedBytes() {
     let n = 0;
     for (const h of this.have) n += h;
@@ -288,23 +295,23 @@ class Share {
     this.q = 0;
     this.pending = new Map();
     this.lists = new Map();        // rel dir → { at, entries: Map }
-    this.listing = new Map();      // rel dir → dohvat popisa u tijeku (dijele ga svi koji čekaju)
-    this.listGen = new Map();      // rel dir → broj izmjena sa servera (dohvat stariji od izmjene ne smije je poništiti)
+    this.listing = new Map();      // rel dir → listing fetch in progress (shared by everyone waiting for it)
+    this.listGen = new Map();      // rel dir → number of changes made by the server (an older fetch must not undo them)
     this.files = new Map();        // rel → Cached (ondemand)
-    this.local = new Set();        // rel fajlova napisanih na serveru (ondemand overlay)
-    this.created = new Set();      // rel fajlova koje je RapidRAW stvorio u ovoj sesiji (smiju se stvarno obrisati)
+    this.local = new Set();        // rel of files written on the server (ondemand overlay)
+    this.created = new Set();      // rel of files RapidRAW created in this session (may really be deleted)
     this.dirty = new Set();
-    this.known = new Map();        // transfer: rel → "size:mtime" već usklađeno s klijentom
+    this.known = new Map();        // transfer: rel → "size:mtime" already in sync with the browsing computer
     this.timers = new Map();
-    this.pushing = new Map();      // rel → red slanja na klijenta (jedno po jedno, zadnji sadržaj pobjeđuje)
+    this.pushing = new Map();      // rel → queue of sends to the browsing computer (one at a time, the last content wins)
     this.started = Date.now();
-    this.waiters = new Set();      // zahtjevi koji čekaju da se browser ponovno spoji
-    this.active = [0, 0, 0, 0];    // dohvata s klijenta u tijeku, po prioritetu (PRIO)
+    this.waiters = new Set();      // requests waiting for the browser to reconnect
+    this.active = [0, 0, 0, 0];    // fetches from the browsing computer in progress, per priority (PRIO)
     this.waiting = [[], [], [], []];
-    this.focus = null;             // rel fotke otvorene u editoru
-    this.samples = [];             // [vrijeme, bajtova] dohvata s klijenta, za brzinu u UI-ju
-    this.offlineSince = Date.now(); // dok se browser ne spoji (attach)
-    // fill: total = veličina cijelog foldera, filled = koliko je od toga već cijelo na serveru
+    this.focus = null;             // rel of the photo open in the editor
+    this.samples = [];             // [time, bytes] of fetches from the browsing computer, for the speed in the UI
+    this.offlineSince = Date.now(); // until the browser connects (attach)
+    // fill: total = size of the whole folder, filled = how much of it is already complete on the server
     this.stats = { fetched: 0, complete: 0, uploaded: 0, pushed: 0, total: 0, filled: 0, filling: false, diskFull: false };
     this.stage = path.join(WORK, 'stage', this.id);
   }
@@ -323,7 +330,7 @@ class Share {
     this.offlineSince = 0;
     for (const w of this.waiters) w();
     this.waiters.clear();
-    // tuneli i proxyji zatvaraju WebSocket koji miruje; ping ga drži otvorenim
+    // tunnels and proxies close an idle WebSocket; a ping keeps it open
     const keepalive = setInterval(() => { if (ws.readyState === 1) ws.ping(); }, 20000);
     ws.on('error', (e) => console.warn(`[remote] ${this.name}: ${e.message}`));
     ws.on('message', (data, isBinary) => {
@@ -350,8 +357,9 @@ class Share {
     console.log(`[remote] ${this.name}: client connected`);
   }
 
-  // Kad veza s browserom pukne (tunel, Wi-Fi, osvježavanje stranice), zahtjev pričeka da se ponovno spoji i
-  // pokuša opet. Greška bi se kroz mmap pretvorila u SIGBUS i srušila RapidRAW, pa je javljamo tek nakon RECONNECT_WAIT.
+  // When the connection to the browser breaks (tunnel, Wi-Fi, reloading the page), a request waits for it to
+  // reconnect and tries again. Through mmap an error would turn into SIGBUS and crash RapidRAW, so it is reported
+  // only after RECONNECT_WAIT.
   async request(head, data) {
     for (let attempt = 0; ; attempt++) {
       await this.online();
@@ -361,8 +369,8 @@ class Share {
     }
   }
 
-  // Čeka najviše do RECONNECT_WAIT nakon prekida; folder koji je odspojen dulje odmah javlja grešku (inače bi svaki
-  // pregled foldera i svaki RapidRAW-ov stat na njemu visio po dvije minute)
+  // Waits at most until RECONNECT_WAIT after the disconnect; a folder disconnected for longer fails at once
+  // (otherwise every listing of the folder and every RapidRAW stat on it would hang for two minutes)
   online() {
     if (this.agent) return Promise.resolve();
     if (this.stopped) return Promise.reject(fail('EIO', 'stopped'));
@@ -388,8 +396,9 @@ class Share {
     });
   }
 
-  // Fokus (fotka u editoru) uvijek smije do READS dohvata, bez obzira na ostale; ostali dijele READS, a red kreće
-  // tek kad nijedan važniji ne radi niti čeka (thumbnaili ne smiju usporiti otvaranje fotke)
+  // The focus (photo in the editor) may always have up to READS fetches, regardless of the others; the others share
+  // READS, and a class starts only when no more important one runs or waits (thumbnails must not slow down opening
+  // a photo)
   canStart(p) {
     if (p === PRIO.FOCUS) return this.active[0] < READS;
     if (this.active[1] + this.active[2] + this.active[3] >= READS) return false;
@@ -415,7 +424,7 @@ class Share {
     while (this.samples.length && now - this.samples[0][0] > 3000) this.samples.shift();
   }
 
-  // bajtova/s u zadnje 3 s
+  // bytes/s over the last 3 s
   rate() {
     const now = Date.now();
     const recent = this.samples.filter(([t]) => now - t <= 3000);
@@ -428,18 +437,17 @@ class Share {
     try { return await this.request(head, data); } finally { this.unslot(p); }
   }
 
-  // fotka i njeni sidecari (.rrdata, .rrexif, virtualne kopije)
+  // the photo and its sidecars (.rrdata, .rrexif, virtual copies)
   isFocus(rel) { return !!this.focus && (rel === this.focus || rel.startsWith(`${this.focus}.`)); }
 
-  // Fotka otvorena u editoru: RapidRAW je ionako čita cijelu, pa je odmah dohvati paralelno, ispred svega
+  // The photo open in the editor: RapidRAW reads it whole anyway, so fetch it at once, in parallel, ahead of everything
   setFocus(rel) {
     this.focus = rel;
     this.cached(rel).then((c) => (c.done ? null : c.fill(PRIO.FOCUS, READS)))
       .catch((e) => { if (e.code !== 'ENOENT' && e.code !== 'EISDIR') console.warn(`[remote] ${this.name}: focus ${rel}: ${e.message}`); });
   }
 
-  // ondemand + fill: cijeli folder se polako puni na server dok RapidRAW ne čita ništa drugo. Za formate čiji
-  // ugrađeni preview RapidRAW ne zna pročitati (Fuji RAF, Canon CR3) thumbnail ionako treba cijeli fajl.
+  // ondemand + fill: the whole folder slowly fills up on the server while RapidRAW reads nothing else
   async fillAll() {
     this.stats.filling = true;
     const files = [];
@@ -456,12 +464,12 @@ class Share {
       console.log(`[remote] ${this.name}: filling ${files.length} files (${(this.stats.total / 1e9).toFixed(1)} GB) in the background`);
       for (const rel of files) {
         if (this.stopped) break;
-        if (this.local.has(rel)) continue; // RapidRAW ga je već prepisao na serveru
+        if (this.local.has(rel)) continue; // RapidRAW already overwrote it on the server
         await editor.idle(() => this.stopped);
         try {
           const c = await this.cached(rel);
           if (c.done) { this.stats.filled += c.size; continue; }
-          // ne puni disk servera do kraja (mirror može biti u RR_WORK, tj. na sistemskom disku)
+          // don't fill the server's disk to the end (the mirror may be in RR_WORK, i.e. on the system disk)
           const st = await fsp.statfs(this.mirror);
           if (st.bavail * st.bsize - c.size < FILL_RESERVE) {
             console.warn(`[remote] ${this.name}: background fill stopped, less than ${FILL_RESERVE / 1e9} GB free on the server`);
@@ -475,9 +483,10 @@ class Share {
     } finally { this.stats.filling = false; }
   }
 
-  // Popis velikog foldera traje (1330 fajlova: ~1 s, dok browser šalje i druge podatke i 10 s), a RapidRAW neke
-  // operacije na fajlovima radi na glavnoj niti (npr. spremanje postavki nakon svake promjene: stat i EXIF fotke),
-  // pa za to vrijeme stoji sve, i obrada slidera. Zato stat ne čeka novi popis: uzima spremljeni i osvježava ga u pozadini.
+  // Listing a big folder takes time (1330 files: ~1 s, up to 10 s while the browser also sends other data), and
+  // RapidRAW runs some file operations on its main thread (e.g. saving the edit after every change: stat and EXIF
+  // of the photo), so everything waits meanwhile, slider previews too. So a stat doesn't wait for a new listing: it
+  // takes the stored one and refreshes it in the background.
   async list(rel, fresh = true) {
     const c = this.lists.get(rel);
     const age = c ? Date.now() - c.at : Infinity;
@@ -496,7 +505,8 @@ class Share {
     p = this.request({ op: 'list', path: rel }).then(({ head }) => {
       const entries = new Map(head.entries.map((e) => [e.name, e]));
       const old = this.lists.get(rel);
-      // za vrijeme dohvata server je nešto promijenio u folderu: zadrži popis s tom izmjenom, osvježi ga idući put
+      // the server changed something in the folder during the fetch: keep the listing with that change, refresh it
+      // next time
       if ((this.listGen.get(rel) ?? 0) !== gen) {
         if (old) { old.at = Math.min(old.at, Date.now() - LIST_REFRESH); return old.entries; }
         this.lists.set(rel, { at: Date.now() - LIST_REFRESH, entries });
@@ -511,7 +521,7 @@ class Share {
 
   invalidate(rel) { this.lists.delete(rel); }
 
-  // Izmjena koju je napravio server (RapidRAW): odmah u spremljeni popis, bez novog dohvata s klijenta
+  // A change made by the server (RapidRAW): straight into the stored listing, without fetching a new one
   patchList(dir, name, entry) {
     this.listGen.set(dir, (this.listGen.get(dir) ?? 0) + 1);
     const c = this.lists.get(dir);
@@ -520,7 +530,7 @@ class Share {
     else c.entries.delete(name);
   }
 
-  // Fajl napisan/izmijenjen na serveru → u folder na klijentu (u komadima)
+  // A file written/changed on the server → into the folder on the browsing computer (in pieces)
   async push(rel, file) {
     const st = await fsp.stat(file);
     const fd = await fsp.open(file, 'r');
@@ -538,8 +548,8 @@ class Share {
     this.patchList(parentOf(rel), nameOf(rel), { kind: 'file', size: st.size, mtime: Math.round(st.mtimeMs) });
   }
 
-  // Slanja istog fajla idu jedno za drugim (FUSE release stiže asinkrono, nakon close), a brisanje i
-  // preimenovanje čekaju da slanje završi, inače bi obrisani ili stari sadržaj ipak stigao na klijenta.
+  // Sends of the same file go one after another (a FUSE release arrives asynchronously, after close), and deleting
+  // and renaming wait for the send to finish, otherwise deleted or old content would still reach the browsing computer.
   queuePush(rel, file = this.localPath(rel)) {
     const p = (this.pushing.get(rel) ?? Promise.resolve()).catch(() => {}).then(async () => {
       if (await exists(file)) await this.push(rel, file);
@@ -555,14 +565,14 @@ class Share {
     await this.request({ op: 'remove', path: rel, recursive: false }).catch((e) => { if (e.code !== 'ENOENT') throw e; });
   }
 
-  // Original s klijenta se nikad ne briše trajno: ide u skriveni .rrweb-trash/ u istom folderu (RapidRAW na FUSE disku
-  // ponekad ne može u svoj koš i tada briše trajno)
+  // An original on the browsing computer is never deleted permanently: it goes into a hidden .rrweb-trash/ in the
+  // same folder (RapidRAW on a FUSE disk sometimes can't use its trash and then deletes permanently)
   async remoteTrash(rel) {
     await this.request({ op: 'rename', from: rel, to: `.rrweb-trash/${Date.now()}-${rel.replaceAll('/', '__')}` })
       .catch((e) => { if (e.code !== 'ENOENT') throw e; });
   }
 
-  // --- ondemand: operacije iz rrweb-fuse ---
+  // --- ondemand: operations from rrweb-fuse ---
   localPath(rel) { return path.join(this.mirror, rel); }
 
   async attr(rel) {
@@ -573,17 +583,17 @@ class Share {
     }
     const e = (await this.list(parentOf(rel), false)).get(nameOf(rel));
     if (!e) throw fail('ENOENT');
-    return { kind: e.kind, size: e.size ?? 0, mtime: e.mtime ?? this.started }; // folderi s klijenta nemaju datum
+    return { kind: e.kind, size: e.size ?? 0, mtime: e.mtime ?? this.started }; // folders from the browser have no date
   }
 
   async cached(rel) {
     const a = await this.attr(rel);
     if (a.kind === 'dir') throw fail('EISDIR');
     let c = this.files.get(rel);
-    if (c && (c.size !== a.size || c.mtime !== a.mtime)) { await c.dispose(); c = null; } // promijenjen na klijentu
+    if (c && (c.size !== a.size || c.mtime !== a.mtime)) { await c.dispose(); c = null; } // changed on the browsing computer
     if (!c) {
       c = new Cached(this, rel, a.size, a.mtime);
-      const kept = this.localPath(rel); // keep: već cijeli na serveru od prije?
+      const kept = this.localPath(rel); // keep: already complete on the server from before?
       const st = await fsp.stat(kept).catch(() => null);
       if (st?.isFile() && st.size === a.size) { c.done = true; c.file = kept; }
       this.files.set(rel, c);
@@ -591,7 +601,7 @@ class Share {
     return c;
   }
 
-  // Lokalna (overlay) kopija fajla za pisanje; postojeći sadržaj prvo cijeli s klijenta
+  // Local (overlay) copy of a file for writing; existing content first fetched whole from the browsing computer
   async materialize(rel, keepContent) {
     if (this.local.has(rel)) return this.localPath(rel);
     const dest = this.localPath(rel);
@@ -609,7 +619,7 @@ class Share {
     const rel = h.path === undefined ? undefined : checkRel(h.path);
     switch (h.op) {
       case 'getattr': return this.attr(rel);
-      case 'readdir': { // veličina i vrijeme za Windows (WinFsp ih čita iz popisa direktorija)
+      case 'readdir': { // size and time for Windows (WinFsp reads them from the directory listing)
         const entries = new Map(await this.list(rel));
         for (const l of this.local) {
           if (parentOf(l) !== rel) continue;
@@ -687,11 +697,11 @@ class Share {
         if (this.dirty.delete(from)) this.dirty.add(to);
         if (this.created.delete(from)) this.created.add(to);
         if (await exists(this.localPath(from))) await moveFile(this.localPath(from), this.localPath(to));
-        if (remoteMissing && this.local.has(to) && !this.dirty.has(to)) await this.queuePush(to); // još nije bio poslan
+        if (remoteMissing && this.local.has(to) && !this.dirty.has(to)) await this.queuePush(to); // not sent yet
         const moved = this.lists.get(parentOf(from))?.entries.get(nameOf(from));
         this.patchList(parentOf(from), nameOf(from), null);
         this.patchList(parentOf(to), nameOf(to), moved ?? null);
-        if (!moved) this.invalidate(parentOf(to)); // nije bio u popisu: popis odredišta iznova s klijenta
+        if (!moved) this.invalidate(parentOf(to)); // wasn't in the listing: fetch the target's listing again
         for (const d of [...this.lists.keys()]) if (d === from || d.startsWith(`${from}/`)) this.invalidate(d);
         return {};
       }
@@ -700,14 +710,14 @@ class Share {
   }
 
   async mountFuse() {
-    lazyUnmount(this.mount); // ostatak od prethodnog pada relaya
-    if (WIN) { // WinFsp sam stvara folder za mount; ne smije postojati
+    lazyUnmount(this.mount); // left over from an earlier relay crash
+    if (WIN) { // WinFsp creates the mount folder itself; it must not exist
       await fsp.mkdir(path.dirname(this.mount), { recursive: true });
       await fsp.rmdir(this.mount).catch(() => {});
     } else await fsp.mkdir(this.mount, { recursive: true });
     const child = spawn(FUSE_BIN, [this.mount], { stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true });
     this.fuse = child;
-    // helper može nestati (pad, kill); pisanje u njegov stdin ne smije srušiti relay
+    // the helper can disappear (crash, kill); writing to its stdin must not take the relay down
     child.stdin.on('error', (e) => console.warn(`[remote] ${this.name}: rrweb-fuse stdin: ${e.message}`));
     child.on('error', (e) => console.warn(`[remote] ${this.name}: rrweb-fuse: ${e.message}`));
     let buf = Buffer.alloc(0);
@@ -753,7 +763,7 @@ class Share {
     console.log(`[remote] ${this.name}: mounted at ${this.mount}`);
   }
 
-  // --- transfer: mirror na serveru, izmjene natrag na klijenta ---
+  // --- transfer: a mirror on the server, changes back to the browsing computer ---
   async receive(rel, req, mtime) {
     checkRel(rel);
     const tmp = path.join(this.stage, 'upload', `${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -763,7 +773,7 @@ class Share {
       const dest = path.join(this.mirror, rel);
       if (mtime) await fsp.utimes(tmp, new Date(), new Date(mtime));
       const st = await fsp.stat(tmp);
-      this.known.set(rel, `${st.size}:${Math.round(st.mtimeMs)}`); // prije premještanja, da watcher ne vrati natrag
+      this.known.set(rel, `${st.size}:${Math.round(st.mtimeMs)}`); // before the move, so the watcher doesn't send it back
       await moveFile(tmp, dest);
       this.stats.uploaded++;
     } catch (e) {
@@ -801,7 +811,7 @@ class Share {
   async sync(rel) {
     if (!this.agent || rel.split('/').some((s) => s.startsWith('.rrweb'))) return;
     const st = await fsp.stat(path.join(this.mirror, rel)).catch(() => null);
-    if (!st) return; // brisanje se namjerno ne prenosi na klijenta
+    if (!st) return; // deletions are deliberately not sent to the browsing computer
     if (st.isDirectory()) { await this.request({ op: 'mkdir', path: rel }); return; }
     if (this.known.get(rel) === `${st.size}:${Math.round(st.mtimeMs)}`) return;
     await this.queuePush(rel, path.join(this.mirror, rel));
@@ -831,7 +841,8 @@ class Share {
     await fsp.rm(this.stage, { recursive: true, force: true });
     if (!this.keep) await fsp.rm(path.join(WORK, 'mirror', this.id), { recursive: true, force: true });
     if (this.mode === 'ondemand') {
-      // nikad rekurzivno: na još spojenom mountu rm bi išao kroz FUSE (i visio, ili brisao na klijentu)
+      // never recursively: on a mount that is still attached, rm would go through FUSE (and hang, or delete on the
+      // browsing computer)
       lazyUnmount(this.mount);
       await fsp.rmdir(this.mount).catch(() => {});
       await fsp.rmdir(path.dirname(this.mount)).catch(() => {});
@@ -839,7 +850,7 @@ class Share {
   }
 }
 
-// onChange(): popis dijeljenih foldera se promijenio (relay osvježi rootove Files taba)
+// onChange(): the list of shared folders changed (the relay refreshes the Files tab roots)
 export function createRemote({ validName, insideRoots, onChange = () => {} }) {
   const shares = new Map();
   const id = () => Math.random().toString(36).slice(2, 10);
@@ -854,7 +865,7 @@ export function createRemote({ validName, insideRoots, onChange = () => {} }) {
     let mirror = path.join(WORK, 'mirror', sid, name);
     if (keep) {
       if (!keepDir) throw new Error('choose a server folder for the kept copy');
-      const dir = await insideRoots(keepDir); // samo unutar foldera s fotografijama
+      const dir = await insideRoots(keepDir); // only inside the photo folders
       mirror = path.join(dir, name);
     }
     const share = new Share({ id: sid, name, mode, keep: !!keep, fill: mode === 'ondemand' && fill !== false, mirror,
@@ -882,7 +893,7 @@ export function createRemote({ validName, insideRoots, onChange = () => {} }) {
       __rr_share_list: () => [...shares.values()].map((s) => s.info()),
       __rr_share_have: async ({ id: sid }) => shares.get(sid)?.have() ?? {},
     },
-    // /rfs?id=… WebSocket browsera koji dijeli folder
+    // /rfs?id=… WebSocket of the browser that shares the folder
     attach(ws, sid) {
       const s = shares.get(sid);
       if (!s) { ws.on('error', () => {}); ws.close(4004, 'unknown share'); return; }
@@ -900,25 +911,26 @@ export function createRemote({ validName, insideRoots, onChange = () => {} }) {
       }
     },
     work: WORK,
-    // Mountovi ostali od prethodnog pada relaya. Tek kad je relay zauzeo port: dok radi drugi relay (isti RR_WORK),
-    // njegovi mountovi nisu mrtvi
+    // Mounts left over from an earlier relay crash. Only once the relay has taken the port: while another relay runs
+    // (same RR_WORK), its mounts are not dead
     sweep() {
       if (process.platform !== 'linux') return;
       try {
         for (const line of fs.readFileSync('/proc/mounts', 'utf8').split('\n')) {
           const [, raw, type] = line.split(' ');
-          const dir = raw?.replace(/\\([0-7]{3})/g, (_, o) => String.fromCharCode(parseInt(o, 8))); // razmak = \040
+          const dir = raw?.replace(/\\([0-7]{3})/g, (_, o) => String.fromCharCode(parseInt(o, 8))); // a space = \040
           if (type === 'fuse.rrweb' && dir?.startsWith(WORK + path.sep)) { lazyUnmount(dir); console.log(`[remote] cleaned up stale mount ${dir}`); }
         }
-      } catch { /* nema /proc/mounts */ }
+      } catch { /* no /proc/mounts */ }
     },
     roots: () => [...shares.values()].map((s) => s.view),
-    // fajl iz foldera "na zahtjev" čiji browser nije spojen dulje od par sekundi (kratki prekid se čeka)
+    // a file from an on-demand folder whose browser has been disconnected for more than a few seconds (a short
+    // interruption is waited out)
     offline(p) {
       const hit = typeof p === 'string' ? this.locate(p.split('?vc=')[0]) : null;
       return !!hit && !hit.share.agent && Date.now() - hit.share.offlineSince > 5000;
     },
-    // Napredak otvaranja fotke za UI (rrweb/files/progress.ts): null za fotke izvan foldera "na zahtjev"
+    // Progress of opening a photo for the UI (rrweb/files/progress.ts): null for photos outside on-demand folders
     progress(p) {
       const hit = typeof p === 'string' ? this.locate(p.split('?vc=')[0]) : null;
       if (!hit) return null;
@@ -928,18 +940,18 @@ export function createRemote({ validName, insideRoots, onChange = () => {} }) {
       if (c?.done) return { phase: 'decoding', completedAt: c.completedAt ?? 0 };
       return { phase: 'downloading', fetched: c ? c.fetchedBytes() : 0, total: c?.size ?? 0, rate: Math.round(share.rate()) };
     },
-    // fajl iz foldera "na zahtjev" koji se upravo dohvaća: { fetched, total } (thumbnaili u UI-ju)
+    // a file from an on-demand folder that is being fetched right now: { fetched, total } (thumbnails in the UI)
     fetching(p) {
       const hit = typeof p === 'string' ? this.locate(p.split('?vc=')[0]) : null;
       const c = hit?.share.files.get(hit.rel);
       return c && !c.done && c.inflight.size ? { fetched: c.fetchedBytes(), total: c.size } : null;
     },
-    // load_image iz editora: ako je fotka iz foldera "na zahtjev", dohvati je ispred svega ostalog
+    // load_image from the editor: if the photo is in an on-demand folder, fetch it ahead of everything else
     focus(p) {
       const hit = typeof p === 'string' && !p.includes('?vc=') ? this.locate(p) : null;
       if (hit) hit.share.setFocus(hit.rel);
     },
-    // putanja na mountu foldera "na zahtjev" → { share, rel } (rrweb/relay/raf.mjs)
+    // a path on the mount of an on-demand folder → { share, rel } (rrweb/relay/exif.mjs)
     locate(p) {
       for (const s of shares.values()) {
         if (s.mode !== 'ondemand' || (p !== s.view && !p.startsWith(s.view + path.sep))) continue;

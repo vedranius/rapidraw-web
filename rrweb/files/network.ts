@@ -1,7 +1,7 @@
-// Kvaliteta previewa prema vezi sa serverom. RapidRAW već ima veličinu previewa (editorPreviewResolution) i kvalitetu
-// live previewa (livePreviewQuality: performance / high / full); backend ih čita kod svakog rendera.
-// Jednom po kartici (i na klik) mjeri ping te brzinu preuzimanja (previewi) i slanja (folderi s ovog računala),
-// predloži postavke, a za vrijeme rada prati stvarne previewe (apply_adjustments) i javi kad postanu spori.
+// Preview quality for the connection to the server. RapidRAW already has a preview size (editorPreviewResolution)
+// and a live preview quality (livePreviewQuality: performance / high / full); the backend reads them on every render.
+// Once per tab (and on click) it measures ping and the download (previews) and upload (folders from this computer)
+// speed, suggests settings, and while you work it watches real previews (apply_adjustments) and says when they get slow.
 import { call, onConnection, onTiming } from '../shim/transport';
 import { el } from './ui';
 
@@ -10,7 +10,7 @@ type Reco = { resolution: number; quality: Quality; why: string };
 type Measure = { mbps: number; up?: number; rtt: number; at: number };
 
 const QUALITY_LABEL: Record<Quality, string> = { performance: 'Performance', high: 'High', full: 'Full' };
-const RESOLUTIONS = [720, 1280, 1920, 2560, 3840]; // kao RapidRAW: Settings → Processing
+const RESOLUTIONS = [720, 1280, 1920, 2560, 3840]; // as in RapidRAW: Settings → Processing
 const mbit = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}G` : v < 10 ? v.toFixed(1) : String(Math.round(v)));
 
 export function recommend(mbps: number, rtt: number): Reco {
@@ -45,8 +45,9 @@ async function measure(): Promise<Measure> {
   return { mbps, up, rtt, at: Date.now() };
 }
 
-// Više paralelnih veza (kao speed testovi): jedna TCP veza kroz tunel s većim pingom se ne stigne zahuktati.
-// Veličina raste dok jedan krug ne traje ~1 s (najviše STREAMS × 16 MB); čekanje na prvi bajt (ping) se ne broji.
+// Several parallel connections (like speed tests): one TCP connection through a tunnel with a higher ping doesn't get
+// up to speed. The size grows until one round takes ~1 s (at most STREAMS × 16 MB); waiting for the first byte (ping)
+// is not counted.
 const STREAMS = 4;
 async function rate(rtt: number, round: (perStream: number) => Promise<number>) {
   let per = 1 << 18;
@@ -63,7 +64,7 @@ async function rate(rtt: number, round: (perStream: number) => Promise<number>) 
 export function mountNetwork(tabs: HTMLElement) {
   let last: Measure | null = null;
   let settings: Record<string, unknown> = {};
-  const recent: { ms: number; bytes: number }[] = []; // zadnji previewi
+  const recent: { ms: number; bytes: number }[] = []; // last previews
   const badge = el('button', { class: 'rrn-badge', title: 'Connection to the server and preview quality' }, '…');
   const panel = el('div', { class: 'rrn-panel', hidden: true });
   tabs.append(badge);
@@ -78,13 +79,13 @@ export function mountNetwork(tabs: HTMLElement) {
     return { ms, kb };
   };
 
-  // ručni odabir (RapidRAW-ove postavke editorPreviewResolution / livePreviewQuality)
+  // manual choice (RapidRAW's settings editorPreviewResolution / livePreviewQuality)
   const res = el('select', {}) as HTMLSelectElement;
   const qual = el('select', {}) as HTMLSelectElement;
   for (const v of RESOLUTIONS) res.append(el('option', { value: String(v) }, `${v} px`));
   for (const q of ['performance', 'high', 'full'] as Quality[]) qual.append(el('option', { value: q }, QUALITY_LABEL[q]));
 
-  // veza sa serverom ne odgovara (transport.ts sam otvara novu): bedž to pokaže
+  // the connection to the server doesn't answer (transport.ts opens a new one by itself): the badge shows it
   let connected = true;
 
   function render() {
@@ -124,14 +125,14 @@ export function mountNetwork(tabs: HTMLElement) {
     try {
       await loadSettings();
       last = await measure();
-      try { sessionStorage.setItem('rrweb-net', JSON.stringify(last)); } catch { /* nema storagea */ }
-    } catch { /* relay nedostupan; pokušaj na klik */ }
+      try { sessionStorage.setItem('rrweb-net', JSON.stringify(last)); } catch { /* no storage */ }
+    } catch { /* relay unreachable; try again on click */ }
     render();
     const r = last && recommend(last.mbps, last.rtt);
-    if (r && differs(r)) panel.hidden = false; // predloži odmah
+    if (r && differs(r)) panel.hidden = false; // suggest right away
   }
 
-  // RapidRAW drži postavke u memoriji UI-ja: nakon spremanja ga ponovno učitaj, inače bi ih prepisao starima
+  // RapidRAW keeps its settings in the UI's memory: reload it after saving, otherwise it would overwrite them with the old ones
   async function apply(r: Reco) {
     await loadSettings();
     await call('save_settings', { settings: { ...settings, editorPreviewResolution: r.resolution, livePreviewQuality: r.quality } });
@@ -150,8 +151,8 @@ export function mountNetwork(tabs: HTMLElement) {
   });
 
   try { last = JSON.parse(sessionStorage.getItem('rrweb-net') ?? 'null'); } catch { last = null; }
-  if (last && last.up === undefined) last = null; // starije mjerenje, bez uploada
+  if (last && last.up === undefined) last = null; // an older measurement, without upload
   if (last) loadSettings().then(render);
-  else setTimeout(test, 1500); // jednom po kartici, nakon što se RapidRAW učita
+  else setTimeout(test, 1500); // once per tab, after RapidRAW has loaded
   onConnection((v) => { connected = v; render(); });
 }

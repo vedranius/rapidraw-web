@@ -2,6 +2,17 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.14.0
+
+- **RapidRAW 1.6.5** (Kelvin white balance, guided filter, pick and reject flags, reorderable panels, RapidRAW Cloud and more: see [its release](https://github.com/CyberTimon/RapidRAW/releases/tag/v1.6.5)). The automatic build for 1.6.5 had failed, because 1.6.5's cloud sign-in uses two Tauri functions the browser didn't have yet (`emit`, and `fetch` from the HTTP plugin). The build check now also looks inside the Tauri plugin packages RapidRAW uses.
+- **Fixed: thumbnails could stay "loading" and photos didn't open when the connection was busy**, for example while the browser was copying a folder to the server over a slow uplink. The server dropped connections that were slow to answer its pings (after 15–30 s), and every event that arrived meanwhile, such as finished thumbnails, was lost. The server now waits 90 s, the browser 25 s. After a reconnect, the server replays the events the tab missed in the last 2 minutes.
+- **Thumbnails of unedited RAWs are "light"**: RapidRAW 1.6.5 makes them from the embedded preview (now also for Fuji RAF), so they are made freely between edits. Full renders, of edited photos and other formats, still wait for the pauses and the photos next to the open one. rapidraw-web no longer writes RAF thumbnails into RapidRAW's cache itself, because RapidRAW now does the same on its own.
+- Code comments are in English now, the same as in the version proposed to RapidRAW.
+
+## 1.13.1
+
+- **Fixed: on a Windows server, an on-demand folder with more than about 500 files never finished listing** (fewer with long file names). RapidRAW, and anything else that opened the folder, hung on it, and the whole folder stayed stuck until RapidRAW Web was restarted. Windows fetches a big listing in parts, each continuing after the last name of the previous one. The helper (`rrweb-fuse`) stored every name with an invisible character at the end, so "after the last name" always returned the last name again, and WinFsp kept asking forever. Folders of any size now list at once: 600 files in 16 ms, 1330 in 28 ms, 2000 in 37 ms on the server, plus the browser's own listing. Linux servers were not affected.
+
 ## 1.13.0
 
 - **The filmstrip fills up while you edit.** Before, no thumbnails were made at all while a photo was open in the editor. Now they are made in short pauses between your edits (no change and no photo opening for about 1.5 s):
