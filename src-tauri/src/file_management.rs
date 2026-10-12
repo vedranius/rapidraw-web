@@ -4148,6 +4148,36 @@ pub fn extract_xmp_rating(content: &str) -> Option<i8> {
 
 const XMP_REJECTED_RATING: i8 = -1;
 
+pub fn xmp_rating(metadata: &ImageMetadata) -> String {
+    if metadata.flag == Some(ImageFlag::Reject) {
+        XMP_REJECTED_RATING.to_string()
+    } else {
+        metadata.rating.to_string()
+    }
+}
+
+pub fn xmp_label(tags: &[String]) -> Option<String> {
+    tags.iter()
+        .rev()
+        .find_map(|t| t.strip_prefix(COLOR_TAG_PREFIX))
+        .map(|color| {
+            let mut c = color.chars();
+            match c.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            }
+        })
+}
+
+pub fn xmp_subject_bag<S: AsRef<str>>(items: &[S]) -> String {
+    let mut bag = String::from("<dc:subject>\n    <rdf:Bag>\n");
+    for item in items {
+        bag.push_str(&format!("     <rdf:li>{}</rdf:li>\n", item.as_ref()));
+    }
+    bag.push_str("    </rdf:Bag>\n   </dc:subject>");
+    bag
+}
+
 pub fn extract_xmp_label(content: &str) -> Option<String> {
     if let Some(idx) = content.find("xmp:Label=\"") {
         let start = idx + 11;
@@ -4286,11 +4316,7 @@ pub fn sync_metadata_to_xmp(source_path: &Path, metadata: &ImageMetadata, create
     if let Some(xmp_file) = actual_xmp
         && let Ok(mut content) = fs::read_to_string(&xmp_file)
     {
-        let rating_str = if metadata.flag == Some(ImageFlag::Reject) {
-            XMP_REJECTED_RATING.to_string()
-        } else {
-            metadata.rating.to_string()
-        };
+        let rating_str = xmp_rating(metadata);
         let re_rating_attr = regex!(r#"xmp:Rating\s*=\s*"[^"]*""#);
         let re_rating_tag = regex!(r#"<xmp:Rating\s*>[^<]*</xmp:Rating>"#);
 
@@ -4308,21 +4334,11 @@ pub fn sync_metadata_to_xmp(source_path: &Path, metadata: &ImageMetadata, create
         }
 
         let current_tags = metadata.tags.clone().unwrap_or_default();
-        let mut label = None;
-        let mut normal_tags = Vec::new();
-
-        for t in current_tags {
-            if let Some(color) = t.strip_prefix(COLOR_TAG_PREFIX) {
-                let mut c = color.chars();
-                let cap_color = match c.next() {
-                    None => String::new(),
-                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-                };
-                label = Some(cap_color);
-            } else {
-                normal_tags.push(t);
-            }
-        }
+        let label = xmp_label(&current_tags);
+        let normal_tags: Vec<String> = current_tags
+            .into_iter()
+            .filter(|t| !t.starts_with(COLOR_TAG_PREFIX))
+            .collect();
 
         if let Some(lbl) = label {
             let re_label_attr = regex!(r#"xmp:Label\s*=\s*"[^"]*""#);
@@ -4351,11 +4367,7 @@ pub fn sync_metadata_to_xmp(source_path: &Path, metadata: &ImageMetadata, create
         if normal_tags.is_empty() {
             content = re_subject.replace_all(&content, "").to_string();
         } else {
-            let mut bag = String::from("<dc:subject>\n    <rdf:Bag>\n");
-            for t in normal_tags {
-                bag.push_str(&format!("     <rdf:li>{}</rdf:li>\n", t));
-            }
-            bag.push_str("    </rdf:Bag>\n   </dc:subject>");
+            let bag = xmp_subject_bag(&normal_tags);
 
             if re_subject.is_match(&content) {
                 content = re_subject.replace(&content, bag).to_string();
