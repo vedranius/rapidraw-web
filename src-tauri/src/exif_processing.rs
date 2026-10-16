@@ -1297,6 +1297,7 @@ pub fn write_image_with_metadata(
     keep_metadata: bool,
     strip_gps: bool,
     xmp: &ExportXmp,
+    dpi: Option<u16>,
 ) -> Result<(), String> {
     // FIXME: temporary solution until I find a way to write metadata to TIFF
     if !keep_metadata || output_format.to_lowercase() == "tiff" {
@@ -1316,7 +1317,7 @@ pub fn write_image_with_metadata(
     if file_type == FileExtension::WEBP {
         convert_webp_to_extended(image_bytes);
     }
-    write_exif_metadata(image_bytes, original_path_str, file_type, strip_gps)?;
+    write_exif_metadata(image_bytes, original_path_str, file_type, strip_gps, dpi)?;
     embed_xmp(image_bytes, original_path_str, file_type, strip_gps, xmp);
 
     Ok(())
@@ -1327,6 +1328,7 @@ fn write_exif_metadata(
     original_path_str: &str,
     file_type: FileExtension,
     strip_gps: bool,
+    dpi: Option<u16>,
 ) -> Result<(), String> {
     let original_path = Path::new(original_path_str);
     if !original_path.exists() {
@@ -1578,6 +1580,16 @@ fn write_exif_metadata(
         metadata.set_tag(ExifTag::ComponentsConfiguration(vec![1, 2, 3, 0]));
     }
 
+    if let Some(dpi) = dpi {
+        let resolution = vec![uR64 {
+            nominator: dpi.into(),
+            denominator: 1,
+        }];
+        metadata.set_tag(ExifTag::XResolution(resolution.clone()));
+        metadata.set_tag(ExifTag::YResolution(resolution));
+        metadata.set_tag(ExifTag::ResolutionUnit(vec![2u16]));
+    }
+
     if let Ok(reader) =
         image::ImageReader::new(Cursor::new(image_bytes.as_slice())).with_guessed_format()
         && let Ok((width, height)) = reader.into_dimensions()
@@ -1812,22 +1824,26 @@ fn embed_jpeg_xmp(image_bytes: &mut Vec<u8>, packet: &str) {
 }
 
 fn embed_png_xmp(image_bytes: &mut Vec<u8>, packet: &str) {
+    let mut data = b"XML:com.adobe.xmp\0\0\0\0\0".to_vec();
+    data.extend_from_slice(packet.as_bytes());
+    insert_png_chunk(image_bytes, b"iTXt", &data);
+}
+
+pub fn insert_png_chunk(image_bytes: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]) {
     const IHDR_END: usize = 33;
 
     if image_bytes.len() < IHDR_END || &image_bytes[12..16] != b"IHDR" {
         return;
     }
 
-    let mut data = b"XML:com.adobe.xmp\0\0\0\0\0".to_vec();
-    data.extend_from_slice(packet.as_bytes());
     let mut crc = crc32fast::Hasher::new();
-    crc.update(b"iTXt");
-    crc.update(&data);
+    crc.update(chunk_type);
+    crc.update(data);
 
     let mut chunk = Vec::with_capacity(data.len() + 12);
     chunk.extend_from_slice(&(data.len() as u32).to_be_bytes());
-    chunk.extend_from_slice(b"iTXt");
-    chunk.extend_from_slice(&data);
+    chunk.extend_from_slice(chunk_type);
+    chunk.extend_from_slice(data);
     chunk.extend_from_slice(&crc.finalize().to_be_bytes());
     image_bytes.splice(IHDR_END..IHDR_END, chunk);
 }
