@@ -1597,8 +1597,8 @@ pub struct GlobalAdjustments {
     pub wb_log_gain_l: f32,
     pub wb_log_gain_m: f32,
     pub wb_log_gain_s: f32,
-    _pad_color1: f32,
-    _pad_color2: f32,
+    pub centre_x: f32,
+    pub centre_y: f32,
 
     pub sharpness: f32,
     pub luma_noise_reduction: f32,
@@ -1625,8 +1625,8 @@ pub struct GlobalAdjustments {
     pub lut_intensity: f32,
     pub tonemapper_mode: u32,
     pub lut_is_scene_referred: u32,
-    _pad_lut3: f32,
-    _pad_lut4: f32,
+    pub vignette_center_x: f32,
+    pub vignette_center_y: f32,
     _pad_lut5: f32,
 
     _pad_agx1: f32,
@@ -2426,8 +2426,8 @@ fn get_global_adjustments_from_json(
         wb_log_gain_l: white_balance_gains[0],
         wb_log_gain_m: white_balance_gains[1],
         wb_log_gain_s: white_balance_gains[2],
-        _pad_color1: 0.0,
-        _pad_color2: 0.0,
+        centre_x: get_val("presence", "centréX", 1.0, Some(0.5)),
+        centre_y: get_val("presence", "centréY", 1.0, Some(0.5)),
 
         sharpness: get_val("sharpening", "sharpness", SCALES.sharpness, None),
         luma_noise_reduction: get_val(
@@ -2501,8 +2501,8 @@ fn get_global_adjustments_from_json(
         tonemapper_mode: tonemapper_override
             .unwrap_or_else(|| if tone_mapper == "agx" { 1 } else { 0 }),
         lut_is_scene_referred,
-        _pad_lut3: 0.0,
-        _pad_lut4: 0.0,
+        vignette_center_x: get_val("vignette", "vignetteCenterX", 1.0, Some(0.5)),
+        vignette_center_y: get_val("vignette", "vignetteCenterY", 1.0, Some(0.5)),
         _pad_lut5: 0.0,
 
         _pad_agx1: 0.0,
@@ -2784,6 +2784,7 @@ pub struct GpuContext {
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
     pub limits: wgpu::Limits,
+    pub adapter_info: wgpu::AdapterInfo,
     pub display: Arc<std::sync::Mutex<Option<WgpuDisplay>>>,
 }
 
@@ -2803,12 +2804,26 @@ fn yc_to_rgb(y: f32, cb: f32, cr: f32) -> (f32, f32, f32) {
     (r, g, b)
 }
 
+fn to_rgb32f_parallel(image: &DynamicImage) -> image::Rgb32FImage {
+    match image {
+        DynamicImage::ImageRgba32F(rgba) => {
+            let (w, h) = rgba.dimensions();
+            let mut rgb = vec![0.0f32; (w as usize) * (h as usize) * 3];
+            rgb.par_chunks_exact_mut(3)
+                .zip(rgba.as_raw().par_chunks_exact(4))
+                .for_each(|(dst, src)| dst.copy_from_slice(&src[..3]));
+            image::ImageBuffer::from_raw(w, h, rgb).expect("RGB buffer matches image dimensions")
+        }
+        other => other.to_rgb32f(),
+    }
+}
+
 pub fn remove_raw_artifacts_and_enhance(
     image: &mut DynamicImage,
     color_nr_inv_sigma: f32,
     sharpening_amount: f32,
 ) {
-    let mut buffer = image.to_rgb32f();
+    let mut buffer = to_rgb32f_parallel(image);
     let w = buffer.width() as usize;
     let h = buffer.height() as usize;
 

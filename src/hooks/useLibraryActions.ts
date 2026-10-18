@@ -59,6 +59,7 @@ export const clearLibrarySelection = () => {
     isWbPickerActive: false,
     isRelightPickerActive: false,
     activeRelightLightId: null,
+    activeCenterMarker: null,
   });
 };
 
