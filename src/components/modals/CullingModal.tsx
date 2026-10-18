@@ -221,6 +221,9 @@ export default function CullingModal({
             </div>
           )}
         </div>
+        <Text variant={TextVariants.small} className="text-text-secondary">
+          {t('modals.culling.aiHint')}
+        </Text>
       </div>
       <div className="flex justify-end gap-3 mt-8">
         <button
@@ -346,14 +349,18 @@ export default function CullingModal({
                               alt="Representative"
                               className="w-full h-full object-cover"
                             />
-                            <Text
-                              as="div"
-                              variant={TextVariants.small}
-                              color={TextColors.white}
-                              className="absolute bottom-0 left-0 right-0 p-1 bg-black/60"
-                            >
-                              {t('modals.culling.score', { score: group.representative.qualityScore.toFixed(2) })}
-                            </Text>
+                            <div className="absolute bottom-0 left-0 right-0 p-1 bg-black/60">
+                              <Text as="div" variant={TextVariants.small} color={TextColors.white}>
+                                {t('modals.culling.aiScore', {
+                                  score: group.representative.aiScore.toFixed(2),
+                                })}
+                              </Text>
+                              {group.representative.tags.length > 0 && (
+                                <div className="truncate text-[10px] leading-tight text-white/70">
+                                  {group.representative.tags.join(' · ')}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
                         <div>
@@ -369,7 +376,7 @@ export default function CullingModal({
                                 isSelected={selectedRejects.has(dup.path)}
                                 onToggle={() => handleToggleReject(dup.path)}
                               >
-                                {t('modals.culling.score', { score: dup.qualityScore.toFixed(2) })}
+                                {t('modals.culling.aiScore', { score: dup.aiScore.toFixed(2) })}
                               </ImageThumbnail>
                             ))}
                           </div>

@@ -1,4 +1,6 @@
 use crate::app_settings::load_settings;
+use crate::exif_processing::load_sidecar;
+use crate::file_management::parse_virtual_path;
 use image::{GenericImageView, GrayImage, imageops};
 use image_hasher::{HashAlg, HasherConfig};
 use rayon::prelude::*;
@@ -25,6 +27,9 @@ pub struct CullingSettings {
 pub struct ImageAnalysisResult {
     pub path: String,
     pub quality_score: f64,
+    pub ai_score: f64,
+    pub semantic_score: f64,
+    pub tags: Vec<String>,
     pub sharpness_metric: f64,
     pub center_focus_metric: f64,
     pub exposure_metric: f64,
@@ -62,6 +67,83 @@ struct ImageAnalysisData {
 const WEIGHT_SHARPNESS: f64 = 0.40;
 const WEIGHT_CENTER_FOCUS: f64 = 0.35;
 const WEIGHT_EXPOSURE: f64 = 0.25;
+
+// How much the AI/CLIP semantic score (from the `.rrdata` sidecar tags that the
+// background indexer already wrote) contributes to the final `ai_score`, versus
+// the classical quality score. When an image has no meaningful tags, `ai_score`
+// falls back to the pure quality score so nothing is distorted.
+const WEIGHT_AI_SEMANTIC: f64 = 0.40;
+const SEMANTIC_NEUTRAL: f64 = 0.5;
+
+/// How many of the image's sidecar tags to surface to the UI per image.
+const MAX_REPORTED_TAGS: usize = 8;
+
+/// Per-tag contribution to the semantic score. Positive tags are things a
+/// photographer would consider "this is a keeper" for event/music work; the
+/// negative ones are visual defects. Returns `0.0` for tags we don't care about
+/// (e.g. plain color tags), so the caller can tell "no signal" from "neutral".
+fn tag_semantic_delta(tag: &str) -> f64 {
+    match tag.trim().to_ascii_lowercase().as_str() {
+        // Scene: clearly a live-music/event frame.
+        "concert" | "live music" | "live concert" | "music" | "festival" | "performance"
+        | "gig" | "stage" | "rock concert" | "metal concert" | "acoustic concert"
+        | "open air concert" | "arena concert" | "club concert" | "stadium concert"
+        | "rehearsal" | "encore" => 0.14,
+        // The subject: a performer in frame.
+        "musician" | "band" | "rock band" | "guitarist" | "singer" | "vocalist" | "drummer"
+        | "bassist" | "performer" | "dj" => 0.12,
+        // Instruments / gear: strong signal of the music subject.
+        "guitar" | "electric guitar" | "bass guitar" | "acoustic guitar" | "drums" | "piano"
+        | "violin" | "saxophone" | "trumpet" | "keyboard" | "microphone"
+        | "microphone stand" | "in-ear monitor" | "monitor speaker" | "soundboard"
+        | "mixing console" | "turntable" => 0.09,
+        // Staging / crowd.
+        "crowd" | "audience" | "festival crowd" | "stage lighting" | "stage lights"
+        | "spotlight" | "laser lights" | "light show" | "smoke machine" | "haze"
+        | "pyrotechnics" | "confetti" | "mosh pit" | "crowd surfing" => 0.07,
+        // A person is present (portrait-ish candidates).
+        "portrait" | "face" | "person" | "people" | "man" | "woman" | "smile" | "group"
+        | "candid" | "headbanging" => 0.06,
+        // Mood / energy that reads well.
+        "dramatic" | "intense" | "epic" | "powerful" | "energetic" | "majestic"
+        | "mysterious" => 0.06,
+        "neon" | "vibrant" | "colorful" | "backlighting" | "low-key" | "silhouette"
+        | "high-key" | "bokeh" => 0.04,
+        // Visible defects.
+        "motion blur" | "blurry" | "blur" | "out of focus" | "noise" | "underexposed"
+        | "overexposed" | "empty" => -0.14,
+        _ => 0.0,
+    }
+}
+
+/// Computes the semantic score in `0.0..=1.0` from an image's tags and returns
+/// it together with the subset of tags that actually carried signal (used for
+/// the UI and to pick the best frame inside a burst).
+fn calculate_semantic_score(tags: &[String]) -> (f64, Vec<String>) {
+    let mut score = SEMANTIC_NEUTRAL;
+    let mut meaningful: Vec<String> = Vec::new();
+
+    for tag in tags {
+        let delta = tag_semantic_delta(tag);
+        if delta != 0.0 {
+            score += delta;
+            meaningful.push(tag.clone());
+        }
+    }
+
+    (score.clamp(0.0, 1.0), meaningful)
+}
+
+/// Blends the classical quality score with the semantic score. When there are no
+/// meaningful tags the semantic layer is skipped entirely (`ai_score == quality`).
+fn combine_ai_score(quality_score: f64, semantic_score: f64, has_semantic_signal: bool) -> f64 {
+    if has_semantic_signal {
+        (quality_score * (1.0 - WEIGHT_AI_SEMANTIC) + semantic_score * WEIGHT_AI_SEMANTIC)
+            .clamp(0.0, 1.0)
+    } else {
+        quality_score.clamp(0.0, 1.0)
+    }
+}
 
 fn calculate_laplacian_variance(image: &GrayImage) -> f64 {
     let (width, height) = image.dimensions();
@@ -163,6 +245,22 @@ fn analyze_image(
         + (normalized_center_focus * WEIGHT_CENTER_FOCUS)
         + (exposure_metric * WEIGHT_EXPOSURE);
 
+    // Semantic layer: reuse the CLIP tags that the background indexer already
+    // wrote into the `.rrdata` sidecar. No extra model inference happens during
+    // culling, so this stays as fast as the classical pass.
+    let (_, sidecar_path) = parse_virtual_path(path);
+    let tags = load_sidecar(&sidecar_path).tags.unwrap_or_default();
+    let (semantic_score, meaningful_tags) = calculate_semantic_score(&tags);
+    let has_semantic_signal = !meaningful_tags.is_empty();
+    let ai_score = combine_ai_score(quality_score, semantic_score, has_semantic_signal);
+
+    let source_tags = if has_semantic_signal {
+        &meaningful_tags
+    } else {
+        &tags
+    };
+    let reported_tags: Vec<String> = source_tags.iter().take(MAX_REPORTED_TAGS).cloned().collect();
+
     let hash = hasher.hash_image(&thumbnail);
 
     Ok(ImageAnalysisData {
@@ -170,6 +268,9 @@ fn analyze_image(
         result: ImageAnalysisResult {
             path: path.to_string(),
             quality_score,
+            ai_score,
+            semantic_score,
+            tags: reported_tags,
             sharpness_metric,
             center_focus_metric,
             exposure_metric,
@@ -275,11 +376,13 @@ pub async fn cull_images(
             }
 
             if current_group_indices.len() > 1 {
+                // Pick the keeper of a burst by the combined AI score (classical
+                // quality + semantic content), not sharpness alone.
                 current_group_indices.sort_by(|&a, &b| {
                     successful_analyses[b]
                         .result
-                        .quality_score
-                        .partial_cmp(&successful_analyses[a].result.quality_score)
+                        .ai_score
+                        .partial_cmp(&successful_analyses[a].result.ai_score)
                         .unwrap_or(std::cmp::Ordering::Equal)
                 });
 
@@ -296,6 +399,15 @@ pub async fn cull_images(
             }
         }
     }
+
+    // Surface the most promising bursts first (highest AI score on the keeper),
+    // so the user reviews the strongest candidates before the long tail.
+    suggestions.similar_groups.sort_by(|a, b| {
+        b.representative
+            .ai_score
+            .partial_cmp(&a.representative.ai_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     if settings.filter_blurry {
         for i in 0..successful_analyses.len() {

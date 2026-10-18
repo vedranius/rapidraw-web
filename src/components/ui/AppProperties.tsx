@@ -480,6 +480,9 @@ export interface CullingSettings {
 interface ImageAnalysisResult {
   path: string;
   qualityScore: number;
+  aiScore: number;
+  semanticScore: number;
+  tags: string[];
   sharpnessMetric: number;
   centerFocusMetric: number;
   exposureMetric: number;
