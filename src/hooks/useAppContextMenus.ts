@@ -642,6 +642,15 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
               disabled: selectionCount === 0 || selectionCount > 9,
             },
             {
+              label: t('contextMenus.thumbnail.aiStyle'),
+              icon: Palette,
+              onClick: () =>
+                setUI({
+                  aiStyleModalState: { isOpen: true, targetPaths: finalSelection },
+                }),
+              disabled: selectionCount === 0,
+            },
+            {
               label: cullLabel,
               icon: Users,
               onClick: () =>

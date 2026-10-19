@@ -51,6 +51,14 @@ export enum Invokes {
   CreateFolder = 'create_folder',
   CreateVirtualCopy = 'create_virtual_copy',
   CullImages = 'cull_images',
+  ListStyleProfiles = 'list_style_profiles',
+  SaveStyleProfile = 'save_style_profile',
+  DeleteStyleProfile = 'delete_style_profile',
+  DeriveStyleProfileFromPaths = 'derive_style_profile_from_paths',
+  MatchStyleProfilesForPaths = 'match_style_profiles_for_paths',
+  ApplyStyleProfileToPaths = 'apply_style_profile_to_paths',
+  AutoStylePathsWithAi = 'auto_style_paths_with_ai',
+  AssignArtistToPaths = 'assign_artist_to_paths',
   DeleteFolder = 'delete_folder',
   DuplicateFile = 'duplicate_file',
   EstimateExportSizes = 'estimate_export_sizes',
@@ -499,6 +507,45 @@ export interface CullingSuggestions {
   similarGroups: CullGroup[];
   blurryImages: ImageAnalysisResult[];
   failedPaths: string[];
+}
+
+export interface StyleProfileLut {
+  name: string;
+  path: string;
+  isBuiltIn: boolean;
+  intensity: number;
+}
+
+export interface StyleProfile {
+  id: string;
+  name: string;
+  detectTags: string[];
+  subject?: string | null;
+  adjustments: Record<string, unknown>;
+  lut?: StyleProfileLut | null;
+  intensity: number;
+  builtIn: boolean;
+  description?: string | null;
+}
+
+export interface StyleMatch {
+  path: string;
+  profileId: string;
+  profileName: string;
+  score: number;
+  matchedTags: string[];
+}
+
+export interface ProfileUsage {
+  profileId: string;
+  profileName: string;
+  count: number;
+}
+
+export interface AutoStyleSummary {
+  applied: number;
+  skipped: string[];
+  byProfile: ProfileUsage[];
 }
 
 interface KeybindHandler {

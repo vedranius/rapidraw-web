@@ -18,6 +18,7 @@ import RenameFileModal from './RenameFileModal';
 import ConfirmModal from './ConfirmModal';
 import ImportSettingsModal from './ImportSettingsModal';
 import CullingModal from './CullingModal';
+import AIStyleModal from './AIStyleModal';
 import CollageModal from './CollageModal';
 import { AppSettings, Invokes, ImageFlag, AlbumItem, Album, AlbumGroup } from '../ui/AppProperties';
 import { CopyPasteSettings } from '../../utils/adjustments';
@@ -75,6 +76,7 @@ export default function AppModals(props: AppModalsProps) {
     negativeModalState,
     denoiseModalState,
     cullingModalState,
+    aiStyleModalState,
     collageModalState,
     setUI,
   } = useUIStore(
@@ -98,6 +100,7 @@ export default function AppModals(props: AppModalsProps) {
       negativeModalState: state.negativeModalState,
       denoiseModalState: state.denoiseModalState,
       cullingModalState: state.cullingModalState,
+      aiStyleModalState: state.aiStyleModalState,
       collageModalState: state.collageModalState,
       setUI: state.setUI,
     })),
@@ -350,6 +353,13 @@ export default function AppModals(props: AppModalsProps) {
         onError={(err) => {
           setUI((state) => ({ cullingModalState: { ...state.cullingModalState, error: err, progress: null } }));
         }}
+      />
+      <AIStyleModal
+        isOpen={aiStyleModalState.isOpen}
+        onClose={() => setUI({ aiStyleModalState: { isOpen: false, targetPaths: [] } })}
+        targetPaths={aiStyleModalState.targetPaths}
+        thumbnails={thumbnails}
+        onApplied={() => props.refreshImageList()}
       />
       <CollageModal
         isOpen={collageModalState.isOpen}

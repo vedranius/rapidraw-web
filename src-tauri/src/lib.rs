@@ -59,6 +59,7 @@ mod panorama_utils;
 mod preset_converter;
 mod raw_processing;
 mod relight;
+mod style_profile;
 mod tagging;
 mod tagging_utils;
 mod white_balance;
@@ -2423,6 +2424,14 @@ pub fn run() {
             tagging::add_tag_for_paths,
             tagging::remove_tag_for_paths,
             culling::cull_images,
+            style_profile::list_style_profiles,
+            style_profile::save_style_profile,
+            style_profile::delete_style_profile,
+            style_profile::derive_style_profile_from_paths,
+            style_profile::assign_artist_to_paths,
+            style_profile::match_style_profiles_for_paths,
+            style_profile::apply_style_profile_to_paths,
+            style_profile::auto_style_paths_with_ai,
             lens_correction::get_lensfun_makers,
             lens_correction::get_lensfun_lenses_for_maker,
             lens_correction::autodetect_lens,
