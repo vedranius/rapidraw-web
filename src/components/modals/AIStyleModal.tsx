@@ -71,15 +71,6 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     return () => clearTimeout(timer);
   }, [isOpen]);
 
-  const loadProfiles = useCallback(async () => {
-    const list = await invoke<StyleProfile[]>(Invokes.ListStyleProfiles);
-    setProfiles(list);
-    setSelectedId((current) => {
-      if (current && list.some((p) => p.id === current)) return current;
-      return list[0]?.id ?? null;
-    });
-  }, []);
-
   const loadMatches = useCallback(async () => {
     if (!pathCount) {
       setMatches([]);
@@ -92,23 +83,39 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     setMatches(result);
   }, [pathCount, targetPaths, minScore]);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      await loadProfiles();
-      await loadMatches();
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [loadProfiles, loadMatches]);
-
+  // Full reload: only when the modal opens or the selection changes. Deliberately
+  // not tied to minScore/loadMatches so dragging the threshold slider does not
+  // re-scan thousands of sidecars on every tick.
   useEffect(() => {
     if (!isOpen) return;
-    void reload();
-  }, [isOpen, targetKey, reload]);
+    let cancelled = false;
+    void (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const list = await invoke<StyleProfile[]>(Invokes.ListStyleProfiles);
+        if (cancelled) return;
+        setProfiles(list);
+        setSelectedId((current) => (current && list.some((p) => p.id === current) ? current : (list[0]?.id ?? null)));
+        if (targetPaths.length) {
+          const result = await invoke<StyleMatch[]>(Invokes.MatchStyleProfilesForPaths, {
+            paths: targetPaths,
+            minScore,
+          });
+          if (!cancelled) setMatches(result);
+        } else {
+          setMatches([]);
+        }
+      } catch (err) {
+        if (!cancelled) setError(String(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, targetKey]);
 
   const selectedProfile = profiles.find((p) => p.id === selectedId) ?? null;
 
@@ -238,11 +245,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
         <Text variant={TextVariants.small} className="text-text-secondary">
           {t('modals.aiStyle.profilesHint')}
         </Text>
-        <Button
-          variant="secondary"
-          onClick={() => setTab('learn')}
-          className="shrink-0 flex items-center gap-2"
-        >
+        <Button variant="secondary" onClick={() => setTab('learn')} className="shrink-0 flex items-center gap-2">
           <GraduationCap size={16} />
           {t('modals.aiStyle.tabLearn')}
         </Button>
@@ -335,7 +338,10 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       </div>
 
       <div className="flex justify-end gap-3">
-        <button className="px-4 py-2 rounded-md text-text-secondary hover:bg-surface transition-colors" onClick={onClose}>
+        <button
+          className="px-4 py-2 rounded-md text-text-secondary hover:bg-surface transition-colors"
+          onClick={onClose}
+        >
           {t('modals.aiStyle.close')}
         </button>
         <Button
@@ -424,14 +430,13 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       </label>
 
       <div className="flex justify-end gap-3">
-        <button className="px-4 py-2 rounded-md text-text-secondary hover:bg-surface transition-colors" onClick={onClose}>
+        <button
+          className="px-4 py-2 rounded-md text-text-secondary hover:bg-surface transition-colors"
+          onClick={onClose}
+        >
           {t('modals.aiStyle.close')}
         </button>
-        <Button
-          onClick={handleAutoApply}
-          disabled={!pathCount || busy === 'auto'}
-          className="flex items-center gap-2"
-        >
+        <Button onClick={handleAutoApply} disabled={!pathCount || busy === 'auto'} className="flex items-center gap-2">
           {busy === 'auto' ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
           {t('modals.aiStyle.autoApply')}
         </Button>
@@ -509,7 +514,10 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       )}
 
       <div className="flex justify-end gap-3">
-        <button className="px-4 py-2 rounded-md text-text-secondary hover:bg-surface transition-colors" onClick={onClose}>
+        <button
+          className="px-4 py-2 rounded-md text-text-secondary hover:bg-surface transition-colors"
+          onClick={onClose}
+        >
           {t('modals.aiStyle.close')}
         </button>
         <Button

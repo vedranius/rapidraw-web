@@ -296,6 +296,387 @@ pub fn builtin_style_profiles() -> Vec<StyleProfile> {
                 "Bright, vivid festival look with lifted shadows and strong vibrance.".to_string(),
             ),
         },
+        StyleProfile {
+            id: "builtin-portrait-natural".to_string(),
+            name: "Portrait — Natural & Soft".to_string(),
+            detect_tags: [
+                "portrait",
+                "candid",
+                "face",
+                "smile",
+                "person",
+                "woman",
+                "man",
+                "child",
+                "couple",
+                "family",
+                "group",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            subject: None,
+            adjustments: json!({
+                "contrast": 4.0,
+                "highlights": -10.0,
+                "shadows": 10.0,
+                "blacks": 2.0,
+                "clarity": -4.0,
+                "vibrance": 6.0,
+                "saturation": -2.0,
+                "temperature": 5.0,
+                "hsl": full_hsl([2.0, 6.0, 2.0, -2.0, -2.0, -2.0, 0.0, 0.0]),
+                "colorGrading": color_grading(25.0, 8.0, 45.0, 6.0),
+                "vignetteAmount": -8.0,
+                "grainAmount": 2.0
+            }),
+            lut: None,
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "Gentle contrast and lifted shadows that keep skin tones soft and natural."
+                    .to_string(),
+            ),
+        },
+        StyleProfile {
+            id: "builtin-wedding-airy".to_string(),
+            name: "Wedding — Airy & Bright".to_string(),
+            detect_tags: [
+                "wedding",
+                "couple",
+                "celebration",
+                "flowers",
+                "rose",
+                "cake",
+                "dancing",
+                "portrait",
+                "group",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            subject: None,
+            adjustments: json!({
+                "exposure": 6.0,
+                "contrast": -4.0,
+                "highlights": -6.0,
+                "shadows": 18.0,
+                "whites": 8.0,
+                "blacks": -4.0,
+                "clarity": -2.0,
+                "vibrance": 8.0,
+                "saturation": -2.0,
+                "temperature": 4.0,
+                "vignetteAmount": -6.0
+            }),
+            lut: None,
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "Bright, airy look with lifted shadows and warm, creamy skin tones.".to_string(),
+            ),
+        },
+        StyleProfile {
+            id: "builtin-golden-hour".to_string(),
+            name: "Golden Hour — Warm Glow".to_string(),
+            detect_tags: [
+                "golden hour",
+                "sunset",
+                "sunrise",
+                "dusk",
+                "dawn",
+                "sun",
+                "warm colors",
+                "backlighting",
+                "beach",
+                "field",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            subject: None,
+            adjustments: json!({
+                "exposure": 2.0,
+                "contrast": 6.0,
+                "highlights": -8.0,
+                "shadows": 14.0,
+                "blacks": -2.0,
+                "vibrance": 12.0,
+                "saturation": 4.0,
+                "temperature": 14.0,
+                "tint": 3.0,
+                "hsl": full_hsl([4.0, 8.0, 8.0, -4.0, -6.0, -8.0, 0.0, 2.0]),
+                "colorGrading": color_grading(30.0, 10.0, 50.0, 14.0),
+                "glowAmount": 10.0,
+                "vignetteAmount": -10.0,
+                "grainAmount": 2.0
+            }),
+            lut: None,
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "Warm, glowing sunset look with rich golds and soft highlight roll-off.".to_string(),
+            ),
+        },
+        StyleProfile {
+            id: "builtin-landscape-vivid".to_string(),
+            name: "Landscape — Vivid Nature".to_string(),
+            detect_tags: [
+                "landscape",
+                "mountains",
+                "mountain",
+                "valley",
+                "forest",
+                "lake",
+                "river",
+                "waterfall",
+                "sky",
+                "clouds",
+                "field",
+                "meadow",
+                "coast",
+                "beach",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            subject: None,
+            adjustments: json!({
+                "contrast": 10.0,
+                "highlights": -10.0,
+                "shadows": 16.0,
+                "whites": 6.0,
+                "blacks": -6.0,
+                "clarity": 10.0,
+                "dehaze": 10.0,
+                "vibrance": 18.0,
+                "saturation": 6.0,
+                "sharpness": 8.0,
+                "hsl": full_hsl([0.0, 4.0, 6.0, 10.0, -2.0, 4.0, 0.0, 0.0]),
+                "vignetteAmount": -10.0
+            }),
+            lut: None,
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "Punchy nature look: recovered highlights, deep greens and crisp detail."
+                    .to_string(),
+            ),
+        },
+        StyleProfile {
+            id: "builtin-night-neon".to_string(),
+            name: "Night — Neon & Moody".to_string(),
+            detect_tags: [
+                "night",
+                "neon",
+                "night sky",
+                "stars",
+                "city",
+                "cityscape",
+                "skyline",
+                "long exposure",
+                "light painting",
+                "moon",
+                "urban",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            subject: None,
+            adjustments: json!({
+                "exposure": -2.0,
+                "contrast": 12.0,
+                "highlights": -14.0,
+                "shadows": 6.0,
+                "blacks": -14.0,
+                "clarity": 8.0,
+                "dehaze": 6.0,
+                "vibrance": 12.0,
+                "saturation": -2.0,
+                "temperature": -6.0,
+                "tint": 4.0,
+                "hsl": full_hsl([8.0, 4.0, -4.0, -6.0, 4.0, 14.0, 10.0, 14.0]),
+                "colorGrading": color_grading(215.0, 20.0, 300.0, 12.0),
+                "vignetteAmount": -16.0,
+                "grainAmount": 8.0
+            }),
+            lut: None,
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "Moody night look with cool shadows, magenta highlights and neon pop.".to_string(),
+            ),
+        },
+        StyleProfile {
+            id: "builtin-sports-crisp".to_string(),
+            name: "Sports — Crisp Action".to_string(),
+            detect_tags: [
+                "sports",
+                "running",
+                "cycling",
+                "swimming",
+                "surfing",
+                "skiing",
+                "snowboarding",
+                "climbing",
+                "hiking",
+                "skating",
+                "stadium",
+                "arena",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            subject: None,
+            adjustments: json!({
+                "exposure": 2.0,
+                "contrast": 12.0,
+                "highlights": -10.0,
+                "shadows": 12.0,
+                "whites": 4.0,
+                "blacks": -8.0,
+                "clarity": 14.0,
+                "dehaze": 6.0,
+                "vibrance": 6.0,
+                "sharpness": 12.0,
+                "vignetteAmount": -6.0,
+                "grainAmount": 4.0
+            }),
+            lut: None,
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "High-clarity, sharp look that separates athletes from the background."
+                    .to_string(),
+            ),
+        },
+        StyleProfile {
+            id: "builtin-wildlife-detail".to_string(),
+            name: "Wildlife — Detail & Color".to_string(),
+            detect_tags: [
+                "wildlife",
+                "animal",
+                "bird",
+                "eagle",
+                "owl",
+                "lion",
+                "tiger",
+                "bear",
+                "deer",
+                "fox",
+                "squirrel",
+                "rabbit",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            subject: None,
+            adjustments: json!({
+                "contrast": 8.0,
+                "highlights": -8.0,
+                "shadows": 12.0,
+                "blacks": -6.0,
+                "clarity": 14.0,
+                "dehaze": 6.0,
+                "vibrance": 10.0,
+                "saturation": 4.0,
+                "sharpness": 14.0,
+                "vignetteAmount": -8.0
+            }),
+            lut: None,
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "Rich fur and feather detail with saturated, natural colours.".to_string(),
+            ),
+        },
+        StyleProfile {
+            id: "builtin-street-mono".to_string(),
+            name: "Street — High-Contrast B&W".to_string(),
+            detect_tags: [
+                "street",
+                "urban",
+                "city",
+                "black and white",
+                "monochrome",
+                "architecture",
+                "alley",
+                "sidewalk",
+                "minimalist",
+                "pattern",
+                "lines",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            subject: None,
+            adjustments: json!({
+                "contrast": 18.0,
+                "highlights": -6.0,
+                "shadows": 14.0,
+                "whites": 8.0,
+                "blacks": -16.0,
+                "clarity": 16.0,
+                "structure": 10.0,
+                "saturation": -100.0,
+                "vignetteAmount": -14.0,
+                "grainAmount": 12.0
+            }),
+            lut: None,
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "Gritty black-and-white street look with deep blacks and visible grain."
+                    .to_string(),
+            ),
+        },
+        StyleProfile {
+            id: "builtin-food-warm".to_string(),
+            name: "Food — Warm & Appetizing".to_string(),
+            detect_tags: [
+                "food",
+                "meal",
+                "dish",
+                "pizza",
+                "pasta",
+                "sushi",
+                "burger",
+                "cake",
+                "coffee",
+                "tea",
+                "wine",
+                "beer",
+                "cocktail",
+                "bread",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            subject: None,
+            adjustments: json!({
+                "exposure": 2.0,
+                "contrast": 6.0,
+                "highlights": -8.0,
+                "shadows": 10.0,
+                "whites": 4.0,
+                "clarity": 6.0,
+                "vibrance": 10.0,
+                "saturation": 4.0,
+                "temperature": 8.0,
+                "tint": 2.0,
+                "hsl": full_hsl([4.0, 8.0, 6.0, -4.0, -4.0, -6.0, 0.0, 0.0]),
+                "colorGrading": color_grading(30.0, 8.0, 45.0, 10.0),
+                "sharpness": 6.0,
+                "vignetteAmount": -6.0
+            }),
+            lut: None,
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "Warm, appetising look that makes food and drinks look freshly served."
+                    .to_string(),
+            ),
+        },
     ]
 }
 
