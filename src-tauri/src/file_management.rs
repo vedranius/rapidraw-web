@@ -1,7 +1,7 @@
 use memmap2::{Mmap, MmapOptions};
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -1947,6 +1947,31 @@ pub fn start_thumbnail_workers(app_handle: tauri::AppHandle) {
     }
 }
 
+/// Upper bound on the pending thumbnail queue.
+///
+/// Note: this command runs synchronously on the main (GTK) thread, so any work it
+/// does must be bounded. The previous eviction loop
+/// (`while queue.len() + unique_paths.len() > 500 { queue.pop_front() }`) could only
+/// shrink the *existing* queue; when a caller sent more than 500 unique paths the
+/// condition stayed true on an empty queue and the loop spun forever, freezing the
+/// whole app (reproduced from a core dump: main thread stuck in
+/// `update_thumbnail_queue`).
+const MAX_THUMBNAIL_QUEUE: usize = 500;
+
+fn cap_thumbnail_queue(queue: &mut VecDeque<String>, unique_paths: &mut Vec<String>) {
+    if unique_paths.len() >= MAX_THUMBNAIL_QUEUE {
+        // The new batch alone fills the queue: keep its newest entries and drop
+        // whatever was pending before.
+        unique_paths.drain(0..unique_paths.len() - MAX_THUMBNAIL_QUEUE);
+        queue.clear();
+        return;
+    }
+
+    while queue.len() + unique_paths.len() > MAX_THUMBNAIL_QUEUE {
+        queue.pop_front();
+    }
+}
+
 #[tauri::command]
 pub fn update_thumbnail_queue(
     paths: Vec<String>,
@@ -1981,9 +2006,7 @@ pub fn update_thumbnail_queue(
 
     queue.retain(|p| !seen.contains(p));
 
-    while queue.len() + unique_paths.len() > 500 {
-        queue.pop_front();
-    }
+    cap_thumbnail_queue(&mut queue, &mut unique_paths);
 
     if state
         .thumbnail_manager
@@ -4384,5 +4407,60 @@ pub fn sync_metadata_to_xmp(source_path: &Path, metadata: &ImageMetadata, create
         }
 
         let _ = fs::write(&xmp_file, content);
+    }
+}
+
+#[cfg(test)]
+mod thumbnail_queue_tests {
+    use super::*;
+
+    fn deque(items: &[&str]) -> VecDeque<String> {
+        items.iter().map(|item| item.to_string()).collect()
+    }
+
+    #[test]
+    fn oversized_batch_is_trimmed_and_never_hangs() {
+        let mut queue = deque(&["old-1", "old-2", "old-3"]);
+        let mut incoming: Vec<String> = (0..1708).map(|i| format!("new-{i}")).collect();
+
+        cap_thumbnail_queue(&mut queue, &mut incoming);
+
+        assert!(queue.is_empty());
+        assert_eq!(incoming.len(), MAX_THUMBNAIL_QUEUE);
+        assert_eq!(incoming[0], format!("new-{}", 1708 - MAX_THUMBNAIL_QUEUE));
+    }
+
+    #[test]
+    fn small_batch_evicts_only_the_oldest_entries() {
+        let mut queue: VecDeque<String> = (1..=300).map(|i| format!("old-{i}")).collect();
+        let mut incoming: Vec<String> = (1..=400).map(|i| format!("new-{i}")).collect();
+
+        cap_thumbnail_queue(&mut queue, &mut incoming);
+
+        assert_eq!(queue.len(), 100);
+        assert_eq!(queue.front().unwrap(), "old-201");
+        assert_eq!(incoming.len(), 400);
+    }
+
+    #[test]
+    fn batch_that_exactly_fills_the_queue_replaces_it() {
+        let mut queue = deque(&["old-1"]);
+        let mut incoming: Vec<String> = (0..MAX_THUMBNAIL_QUEUE).map(|i| format!("new-{i}")).collect();
+
+        cap_thumbnail_queue(&mut queue, &mut incoming);
+
+        assert!(queue.is_empty());
+        assert_eq!(incoming.len(), MAX_THUMBNAIL_QUEUE);
+    }
+
+    #[test]
+    fn small_queue_and_small_batch_are_untouched() {
+        let mut queue = deque(&["old-1", "old-2"]);
+        let mut incoming = vec!["new-1".to_string()];
+
+        cap_thumbnail_queue(&mut queue, &mut incoming);
+
+        assert_eq!(queue.len(), 2);
+        assert_eq!(incoming, vec!["new-1".to_string()]);
     }
 }

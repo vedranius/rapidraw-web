@@ -309,6 +309,7 @@ pub async fn cull_images(
 
     let total_count = paths.len();
     let completed_count = Arc::new(AtomicUsize::new(0));
+    log::info!("Culling: analyzing {} images", total_count);
     let _ = app_handle.emit("culling-start", total_count);
 
     let hasher = HasherConfig::new()
@@ -352,6 +353,12 @@ pub async fn cull_images(
             total: total_count,
             stage: "Grouping similar images...".to_string(),
         },
+    );
+    log::info!(
+        "Culling: analyzed {} images ({} ok, {} failed), grouping",
+        total_count,
+        successful_analyses.len(),
+        failed_paths.len()
     );
 
     let mut suggestions = CullingSuggestions {
@@ -448,6 +455,17 @@ pub async fn cull_images(
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
     }
+
+    log::info!(
+        "Culling: done, {} similar groups ({} duplicates) and {} blurry images",
+        suggestions.similar_groups.len(),
+        suggestions
+            .similar_groups
+            .iter()
+            .map(|group| group.duplicates.len())
+            .sum::<usize>(),
+        suggestions.blurry_images.len()
+    );
 
     let _ = app_handle.emit("culling-complete", &suggestions);
     Ok(suggestions)

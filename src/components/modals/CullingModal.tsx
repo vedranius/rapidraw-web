@@ -25,6 +25,10 @@ interface CullingModalProps {
 
 type CullAction = 'reject' | 'rate_zero' | 'delete';
 
+// The backend keeps at most ~500 pending thumbnail jobs and this dialog can list
+// thousands of frames, so only ask for the ones the active tab shows first.
+const THUMBNAIL_REQUEST_LIMIT = 500;
+
 interface ImageThumbnailProps {
   path: string;
   thumbnails: Record<string, string>;
@@ -153,20 +157,30 @@ export default function CullingModal({
 
   // The dialog can list hundreds of frames that were never rendered in the library
   // grid, so their thumbnails are not in the in-memory cache yet (which showed up as
-  // empty boxes). Ask the backend to generate the ones the dialog actually displays.
+  // empty boxes). Ask the backend to generate the ones the active tab displays,
+  // capped to what its queue accepts. Groups are sorted best-first, so the frames the
+  // user sees at the top of the dialog are the ones that get requested.
   useEffect(() => {
     if (stage !== 'results' || !suggestions) return;
     const paths = new Set<string>();
-    suggestions.similarGroups.forEach((group) => {
-      paths.add(group.representative.path);
-      group.duplicates.forEach((dup) => paths.add(dup.path));
-    });
-    suggestions.blurryImages.forEach((img) => paths.add(img.path));
+    const add = (path: string) => {
+      if (paths.size < THUMBNAIL_REQUEST_LIMIT) paths.add(path);
+    };
+
+    if (activeTab === 'similar') {
+      suggestions.similarGroups.forEach((group) => {
+        add(group.representative.path);
+        group.duplicates.forEach((dup) => add(dup.path));
+      });
+    } else {
+      suggestions.blurryImages.forEach((img) => add(img.path));
+    }
+
     if (paths.size === 0) return;
     invoke('update_thumbnail_queue', { paths: Array.from(paths) }).catch((err) =>
       console.error('Failed to request culling thumbnails:', err),
     );
-  }, [stage, suggestions]);
+  }, [stage, suggestions, activeTab]);
 
   const handleStartCulling = useCallback(async () => {
     try {
