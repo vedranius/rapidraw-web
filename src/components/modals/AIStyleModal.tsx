@@ -122,7 +122,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
         profileId: selectedId,
         intensity,
       });
-      toast.success(t('modals.aiStyle.applied', { count: pathCount }));
+      toast.success(t('modals.aiStyle.applied', { n: pathCount }));
       await onApplied();
       onClose();
     } catch (err) {
@@ -142,7 +142,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
         fallbackProfileId: useFallback ? selectedId : null,
         intensity,
       });
-      toast.success(t('modals.aiStyle.autoApplied', { count: summary.applied }));
+      toast.success(t('modals.aiStyle.autoApplied', { n: summary.applied }));
       await onApplied();
       onClose();
     } catch (err) {
@@ -192,7 +192,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     setBusy('assign');
     try {
       await invoke(Invokes.AssignArtistToPaths, { paths: targetPaths, artist });
-      toast.success(t('modals.aiStyle.artistAssigned', { artist, count: pathCount }));
+      toast.success(t('modals.aiStyle.artistAssigned', { artist, n: pathCount }));
     } catch (err) {
       toast.error(t('modals.aiStyle.assignFailed', { err: String(err) }));
     } finally {
@@ -345,7 +345,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
           className="flex items-center gap-2"
         >
           {busy === 'apply' ? <Loader2 size={16} className="animate-spin" /> : <Palette size={16} />}
-          {t('modals.aiStyle.applyTo', { count: pathCount })}
+          {t('modals.aiStyle.applyTo', { n: pathCount })}
         </Button>
       </div>
     </div>
@@ -487,7 +487,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
           )}
           <Text variant={TextVariants.small} className="text-text-secondary">
             {t('modals.aiStyle.derivedValues', {
-              count: Object.keys(derived.adjustments ?? {}).length,
+              n: Object.keys(derived.adjustments ?? {}).length,
             })}
           </Text>
           <div className="flex justify-end gap-3 pt-1">
@@ -515,7 +515,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
           className="flex items-center gap-2"
         >
           {busy === 'learn' ? <Loader2 size={16} className="animate-spin" /> : <GraduationCap size={16} />}
-          {t('modals.aiStyle.learnButton', { count: pathCount })}
+          {t('modals.aiStyle.learnButton', { n: pathCount })}
         </Button>
       </div>
     </div>

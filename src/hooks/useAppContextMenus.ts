@@ -257,6 +257,16 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
               disabled: !selectedImage?.isReady,
             },
             {
+              label: t('contextMenus.editor.aiStyle'),
+              icon: Palette,
+              onClick: () => {
+                if (selectedImage) {
+                  setUI({ aiStyleModalState: { isOpen: true, targetPaths: [selectedImage.path] } });
+                }
+              },
+              disabled: !selectedImage?.isReady,
+            },
+            {
               label: t('contextMenus.editor.denoise'),
               icon: Grip,
               onClick: () => {

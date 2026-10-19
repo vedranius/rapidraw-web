@@ -501,7 +501,10 @@ fn match_score(image_tags: &[String], profile: &StyleProfile) -> (f64, Vec<Strin
     if matched.is_empty() {
         (0.0, Vec::new())
     } else {
-        let score = matched.len() as f64 / profile.detect_tags.len() as f64;
+        // Bounded denominator: a broad, many-tag profile should not be punished
+        // for not matching every tag. One match on a large profile still counts.
+        let denom = profile.detect_tags.len().clamp(1, 6) as f64;
+        let score = (matched.len() as f64 / denom).min(1.0);
         (score, matched)
     }
 }
@@ -526,7 +529,17 @@ fn best_profile_for_tags<'a>(
         }
         let better = match &best {
             None => true,
-            Some((best_score, _, _)) => score > *best_score,
+            Some((best_score, best_matched, best_profile)) => {
+                if (score - *best_score).abs() < 1e-9 {
+                    // On a tie, prefer user profiles over built-ins and, within
+                    // the same kind, the profile with more matched tags.
+                    (!profile.built_in && best_profile.built_in)
+                        || (profile.built_in == best_profile.built_in
+                            && matched.len() > best_matched.len())
+                } else {
+                    score > *best_score
+                }
+            }
         };
         if better {
             best = Some((score, matched, profile));
@@ -732,6 +745,62 @@ fn collect_detect_tags(paths: &[String], max_tags: usize) -> Vec<String> {
     ranked.into_iter().take(max_tags).map(|(t, _)| t).collect()
 }
 
+/// Captures the LUT that most of the source edits used, so a learned profile can
+/// reproduce a LUT-based look too. Returns `None` unless a LUT was used by at
+/// least half of the images.
+fn collect_lut(paths: &[String]) -> Option<StyleProfileLut> {
+    let mut counts: HashMap<(String, String, bool), usize> = HashMap::new();
+    let mut intensities: HashMap<String, (f64, usize)> = HashMap::new();
+
+    for path in paths {
+        let (_, sidecar_path) = parse_virtual_path(path);
+        let adjustments = crate::exif_processing::load_sidecar(&sidecar_path).adjustments;
+        let Some(lut_path) = adjustments.get("lutPath").and_then(Value::as_str) else {
+            continue;
+        };
+        if lut_path.trim().is_empty() {
+            continue;
+        }
+
+        let name = adjustments
+            .get("lutName")
+            .and_then(Value::as_str)
+            .unwrap_or(lut_path)
+            .to_string();
+        let is_built_in = adjustments
+            .get("lutIsSceneReferred")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+
+        *counts
+            .entry((lut_path.to_string(), name, is_built_in))
+            .or_insert(0) += 1;
+
+        let intensity = adjustments
+            .get("lutIntensity")
+            .and_then(Value::as_f64)
+            .unwrap_or(100.0);
+        let entry = intensities.entry(lut_path.to_string()).or_insert((0.0, 0));
+        entry.0 += intensity;
+        entry.1 += 1;
+    }
+
+    let ((path, name, is_built_in), count) =
+        counts.into_iter().max_by_key(|(_, count)| *count)?;
+
+    if count * 2 < paths.len() {
+        return None;
+    }
+
+    let (sum, n) = intensities.get(&path).copied().unwrap_or((100.0, 1));
+    Some(StyleProfileLut {
+        name,
+        path,
+        is_built_in,
+        intensity: if n > 0 { sum / n as f64 } else { 100.0 },
+    })
+}
+
 /// Derives a profile from a set of already-edited images by averaging the
 /// "look" values found in their `.rrdata` sidecars. This is how a personal or
 /// band-specific look is captured without any model training.
@@ -763,7 +832,7 @@ pub fn derive_profile_from_paths(
         detect_tags,
         subject,
         adjustments: build_adjustments_from_stats(&stats),
-        lut: None,
+        lut: collect_lut(paths),
         intensity: 100.0,
         built_in: false,
         description: Some(format!("Learned from {} edited image(s).", paths.len())),
@@ -820,7 +889,19 @@ pub fn derive_style_profile_from_paths(
     if paths.is_empty() {
         return Err("Select at least one edited image to learn from".to_string());
     }
-    Ok(derive_profile_from_paths(&paths, &name, subject))
+    let profile = derive_profile_from_paths(&paths, &name, subject);
+    let has_look = profile
+        .adjustments
+        .as_object()
+        .map(|obj| !obj.is_empty())
+        .unwrap_or(false);
+    if !has_look && profile.lut.is_none() {
+        return Err(
+            "None of the selected images has saved edits to learn from. Edit a few photos first."
+                .to_string(),
+        );
+    }
+    Ok(profile)
 }
 
 /// Marks images as belonging to an artist/subject (e.g. "Iron Maiden"). The tag
