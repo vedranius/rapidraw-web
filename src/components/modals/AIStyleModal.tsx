@@ -108,8 +108,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   useEffect(() => {
     if (!isOpen) return;
     void reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, targetKey]);
+  }, [isOpen, targetKey, reload]);
 
   const selectedProfile = profiles.find((p) => p.id === selectedId) ?? null;
 
@@ -391,23 +390,27 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[38vh] overflow-y-auto pr-1">
-        {matches.map((match) => (
-          <div key={match.path} className="relative rounded-md overflow-hidden border border-border-color bg-bg-primary">
-            {thumbnails[match.path] ? (
-              <img src={thumbnails[match.path]} alt="" className="w-full h-24 object-cover" />
-            ) : (
-              <div className="w-full h-24 flex items-center justify-center text-text-secondary text-xs">
-                {t('modals.aiStyle.noPreview')}
-              </div>
-            )}
-            <div className="absolute bottom-0 left-0 right-0 bg-black/70 p-1">
-              <div className="truncate text-[10px] text-white">{match.profileName}</div>
-              <div className="truncate text-[10px] text-white/70">
-                {Math.round(match.score * 100)}% · {match.matchedTags.slice(0, 2).join(', ')}
+        {matches.map((match) => {
+          const matchLabel = `${Math.round(match.score * 100)}% · ${match.matchedTags.slice(0, 2).join(', ')}`;
+          return (
+            <div
+              key={match.path}
+              className="relative rounded-md overflow-hidden border border-border-color bg-bg-primary"
+            >
+              {thumbnails[match.path] ? (
+                <img src={thumbnails[match.path]} alt="" className="w-full h-24 object-cover" />
+              ) : (
+                <div className="w-full h-24 flex items-center justify-center text-text-secondary text-xs">
+                  {t('modals.aiStyle.noPreview')}
+                </div>
+              )}
+              <div className="absolute bottom-0 left-0 right-0 bg-black/70 p-1">
+                <div className="truncate text-[10px] text-white">{match.profileName}</div>
+                <div className="truncate text-[10px] text-white/70">{matchLabel}</div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <label className="flex items-center gap-2 text-sm text-text-primary cursor-pointer">
