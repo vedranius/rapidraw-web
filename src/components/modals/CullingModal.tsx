@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle, XCircle, Loader2, Users, Trash2, Star, Tag } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, Users, Trash2, Star, Tag, Image as ImageIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CullingSettings, CullingSuggestions, Invokes, Progress } from '../ui/AppProperties';
 import Button from '../ui/Button';
@@ -14,7 +14,7 @@ import { TextColors, TextVariants } from '../../types/typography';
 interface CullingModalProps {
   isOpen: boolean;
   onClose(): void;
-  progress: Progress | null;
+  progress: (Progress & { stage?: string }) | null;
   suggestions: CullingSuggestions | null;
   error: string | null;
   imagePaths: string[];
@@ -25,20 +25,35 @@ interface CullingModalProps {
 
 type CullAction = 'reject' | 'rate_zero' | 'delete';
 
-function ImageThumbnail({ path, thumbnails, isSelected, onToggle, children }: any) {
+interface ImageThumbnailProps {
+  path: string;
+  thumbnails: Record<string, string>;
+  isSelected: boolean;
+  onToggle(): void;
+  children?: ReactNode;
+}
+
+function ImageThumbnail({ path, thumbnails, isSelected, onToggle, children }: ImageThumbnailProps) {
   const thumbnailUrl = thumbnails[path];
   return (
     <div
-      className={`relative group rounded-md overflow-hidden border-2 transition-colors cursor-pointer ${
+      className={`relative group aspect-square rounded-md overflow-hidden border-2 bg-bg-primary transition-colors cursor-pointer ${
         isSelected ? 'border-accent' : 'border-transparent hover:border-surface'
       }`}
       onClick={onToggle}
     >
-      <img
-        src={thumbnailUrl}
-        alt={path}
-        className={`w-full h-full object-cover transition-opacity ${isSelected ? 'opacity-100' : 'opacity-75 group-hover:opacity-100'}`}
-      />
+      {thumbnailUrl ? (
+        <img
+          src={thumbnailUrl}
+          alt=""
+          loading="lazy"
+          className={`w-full h-full object-cover transition-opacity ${isSelected ? 'opacity-100' : 'opacity-75 group-hover:opacity-100'}`}
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-text-secondary/30">
+          <ImageIcon size={20} />
+        </div>
+      )}
       <div
         className={`absolute inset-0 bg-black/50 transition-opacity ${
           isSelected ? 'opacity-0' : 'opacity-100 group-hover:opacity-0'
@@ -136,6 +151,23 @@ export default function CullingModal({
     }
   }, [stage, suggestions]);
 
+  // The dialog can list hundreds of frames that were never rendered in the library
+  // grid, so their thumbnails are not in the in-memory cache yet (which showed up as
+  // empty boxes). Ask the backend to generate the ones the dialog actually displays.
+  useEffect(() => {
+    if (stage !== 'results' || !suggestions) return;
+    const paths = new Set<string>();
+    suggestions.similarGroups.forEach((group) => {
+      paths.add(group.representative.path);
+      group.duplicates.forEach((dup) => paths.add(dup.path));
+    });
+    suggestions.blurryImages.forEach((img) => paths.add(img.path));
+    if (paths.size === 0) return;
+    invoke('update_thumbnail_queue', { paths: Array.from(paths) }).catch((err) =>
+      console.error('Failed to request culling thumbnails:', err),
+    );
+  }, [stage, suggestions]);
+
   const handleStartCulling = useCallback(async () => {
     try {
       await invoke(Invokes.CullImages, { paths: imagePaths, settings });
@@ -162,6 +194,7 @@ export default function CullingModal({
   };
 
   const numSimilar = suggestions?.similarGroups.reduce((acc, group) => acc + group.duplicates.length, 0) || 0;
+  const numGroups = suggestions?.similarGroups.length || 0;
   const numBlurry = suggestions?.blurryImages.length || 0;
 
   const renderSettings = () => (
@@ -241,7 +274,7 @@ export default function CullingModal({
     <div className="flex flex-col items-center justify-center h-48">
       <Loader2 className="w-16 h-16 text-accent animate-spin" />
       <p className="mt-4 text-text-primary">{progress?.stage || t('modals.culling.starting')}</p>
-      {progress && progress.total > 0 && (
+      {progress && progress.total > 0 && progress.current !== undefined && (
         <div className="w-full bg-surface rounded-full h-2.5 mt-2">
           <div
             className="bg-accent h-2.5 rounded-full"
@@ -303,7 +336,7 @@ export default function CullingModal({
                 } whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm`}
               >
                 {t('modals.culling.similarGroupsTab')}{' '}
-                <span className="bg-surface text-text-secondary rounded-full px-2 py-0.5 text-xs">{numSimilar}</span>
+                <span className="bg-surface text-text-secondary rounded-full px-2 py-0.5 text-xs">{numGroups}</span>
               </button>
             )}
             {numBlurry > 0 && (
@@ -343,12 +376,19 @@ export default function CullingModal({
                           <Text variant={TextVariants.label} className="mb-1">
                             {t('modals.culling.bestImage')}
                           </Text>
-                          <div className="relative rounded-md overflow-hidden border-2 border-green-500">
-                            <img
-                              src={thumbnails[group.representative.path]}
-                              alt="Representative"
-                              className="w-full h-full object-cover"
-                            />
+                          <div className="relative aspect-square rounded-md overflow-hidden border-2 border-green-500 bg-bg-primary">
+                            {thumbnails[group.representative.path] ? (
+                              <img
+                                src={thumbnails[group.representative.path]}
+                                alt=""
+                                loading="lazy"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-text-secondary/30">
+                                <ImageIcon size={24} />
+                              </div>
+                            )}
                             <div className="absolute bottom-0 left-0 right-0 p-1 bg-black/60">
                               <Text as="div" variant={TextVariants.small} color={TextColors.white}>
                                 {t('modals.culling.aiScore', {

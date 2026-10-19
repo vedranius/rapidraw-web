@@ -5,7 +5,6 @@ use image::{GenericImageView, GrayImage, imageops};
 use image_hasher::{HashAlg, HasherConfig};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -74,6 +73,11 @@ const WEIGHT_EXPOSURE: f64 = 0.25;
 // falls back to the pure quality score so nothing is distorted.
 const WEIGHT_AI_SEMANTIC: f64 = 0.40;
 const SEMANTIC_NEUTRAL: f64 = 0.5;
+// Summed tag signal is squashed with `tanh(sum / SEMANTIC_SQUASH_SCALE)`. A plain
+// clamped sum saturates at 1.0 as soon as a frame has a handful of strong concert
+// tags, which makes every good frame read `1.00` and destroys the ranking inside a
+// burst. `tanh` compresses the top end without ever quite reaching 1.0.
+const SEMANTIC_SQUASH_SCALE: f64 = 0.5;
 
 /// How many of the image's sidecar tags to surface to the UI per image.
 const MAX_REPORTED_TAGS: usize = 8;
@@ -127,18 +131,22 @@ fn tag_semantic_delta(tag: &str) -> f64 {
 /// it together with the subset of tags that actually carried signal (used for
 /// the UI and to pick the best frame inside a burst).
 fn calculate_semantic_score(tags: &[String]) -> (f64, Vec<String>) {
-    let mut score = SEMANTIC_NEUTRAL;
+    let mut raw = 0.0;
     let mut meaningful: Vec<String> = Vec::new();
 
     for tag in tags {
         let delta = tag_semantic_delta(tag);
         if delta != 0.0 {
-            score += delta;
+            raw += delta;
             meaningful.push(tag.clone());
         }
     }
 
-    (score.clamp(0.0, 1.0), meaningful)
+    let score = (SEMANTIC_NEUTRAL
+        + (1.0 - SEMANTIC_NEUTRAL) * (raw / SEMANTIC_SQUASH_SCALE).tanh())
+    .clamp(0.0, 1.0);
+
+    (score, meaningful)
 }
 
 /// Blends the classical quality score with the semantic score. When there are no
@@ -358,27 +366,25 @@ pub async fn cull_images(
                 continue;
             }
 
-            let mut current_group_indices = vec![];
-            let mut queue = VecDeque::new();
-
             processed_indices[i] = true;
-            current_group_indices.push(i);
-            queue.push_back(i);
+            let mut current_group_indices = vec![i];
 
-            while let Some(current_idx) = queue.pop_front() {
-                for j in (current_idx + 1)..successful_analyses.len() {
-                    if processed_indices[j] {
-                        continue;
-                    }
+            // Compare every candidate against the seed of this group only. The
+            // previous transitive walk (A~B and B~C => group A, B, C) drifts across
+            // a long event set and produced 90+ frame "duplicate" groups of frames
+            // that do not actually look alike. Seeds still cover the whole set
+            // because an ungrouped frame becomes a seed on a later iteration.
+            for j in (i + 1)..successful_analyses.len() {
+                if processed_indices[j] {
+                    continue;
+                }
 
-                    let dist = successful_analyses[current_idx]
-                        .hash
-                        .dist(&successful_analyses[j].hash);
-                    if dist <= settings.similarity_threshold {
-                        processed_indices[j] = true;
-                        current_group_indices.push(j);
-                        queue.push_back(j);
-                    }
+                let dist = successful_analyses[i]
+                    .hash
+                    .dist(&successful_analyses[j].hash);
+                if dist <= settings.similarity_threshold {
+                    processed_indices[j] = true;
+                    current_group_indices.push(j);
                 }
             }
 
@@ -394,15 +400,26 @@ pub async fn cull_images(
                 });
 
                 let representative_idx = current_group_indices[0];
-                let duplicate_indices = &current_group_indices[1..];
+                // The keeper is chosen by AI score, so it can differ from the seed.
+                // Keep only the frames that are also close to that keeper; the rest
+                // are not duplicates of what is being shown as the best image.
+                let duplicates: Vec<ImageAnalysisResult> = current_group_indices[1..]
+                    .iter()
+                    .filter(|&&idx| {
+                        successful_analyses[representative_idx]
+                            .hash
+                            .dist(&successful_analyses[idx].hash)
+                            <= settings.similarity_threshold
+                    })
+                    .map(|&idx| successful_analyses[idx].result.clone())
+                    .collect();
 
-                suggestions.similar_groups.push(CullGroup {
-                    representative: successful_analyses[representative_idx].result.clone(),
-                    duplicates: duplicate_indices
-                        .iter()
-                        .map(|&idx| successful_analyses[idx].result.clone())
-                        .collect(),
-                });
+                if !duplicates.is_empty() {
+                    suggestions.similar_groups.push(CullGroup {
+                        representative: successful_analyses[representative_idx].result.clone(),
+                        duplicates,
+                    });
+                }
             }
         }
     }
@@ -434,4 +451,46 @@ pub async fn cull_images(
 
     let _ = app_handle.emit("culling-complete", &suggestions);
     Ok(suggestions)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tags(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn semantic_score_does_not_saturate_on_tag_rich_frames() {
+        let (score, meaningful) = calculate_semantic_score(&tags(&[
+            "concert",
+            "musician",
+            "guitar",
+            "crowd",
+            "stage lighting",
+            "dramatic",
+        ]));
+
+        assert!(meaningful.len() >= 5);
+        assert!(score < 0.999, "semantic score saturated at {score}");
+        assert!(score > 0.7, "expected a strong score, got {score}");
+    }
+
+    #[test]
+    fn semantic_score_is_neutral_without_tags() {
+        let (score, meaningful) = calculate_semantic_score(&[]);
+        assert!(meaningful.is_empty());
+        assert!((score - SEMANTIC_NEUTRAL).abs() < 1e-9);
+    }
+
+    #[test]
+    fn semantic_score_orders_by_tag_strength() {
+        let weak = calculate_semantic_score(&tags(&["person"])).0;
+        let strong = calculate_semantic_score(&tags(&["concert", "musician"])).0;
+        let defective = calculate_semantic_score(&tags(&["blurry"])).0;
+
+        assert!(strong > weak, "{strong} should beat {weak}");
+        assert!(weak > defective, "{weak} should beat {defective}");
+    }
 }
