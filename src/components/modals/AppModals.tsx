@@ -22,6 +22,8 @@ import AIStyleModal from './AIStyleModal';
 import CollageModal from './CollageModal';
 import { AppSettings, Invokes, ImageFlag, AlbumItem, Album, AlbumGroup } from '../ui/AppProperties';
 import { CopyPasteSettings } from '../../utils/adjustments';
+import { reloadAdjustmentsForPaths } from '../../hooks/useEditorActions';
+import { globalImageCache } from '../../utils/ImageLRUCache';
 
 export interface AppModalsProps {
   handleImageSelect: (path: string) => void;
@@ -359,7 +361,12 @@ export default function AppModals(props: AppModalsProps) {
         onClose={() => setUI({ aiStyleModalState: { isOpen: false, targetPaths: [] } })}
         targetPaths={aiStyleModalState.targetPaths}
         thumbnails={thumbnails}
-        onApplied={() => props.refreshImageList()}
+        onApplied={async () => {
+          const paths = aiStyleModalState.targetPaths;
+          paths.forEach((path) => globalImageCache.delete(path));
+          await reloadAdjustmentsForPaths(paths);
+          await props.refreshImageList();
+        }}
       />
       <CollageModal
         isOpen={collageModalState.isOpen}

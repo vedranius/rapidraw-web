@@ -109,6 +109,13 @@ fn tag_semantic_delta(tag: &str) -> f64 {
         | "mysterious" => 0.06,
         "neon" | "vibrant" | "colorful" | "backlighting" | "low-key" | "silhouette"
         | "high-key" | "bokeh" => 0.04,
+        // Composition and craft signals. CLIP is softer on these abstractions,
+        // so they only nudge the score.
+        "rule of thirds" | "leading lines" | "framing" | "symmetry" | "composition"
+        | "reflection" | "depth of field" | "minimalist" | "wide angle" | "telephoto" => 0.05,
+        // Flattering light.
+        "golden hour" | "sunset" | "sunrise" | "soft light" | "natural light" | "blue hour"
+        | "dawn" | "dusk" => 0.04,
         // Visible defects.
         "motion blur" | "blurry" | "blur" | "out of focus" | "noise" | "underexposed"
         | "overexposed" | "empty" => -0.14,

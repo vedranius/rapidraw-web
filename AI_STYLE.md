@@ -31,6 +31,10 @@ Radi u postojećem **Cull** dijalogu (desni klik na selekciju → _Cull_).
 - Klasična kvaliteta (oštrina / centriranost / ekspozicija) spaja se sa
   **semantičkom ocjenom** iz CLIP tagova (npr. `portrait`/`face`/`musician` i
   `concert`/`stage` podižu ocjenu, `motion blur`/`noise` snižavaju).
+- Semantička ocjena vrednuje i **kompoziciju i svjetlo**: tagovi kao
+  `rule of thirds`, `leading lines`, `framing`, `symmetry`, `reflection`,
+  `depth of field`, `golden hour`, `soft light` daju mali pozitivan doprinos, pa
+  „dobar kadar" i lijepo svjetlo blago podižu `aiScore` (ne samo oštrina).
 - Rezultat je `aiScore`. **Najbolja fotka iz bursta bira se po `aiScore`**, ne
   samo po oštrini, a grupe su sortirane najbolje-prve.
 - Ako slika nema tagova, `aiScore` se svodi na klasičnu kvalitetu (bez izobličenja).
