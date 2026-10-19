@@ -98,9 +98,10 @@ fn tag_semantic_delta(tag: &str) -> f64 {
         | "bassist" | "performer" | "dj" => 0.12,
         // Instruments / gear: strong signal of the music subject.
         "guitar" | "electric guitar" | "bass guitar" | "acoustic guitar" | "drums" | "piano"
-        | "violin" | "saxophone" | "trumpet" | "keyboard" | "microphone"
-        | "microphone stand" | "in-ear monitor" | "monitor speaker" | "soundboard"
-        | "mixing console" | "turntable" => 0.09,
+        | "violin" | "saxophone" | "trumpet" | "keyboard" | "microphone" | "microphone stand"
+        | "in-ear monitor" | "monitor speaker" | "soundboard" | "mixing console" | "turntable" => {
+            0.09
+        }
         // Staging / crowd.
         "crowd" | "audience" | "festival crowd" | "stage lighting" | "stage lights"
         | "spotlight" | "laser lights" | "light show" | "smoke machine" | "haze"
@@ -109,8 +110,9 @@ fn tag_semantic_delta(tag: &str) -> f64 {
         "portrait" | "face" | "person" | "people" | "man" | "woman" | "smile" | "group"
         | "candid" | "headbanging" => 0.06,
         // Mood / energy that reads well.
-        "dramatic" | "intense" | "epic" | "powerful" | "energetic" | "majestic"
-        | "mysterious" => 0.06,
+        "dramatic" | "intense" | "epic" | "powerful" | "energetic" | "majestic" | "mysterious" => {
+            0.06
+        }
         "neon" | "vibrant" | "colorful" | "backlighting" | "low-key" | "silhouette"
         | "high-key" | "bokeh" => 0.04,
         // Composition and craft signals. CLIP is softer on these abstractions,
@@ -274,7 +276,11 @@ fn analyze_image(
     } else {
         &tags
     };
-    let reported_tags: Vec<String> = source_tags.iter().take(MAX_REPORTED_TAGS).cloned().collect();
+    let reported_tags: Vec<String> = source_tags
+        .iter()
+        .take(MAX_REPORTED_TAGS)
+        .cloned()
+        .collect();
 
     let hash = hasher.hash_image(&thumbnail);
 

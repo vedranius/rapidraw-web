@@ -2661,6 +2661,7 @@ pub async fn apply_adjustments_to_paths(
     add_to_thumbnail_queue(&state, paths.len(), &app_handle);
 
     tauri::async_runtime::spawn_blocking(move || {
+        log::info!("Applying adjustments to {} paths", paths.len());
         let settings = load_settings(app_handle.clone()).unwrap_or_default();
         let enable_xmp_sync = settings.enable_xmp_sync.unwrap_or(false);
         let create_xmp_if_missing = settings.create_xmp_if_missing.unwrap_or(false);
@@ -2710,7 +2711,7 @@ pub async fn apply_adjustments_to_paths(
             }
         });
 
-        regenerate_thumbnails(&paths, &app_handle, &settings);
+        enqueue_thumbnail_regeneration(&app_handle, &paths);
     });
 
     Ok(())
@@ -2747,54 +2748,41 @@ pub async fn reset_adjustments_for_paths(
             }
         });
 
-        regenerate_thumbnails(&paths, &app_handle, &settings);
+        enqueue_thumbnail_regeneration(&app_handle, &paths);
     });
 
     Ok(())
 }
 
-fn regenerate_thumbnails(paths: &[String], app_handle: &AppHandle, settings: &AppSettings) {
+/// Queue thumbnails for background (re)generation on the shared thumbnail
+/// worker pool instead of decoding a whole selection inline.
+///
+/// Thumbnail generation decodes the full RAW image and then takes the global
+/// GPU mutex. Doing that with a rayon `par_iter` over hundreds of paths is
+/// dangerous: every worker ends up inside `generate_thumbnail_data`, one holds
+/// the GPU mutex while running a nested parallel conversion, and the rest block
+/// on the same mutex, which wedged the whole app (reproduced from a core dump).
+/// It also means up to a dozen full-resolution RAW decodes at once. The bounded
+/// worker pool does the same work without starving the rest of the app, and
+/// reports progress through the existing `thumbnail-progress` events.
+fn enqueue_thumbnail_regeneration(app_handle: &AppHandle, paths: &[String]) {
+    if paths.is_empty() {
+        return;
+    }
+
     let state = app_handle.state::<AppState>();
-    let thumb_cache_dir = match resolve_thumbnail_cache_dir(app_handle) {
-        Ok(dir) => dir,
-        Err(e) => {
-            log::warn!("Unable to initialize thumbnail cache directory: {}", e);
-            for path in paths {
-                emit_thumbnail_cache_setup_error(app_handle, path, &e);
-            }
-            for _ in 0..paths.len() {
-                increment_thumbnail_progress(&state, app_handle);
-            }
-            return;
+    {
+        let mut queue = state.thumbnail_manager.queue.lock().unwrap();
+        for path in paths {
+            queue.push_back(path.clone());
         }
-    };
+    }
 
-    let gpu_context = gpu_processing::get_or_init_gpu_context(&state, app_handle).ok();
-
-    paths.par_iter().for_each(|path_str| {
-        let result = generate_single_thumbnail_and_cache(
-            path_str,
-            &thumb_cache_dir,
-            gpu_context.as_ref(),
-            None,
-            true,
-            app_handle,
-            settings,
-        );
-
-        if let Some((small_path, medium_path, rating, is_edited)) = result {
-            emit_thumbnail_generated(
-                app_handle,
-                path_str,
-                &small_path,
-                &medium_path,
-                rating,
-                is_edited,
-            );
-        }
-
-        increment_thumbnail_progress(&state, app_handle);
-    });
+    log::info!(
+        "Queued {} thumbnails for background regeneration",
+        paths.len()
+    );
+    state.thumbnail_manager.cvar.notify_all();
 }
 
 #[tauri::command]
@@ -2851,9 +2839,7 @@ pub async fn apply_auto_lens_correction_to_paths(
     .map_err(|e| e.to_string())?;
 
     add_to_thumbnail_queue(&app_handle.state::<AppState>(), paths.len(), &app_handle);
-    tauri::async_runtime::spawn_blocking(move || {
-        regenerate_thumbnails(&paths, &app_handle, &settings)
-    });
+    enqueue_thumbnail_regeneration(&app_handle, &paths);
 
     Ok(())
 }
@@ -4445,7 +4431,9 @@ mod thumbnail_queue_tests {
     #[test]
     fn batch_that_exactly_fills_the_queue_replaces_it() {
         let mut queue = deque(&["old-1"]);
-        let mut incoming: Vec<String> = (0..MAX_THUMBNAIL_QUEUE).map(|i| format!("new-{i}")).collect();
+        let mut incoming: Vec<String> = (0..MAX_THUMBNAIL_QUEUE)
+            .map(|i| format!("new-{i}"))
+            .collect();
 
         cap_thumbnail_queue(&mut queue, &mut incoming);
 

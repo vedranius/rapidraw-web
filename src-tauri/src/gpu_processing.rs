@@ -514,23 +514,50 @@ fn read_texture_data_roi(
     }
 }
 
+/// Dedicated pool for the f32 -> f16 conversion in `to_rgba_f16`.
+///
+/// That conversion runs *while the global GPU mutex is held* (`gpu_processor`
+/// and `gpu_image_cache`) and it is parallel. Running it on the global rayon
+/// pool can deadlock: any bulk `par_iter` that renders/regenerates images (for
+/// example regenerating thumbnails for a whole selection) puts every worker
+/// inside `process_and_get_dynamic_image_inner`; one of them acquires the GPU
+/// mutex and blocks waiting for the nested conversion, while all the other
+/// workers block on that same mutex and can never steal the nested job. That is
+/// exactly the freeze we reproduced from a core dump (12 rayon workers stuck on
+/// `gpu_processor`, the holder stuck in a nested `rayon::iter::zip`).
+///
+/// Keeping the conversion on its own small pool makes it independent of
+/// whatever the global pool is doing.
+fn rgba_f16_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .thread_name(|i| format!("rgba-f16-{}", i))
+            .build()
+            .expect("failed to build the rgba f16 conversion pool")
+    })
+}
+
 fn to_rgba_f16(img: &DynamicImage) -> Vec<f16> {
     use rayon::prelude::*;
     let convert = |src: &[f32], channels: usize| {
-        let mut out = vec![f16::ZERO; src.len() / channels * 4];
-        out.par_chunks_exact_mut(4)
-            .zip(src.par_chunks_exact(channels))
-            .for_each(|(dst, p)| {
-                dst[0] = f16::from_f32(p[0]);
-                dst[1] = f16::from_f32(p[1]);
-                dst[2] = f16::from_f32(p[2]);
-                dst[3] = if channels == 4 {
-                    f16::from_f32(p[3])
-                } else {
-                    f16::ONE
-                };
-            });
-        out
+        rgba_f16_pool().install(|| {
+            let mut out = vec![f16::ZERO; src.len() / channels * 4];
+            out.par_chunks_exact_mut(4)
+                .zip(src.par_chunks_exact(channels))
+                .for_each(|(dst, p)| {
+                    dst[0] = f16::from_f32(p[0]);
+                    dst[1] = f16::from_f32(p[1]);
+                    dst[2] = f16::from_f32(p[2]);
+                    dst[3] = if channels == 4 {
+                        f16::from_f32(p[3])
+                    } else {
+                        f16::ONE
+                    };
+                });
+            out
+        })
     };
     match img {
         DynamicImage::ImageRgba32F(buffer) => convert(buffer.as_raw(), 4),

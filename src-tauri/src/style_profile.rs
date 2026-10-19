@@ -19,7 +19,6 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use rayon::prelude::*;
 use tauri::{AppHandle, Manager};
 
 use crate::file_management::{apply_adjustments_to_paths, parse_virtual_path};
@@ -215,8 +214,7 @@ pub fn builtin_style_profiles() -> Vec<StyleProfile> {
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "Dark, high-contrast stage look with cool shadows and warm highlights."
-                    .to_string(),
+                "Dark, high-contrast stage look with cool shadows and warm highlights.".to_string(),
             ),
         },
         StyleProfile {
@@ -300,17 +298,8 @@ pub fn builtin_style_profiles() -> Vec<StyleProfile> {
             id: "builtin-portrait-natural".to_string(),
             name: "Portrait — Natural & Soft".to_string(),
             detect_tags: [
-                "portrait",
-                "candid",
-                "face",
-                "smile",
-                "person",
-                "woman",
-                "man",
-                "child",
-                "couple",
-                "family",
-                "group",
+                "portrait", "candid", "face", "smile", "person", "woman", "man", "child", "couple",
+                "family", "group",
             ]
             .iter()
             .map(|s| s.to_string())
@@ -415,7 +404,8 @@ pub fn builtin_style_profiles() -> Vec<StyleProfile> {
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "Warm, glowing sunset look with rich golds and soft highlight roll-off.".to_string(),
+                "Warm, glowing sunset look with rich golds and soft highlight roll-off."
+                    .to_string(),
             ),
         },
         StyleProfile {
@@ -546,26 +536,15 @@ pub fn builtin_style_profiles() -> Vec<StyleProfile> {
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "High-clarity, sharp look that separates athletes from the background."
-                    .to_string(),
+                "High-clarity, sharp look that separates athletes from the background.".to_string(),
             ),
         },
         StyleProfile {
             id: "builtin-wildlife-detail".to_string(),
             name: "Wildlife — Detail & Color".to_string(),
             detect_tags: [
-                "wildlife",
-                "animal",
-                "bird",
-                "eagle",
-                "owl",
-                "lion",
-                "tiger",
-                "bear",
-                "deer",
-                "fox",
-                "squirrel",
-                "rabbit",
+                "wildlife", "animal", "bird", "eagle", "owl", "lion", "tiger", "bear", "deer",
+                "fox", "squirrel", "rabbit",
             ]
             .iter()
             .map(|s| s.to_string())
@@ -634,20 +613,8 @@ pub fn builtin_style_profiles() -> Vec<StyleProfile> {
             id: "builtin-food-warm".to_string(),
             name: "Food — Warm & Appetizing".to_string(),
             detect_tags: [
-                "food",
-                "meal",
-                "dish",
-                "pizza",
-                "pasta",
-                "sushi",
-                "burger",
-                "cake",
-                "coffee",
-                "tea",
-                "wine",
-                "beer",
-                "cocktail",
-                "bread",
+                "food", "meal", "dish", "pizza", "pasta", "sushi", "burger", "cake", "coffee",
+                "tea", "wine", "beer", "cocktail", "bread",
             ]
             .iter()
             .map(|s| s.to_string())
@@ -673,8 +640,7 @@ pub fn builtin_style_profiles() -> Vec<StyleProfile> {
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "Warm, appetising look that makes food and drinks look freshly served."
-                    .to_string(),
+                "Warm, appetising look that makes food and drinks look freshly served.".to_string(),
             ),
         },
     ]
@@ -784,7 +750,10 @@ fn scale_curves(group: &mut Value, fraction: f64) {
         };
         for point in points.iter_mut() {
             if let Some(p) = point.as_object_mut() {
-                if let (Some(x), Some(y)) = (p.get("x").and_then(Value::as_f64), p.get("y").and_then(Value::as_f64)) {
+                if let (Some(x), Some(y)) = (
+                    p.get("x").and_then(Value::as_f64),
+                    p.get("y").and_then(Value::as_f64),
+                ) {
                     // Blend the curve toward the identity line y = x.
                     let new_y = x + (y - x) * fraction;
                     p.insert("y".to_string(), json!((new_y * 100.0).round() / 100.0));
@@ -948,10 +917,10 @@ impl LookStats {
     }
 
     fn add_curve(&mut self, key: &str, sums: [f64; CURVE_GRID.len()]) {
-        let entry = self.curves.entry(key.to_string()).or_insert((
-            vec![0.0; CURVE_GRID.len()],
-            0,
-        ));
+        let entry = self
+            .curves
+            .entry(key.to_string())
+            .or_insert((vec![0.0; CURVE_GRID.len()], 0));
         for (i, v) in sums.iter().enumerate() {
             entry.0[i] += v;
         }
@@ -1111,8 +1080,19 @@ fn collect_detect_tags(paths: &[String], max_tags: usize) -> Vec<String> {
                 || norm.starts_with("color:")
                 || matches!(
                     norm.as_str(),
-                    "black" | "white" | "gray" | "grey" | "color" | "red" | "orange" | "yellow"
-                        | "green" | "blue" | "purple" | "pink" | "brown"
+                    "black"
+                        | "white"
+                        | "gray"
+                        | "grey"
+                        | "color"
+                        | "red"
+                        | "orange"
+                        | "yellow"
+                        | "green"
+                        | "blue"
+                        | "purple"
+                        | "pink"
+                        | "brown"
                 )
             {
                 continue;
@@ -1166,8 +1146,7 @@ fn collect_lut(paths: &[String]) -> Option<StyleProfileLut> {
         entry.1 += 1;
     }
 
-    let ((path, name, is_built_in), count) =
-        counts.into_iter().max_by_key(|(_, count)| *count)?;
+    let ((path, name, is_built_in), count) = counts.into_iter().max_by_key(|(_, count)| *count)?;
 
     if count * 2 < paths.len() {
         return None;
@@ -1303,30 +1282,45 @@ pub fn assign_artist_to_paths(
 }
 
 #[tauri::command]
-pub fn match_style_profiles_for_paths(
+pub async fn match_style_profiles_for_paths(
     paths: Vec<String>,
     min_score: Option<f64>,
     app_handle: AppHandle,
 ) -> Result<Vec<StyleMatch>, String> {
-    let profiles = all_style_profiles(&app_handle);
-    let min_score = min_score.unwrap_or(0.12);
+    // This used to be a synchronous command with a rayon `par_iter`, so it ran
+    // on the GTK main thread and waited for the *global* rayon pool. When a
+    // bulk job (thumbnail regeneration after a batch edit) occupied that pool,
+    // the main thread waited forever and the whole UI froze. Keep it off the
+    // main thread and off the global pool: reading sidecars is I/O, not compute.
+    tauri::async_runtime::spawn_blocking(move || {
+        let profiles = all_style_profiles(&app_handle);
+        let min_score = min_score.unwrap_or(0.12);
 
-    let matches = paths
-        .par_iter()
-        .filter_map(|path| {
+        let mut matches = Vec::new();
+        for path in &paths {
             let tags = tags_for_path(path);
-            let (score, matched, profile) = best_profile_for_tags(&tags, &profiles, min_score)?;
-            Some(StyleMatch {
-                path: path.clone(),
-                profile_id: profile.id.clone(),
-                profile_name: profile.name.clone(),
-                score,
-                matched_tags: matched,
-            })
-        })
-        .collect();
+            if let Some((score, matched, profile)) =
+                best_profile_for_tags(&tags, &profiles, min_score)
+            {
+                matches.push(StyleMatch {
+                    path: path.clone(),
+                    profile_id: profile.id.clone(),
+                    profile_name: profile.name.clone(),
+                    score,
+                    matched_tags: matched,
+                });
+            }
+        }
 
-    Ok(matches)
+        log::info!(
+            "AI Style: matched {} of {} images",
+            matches.len(),
+            paths.len()
+        );
+        Ok(matches)
+    })
+    .await
+    .map_err(|e| format!("Style matching task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -1342,6 +1336,11 @@ pub async fn apply_style_profile_to_paths(
         .ok_or_else(|| format!("Style profile '{}' not found", profile_id))?;
 
     let adjustments = profile_to_adjustments(&profile, intensity);
+    log::info!(
+        "AI Style: applying profile '{}' to {} images",
+        profile.name,
+        paths.len()
+    );
     apply_adjustments_to_paths(paths, adjustments, app_handle).await
 }
 
@@ -1363,19 +1362,23 @@ pub async fn auto_style_paths_with_ai(
     let profiles = all_style_profiles(&app_handle);
     let min_score = min_score.unwrap_or(0.12);
 
-    // Decide a profile per path (parallel), then group by profile so we can
-    // reuse the batched apply pipeline once per look.
-    let decisions: Vec<(String, Option<String>, String)> = paths
-        .par_iter()
-        .map(|path| {
-            let tags = tags_for_path(path);
-            if let Some((_, _, profile)) = best_profile_for_tags(&tags, &profiles, min_score) {
-                (path.clone(), Some(profile.id.clone()), profile.name.clone())
-            } else {
-                (path.clone(), None, String::new())
-            }
-        })
-        .collect();
+    // Sequential on purpose: this only reads sidecars and we must not occupy the
+    // global rayon pool with work that can be starved by (or starve) the GPU jobs.
+    let mut decisions: Vec<(String, Option<String>, String)> = Vec::with_capacity(paths.len());
+    for path in &paths {
+        let tags = tags_for_path(path);
+        if let Some((_, _, profile)) = best_profile_for_tags(&tags, &profiles, min_score) {
+            decisions.push((path.clone(), Some(profile.id.clone()), profile.name.clone()));
+        } else {
+            decisions.push((path.clone(), None, String::new()));
+        }
+    }
+
+    log::info!(
+        "AI Style: auto pass over {} images (min score {:.2})",
+        paths.len(),
+        min_score
+    );
 
     let fallback = fallback_profile_id
         .as_ref()
@@ -1412,11 +1415,21 @@ pub async fn auto_style_paths_with_ai(
         let Some(profile) = profiles.iter().find(|p| p.id == profile_id) else {
             continue;
         };
+        log::info!(
+            "AI Style: auto-applying '{}' to {} images",
+            profile.name,
+            group_paths.len()
+        );
         let adjustments = profile_to_adjustments(profile, intensity);
         apply_adjustments_to_paths(group_paths, adjustments, app_handle.clone()).await?;
     }
 
     let applied = counts.values().sum();
+    log::info!(
+        "AI Style: auto pass done, {} applied, {} skipped",
+        applied,
+        skipped.len()
+    );
     let by_profile: Vec<ProfileUsage> = counts
         .into_iter()
         .map(|(profile_id, count)| {
@@ -1461,7 +1474,11 @@ mod tests {
             description: None,
         };
 
-        let tags = vec!["Concert".to_string(), "STAGE".to_string(), "crowd".to_string()];
+        let tags = vec![
+            "Concert".to_string(),
+            "STAGE".to_string(),
+            "crowd".to_string(),
+        ];
         let (score, matched) = match_score(&tags, &profile);
         assert!((score - 2.0 / 3.0).abs() < 1e-9);
         assert_eq!(matched.len(), 2);
@@ -1501,7 +1518,10 @@ mod tests {
         let points = json!([{"x":0,"y":0},{"x":100,"y":50},{"x":255,"y":255}]);
         let arr = points.as_array().unwrap();
         assert!((sample_curve_y(arr, 50.0).unwrap() - 25.0).abs() < 1e-6);
-        assert!((sample_curve_y(arr, 200.0).unwrap() - ((50.0 + (255.0 - 50.0) * (100.0 / 155.0)))).abs() < 1e-6);
+        assert!(
+            (sample_curve_y(arr, 200.0).unwrap() - (50.0 + (255.0 - 50.0) * (100.0 / 155.0))).abs()
+                < 1e-6
+        );
     }
 
     #[test]
@@ -1510,7 +1530,10 @@ mod tests {
         let mut stats = stats;
         stats.add_scalar("contrast", 10.0);
         stats.add_scalar("contrast", 20.0);
-        stats.add_curve("curves.luma", [0.0, 32.0, 64.0, 96.0, 128.0, 160.0, 192.0, 224.0, 255.0]);
+        stats.add_curve(
+            "curves.luma",
+            [0.0, 32.0, 64.0, 96.0, 128.0, 160.0, 192.0, 224.0, 255.0],
+        );
 
         let adjustments = build_adjustments_from_stats(&stats);
         assert_eq!(adjustments["contrast"], json!(15.0));
