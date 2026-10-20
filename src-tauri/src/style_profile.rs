@@ -2876,6 +2876,155 @@ mod tests {
     }
 
     #[test]
+    fn real_clip_tags_choose_a_concert_look() {
+        // Top-10 tags that the real CLIP model produced for ten frames from the
+        // test concert (see `tagging::real_clip::real_concert_tags`). This is
+        // the end-to-end contract: real tagger output -> sensible look.
+        let frames: &[&[&str]] = &[
+            &[
+                "club concert",
+                "performer",
+                "live concert",
+                "concert",
+                "rock concert",
+                "singer",
+                "gig",
+                "vocalist",
+                "acoustic concert",
+                "open air concert",
+            ],
+            &[
+                "club concert",
+                "live music",
+                "rock band",
+                "live concert",
+                "gig",
+                "concert",
+                "band",
+                "rock concert",
+                "performer",
+                "microphone stand",
+            ],
+            &[
+                "bass guitar",
+                "bassist",
+                "guitarist",
+                "live music",
+                "rock band",
+                "gig",
+                "rock concert",
+                "electric guitar",
+                "guitar",
+                "club concert",
+            ],
+            &[
+                "vocalist",
+                "club concert",
+                "singer",
+                "live concert",
+                "performer",
+                "live music",
+                "bassist",
+                "gig",
+                "concert",
+                "acoustic concert",
+            ],
+            &[
+                "rock concert",
+                "club concert",
+                "live music",
+                "gig",
+                "rock band",
+                "band",
+                "live concert",
+                "bass guitar",
+                "metal concert",
+                "headbanging",
+            ],
+            &[
+                "performer",
+                "vocalist",
+                "club concert",
+                "microphone",
+                "singer",
+                "live concert",
+                "microphone stand",
+                "concert",
+                "acoustic concert",
+                "live music",
+            ],
+            &[
+                "club concert",
+                "live music",
+                "live concert",
+                "rock band",
+                "stage lighting",
+                "gig",
+                "rock concert",
+                "band",
+                "concert",
+                "stage lights",
+            ],
+            &[
+                "club concert",
+                "live music",
+                "stage lighting",
+                "microphone stand",
+                "stage lights",
+                "acoustic concert",
+                "gig",
+                "live concert",
+                "in-ear monitor",
+                "bassist",
+            ],
+            &[
+                "live music",
+                "club concert",
+                "gig",
+                "live concert",
+                "rock concert",
+                "stage lights",
+                "acoustic concert",
+                "stage lighting",
+                "band",
+                "rock band",
+            ],
+            &[
+                "motion blur",
+                "dancing",
+                "club concert",
+                "rehearsal",
+                "bokeh",
+                "depth of field",
+                "stage lighting",
+                "performer",
+                "gig",
+                "backstage",
+            ],
+        ];
+        let profiles = builtin_style_profiles();
+
+        for tags in frames {
+            let tags: Vec<String> = tags.iter().map(|tag| tag.to_string()).collect();
+            let (score, matched, profile) = best_profile_for_tags(&tags, &profiles, 0.12)
+                .unwrap_or_else(|| panic!("no look matched {tags:?}"));
+            println!(
+                "{} -> {} ({:.2}, {:?})",
+                tags.first().map(String::as_str).unwrap_or(""),
+                profile.id,
+                score,
+                matched
+            );
+            assert!(
+                profile.id.starts_with("builtin-concert") || profile.id == "builtin-festival-pop",
+                "{} matched the non-concert look {} ({matched:?})",
+                tags.join(", "),
+                profile.id
+            );
+        }
+    }
+
+    #[test]
     fn learned_hues_use_a_circular_mean() {
         // 350° and 10° are 20° apart, not 180°.
         let mut stats = LookStats::default();
@@ -3207,11 +3356,6 @@ mod real_photos {
             };
             let adjustments = serde_json::to_vec(&metadata.adjustments).unwrap_or_default();
             let raf_str = raf.to_string_lossy().into_owned();
-            let Some(hash) =
-                crate::file_management::compute_thumbnail_cache_hash(&raf_str, &adjustments)
-            else {
-                continue;
-            };
             // Mirror the production lookup: prefer the untouched render, then
             // fall back to the camera preview for graded files.
             let find_small = |bytes: &[u8]| -> Option<PathBuf> {

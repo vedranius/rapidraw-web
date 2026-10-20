@@ -608,3 +608,102 @@ pub fn clear_all_tags(root_path: String, app_handle: AppHandle) -> Result<usize,
     }
     Ok(updated_count)
 }
+
+/// Runs the real CLIP tagger on real concert frames. Ignored because it loads
+/// the 578 MB model:
+///
+/// ```text
+/// cargo test --lib real_concert_tags -- --ignored --nocapture
+/// ```
+///
+/// This validates the part the AI Style matcher depends on: does CLIP actually
+/// produce concert/musician/stage tags for these photos?
+#[cfg(test)]
+mod real_clip {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn models_dir() -> PathBuf {
+        if let Ok(dir) = std::env::var("RAPIDRAW_CLIP_MODEL_DIR") {
+            return PathBuf::from(dir);
+        }
+        let data = PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/share");
+        let candidates = [
+            "io.github.CyberTimon.RapidRAW",
+            "io.github.vedranius.rapidrawweb",
+            "io.github.rrweb.RapidRAWBridge",
+        ];
+        for app in candidates {
+            let dir = data.join(app).join("models");
+            if dir.join("clip_model.onnx").exists() && dir.join("clip_tokenizer.json").exists() {
+                return dir;
+            }
+        }
+        data.join("io.github.CyberTimon.RapidRAW/models")
+    }
+
+    fn photos_dir() -> PathBuf {
+        std::env::var("RAPIDRAW_PHOTOS_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                PathBuf::from(std::env::var("HOME").unwrap_or_default())
+                    .join("Pictures/The Catch 22s - BBF - 16.10.2026.")
+            })
+    }
+
+    #[test]
+    #[ignore = "loads the 578 MB CLIP model"]
+    fn real_concert_tags() {
+        let dir = models_dir();
+        let model_path = dir.join("clip_model.onnx");
+        let tokenizer_path = dir.join("clip_tokenizer.json");
+        if !model_path.exists() || !tokenizer_path.exists() {
+            eprintln!(
+                "skipping: CLIP model/tokenizer missing in {}",
+                dir.display()
+            );
+            return;
+        }
+
+        let ort_library =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/libonnxruntime.so");
+        if ort_library.exists() {
+            // SAFETY: set before the runtime is initialised, in a single-threaded test.
+            unsafe { std::env::set_var("ORT_DYLIB_PATH", &ort_library) };
+        }
+        let _ = ort::init().with_name("AI-Tagging-Test").commit();
+
+        let session = Mutex::new(
+            Session::builder()
+                .unwrap()
+                .commit_from_file(&model_path)
+                .unwrap(),
+        );
+        let tokenizer = Tokenizer::from_file(&tokenizer_path).unwrap();
+
+        let photos = photos_dir();
+        if !photos.exists() {
+            eprintln!("skipping: {} missing", photos.display());
+            return;
+        }
+        let mut sample: Vec<PathBuf> = walkdir::WalkDir::new(&photos)
+            .max_depth(2)
+            .into_iter()
+            .filter_map(Result::ok)
+            .map(|entry| entry.into_path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("RAF"))
+            .collect();
+        sample.sort();
+        let step = (sample.len() / 10).max(1);
+
+        for raf in sample.iter().step_by(step).take(10) {
+            let bytes = std::fs::read(raf).unwrap();
+            let preview =
+                crate::image_loader::safe_embedded_preview_fallback(&bytes, &raf.to_string_lossy())
+                    .expect("embedded preview");
+            let tags = generate_tags_with_clip(&preview, &session, &tokenizer, None, 16).unwrap();
+            println!("{}: {:?}", raf.file_name().unwrap().to_string_lossy(), tags);
+            assert!(!tags.is_empty(), "no tags for {}", raf.display());
+        }
+    }
+}
