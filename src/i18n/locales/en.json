@@ -1271,6 +1271,8 @@
       "recompute": "Recompute matches",
       "autoApply": "Auto-apply AI",
       "autoApplied": "Auto-edited {{n}} image(s).",
+      "noneMatched": "No photo matched a look. Enable AI tagging for this folder first, or turn on the fallback look.",
+      "autoAppliedPartial": "Auto-edited {{n}} photos; {{skipped}} had no matching look.",
       "useFallback": "Use \"{{name}}\" for unmatched images",
       "noPreview": "No preview",
       "learnDesc": "Pick photos you have already edited (ideally the same band or venue). The average of their adjustments becomes a reusable style profile.",

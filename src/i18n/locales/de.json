@@ -1271,6 +1271,8 @@
       "recompute": "Recompute matches",
       "autoApply": "Auto-apply AI",
       "autoApplied": "Auto-edited {{n}} image(s).",
+      "noneMatched": "Kein Foto passt zu einem Look. Aktiviere zuerst das KI-Tagging für diesen Ordner oder wähle den Ersatz-Look.",
+      "autoAppliedPartial": "{{n}} Fotos automatisch bearbeitet; {{skipped}} hatten keinen passenden Look.",
       "useFallback": "Use \"{{name}}\" for unmatched images",
       "noPreview": "No preview",
       "learnDesc": "Pick photos you have already edited (ideally the same band or venue). The average of their adjustments becomes a reusable style profile.",

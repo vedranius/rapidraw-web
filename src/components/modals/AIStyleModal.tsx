@@ -148,7 +148,22 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
         fallbackProfileId: useFallback ? selectedId : null,
         intensity,
       });
-      toast.success(t('modals.aiStyle.autoApplied', { n: summary.applied }));
+      if (summary.applied === 0) {
+        // Keep the modal open: the usual cause is a folder that was never
+        // tagged, and the fallback checkbox is right here.
+        toast.info(t('modals.aiStyle.noneMatched'));
+        return;
+      }
+      if (summary.skipped.length > 0) {
+        toast.success(
+          t('modals.aiStyle.autoAppliedPartial', {
+            n: summary.applied,
+            skipped: summary.skipped.length,
+          }),
+        );
+      } else {
+        toast.success(t('modals.aiStyle.autoApplied', { n: summary.applied }));
+      }
       await onApplied();
       onClose();
     } catch (err) {
@@ -280,9 +295,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
                     </Text>
                     {profile.builtIn && <TagChip label={t('modals.aiStyle.builtIn')} />}
                     {profile.subject && <TagChip label={profile.subject} />}
-                    {profile.lut?.name && (
-                      <TagChip label={`LUT · ${profile.lut.name}`} />
-                    )}
+                    {profile.lut?.name && <TagChip label={`LUT · ${profile.lut.name}`} />}
                   </div>
                   {profile.description && (
                     <Text variant={TextVariants.small} className="text-text-secondary mt-1">

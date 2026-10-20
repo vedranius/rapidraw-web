@@ -1274,6 +1274,8 @@
       "recompute": "Recompute matches",
       "autoApply": "Auto-apply AI",
       "autoApplied": "Auto-edited {{n}} image(s).",
+      "noneMatched": "Cap foto no coincideix amb un estil. Activa primer l'etiquetatge per IA d'aquesta carpeta o marca l'estil de reserva.",
+      "autoAppliedPartial": "S'han editat automàticament {{n}} fotos; {{skipped}} no tenien cap estil coincident.",
       "useFallback": "Use \"{{name}}\" for unmatched images",
       "noPreview": "No preview",
       "learnDesc": "Pick photos you have already edited (ideally the same band or venue). The average of their adjustments becomes a reusable style profile.",

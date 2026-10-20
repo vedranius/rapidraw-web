@@ -1269,6 +1269,8 @@
       "recompute": "Recompute matches",
       "autoApply": "Auto-apply AI",
       "autoApplied": "Auto-edited {{n}} image(s).",
+      "noneMatched": "沒有照片符合任何風格。請先為此資料夾啟用 AI 標籤，或勾選備用風格。",
+      "autoAppliedPartial": "已自動編輯 {{n}} 張照片；{{skipped}} 張沒有符合的風格。",
       "useFallback": "Use \"{{name}}\" for unmatched images",
       "noPreview": "No preview",
       "learnDesc": "Pick photos you have already edited (ideally the same band or venue). The average of their adjustments becomes a reusable style profile.",

@@ -1298,6 +1298,8 @@
       "recompute": "Recompute matches",
       "autoApply": "Auto-apply AI",
       "autoApplied": "Auto-edited {{n}} image(s).",
+      "noneMatched": "Nenhuma foto corresponde a um look. Ative primeiro a marcação por IA desta pasta ou selecione o look alternativo.",
+      "autoAppliedPartial": "{{n}} fotos editadas automaticamente; {{skipped}} não tinham um look correspondente.",
       "useFallback": "Use \"{{name}}\" for unmatched images",
       "noPreview": "No preview",
       "learnDesc": "Pick photos you have already edited (ideally the same band or venue). The average of their adjustments becomes a reusable style profile.",
