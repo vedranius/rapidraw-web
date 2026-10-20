@@ -13,9 +13,10 @@ fotografije i automatsku obradu prema tom sadržaju (culling + stilovi/LUT-ovi).
 ## 1. Kako uključiti razumijevanje sadržaja
 
 1. **Settings → Tagging → „AI Tagging"** uključi (prvi put skine CLIP model).
-2. Otvori folder s fotografijama — background indexer prolazi kroz slike i u
-   svaku `.rrdata` datoteku upisuje tagove (npr. `concert`, `stage lighting`,
-   `musician`, `crowd`, `dramatic`).
+   Ako je folder već otvoren, indeksiranje tog foldera kreće odmah; inače kreće
+   pri sljedećem otvaranju foldera.
+2. Background indexer prolazi kroz slike i u svaku `.rrdata` datoteku upisuje
+   tagove (npr. `concert`, `stage lighting`, `musician`, `crowd`, `dramatic`).
 3. Tek tada AI zna _što_ gleda. Bez ovoga AI sloj radi, ali nema signala.
 
 Vokabular je proširen koncertnim pojmovima (`src-tauri/src/tagging_utils/candidates.rs`):

@@ -52,6 +52,7 @@ import { useCloudUsage } from '../../hooks/useCloudUsage';
 import { open } from '@tauri-apps/plugin-shell';
 import { RotateCcw } from 'lucide-react';
 import { useUIStore } from '../../store/useUIStore';
+import { useLibraryStore } from '../../store/useLibraryStore';
 
 interface ConfirmModalState {
   confirmText: string;
@@ -1588,7 +1589,17 @@ export default function SettingsPanel({
                             checked={appSettings?.enableAiTagging ?? false}
                             id="ai-tagging-toggle"
                             label={t('settings.tagging.automaticAiTagging')}
-                            onChange={(checked) => onSettingsChange({ ...appSettings, enableAiTagging: checked })}
+                            onChange={async (checked) => {
+                              // Persist first: the indexing command reads the
+                              // setting from disk and bails out when it is off.
+                              await onSettingsChange({ ...appSettings, enableAiTagging: checked });
+                              if (!checked) return;
+                              const folder = useLibraryStore.getState().currentFolderPath;
+                              if (!folder || folder.startsWith('Album: ')) return;
+                              invoke(Invokes.StartBackgroundIndexing, { folderPath: folder }).catch((err) => {
+                                console.error('Failed to start AI tagging:', err);
+                              });
+                            }}
                           />
                         </SettingItem>
 
