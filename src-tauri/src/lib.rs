@@ -58,6 +58,7 @@ mod panorama_stitching;
 mod panorama_utils;
 mod photo_analysis;
 mod preset_converter;
+mod prompt_style;
 mod raw_processing;
 mod relight;
 mod style_profile;
@@ -1590,6 +1591,111 @@ async fn generate_preview_for_path(
     .map_err(|e| format!("Task execution failed: {}", e))?
 }
 
+/// Renders a small preview of every style candidate on one photo, so the
+/// prompt-driven look picker can show real pixels instead of a colour swatch.
+/// The photo is decoded once; each candidate only adds a GPU pass.
+#[tauri::command]
+async fn preview_style_profiles(
+    path: String,
+    profiles: Vec<crate::style_profile::StyleProfile>,
+    intensity: Option<f64>,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<Vec<u8>>, String> {
+    tokio::task::spawn_blocking(move || {
+        if profiles.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let state = app_handle.state::<AppState>();
+        let context = get_or_init_gpu_context(&state, &app_handle)?;
+        let (source_path, sidecar_path) = parse_virtual_path(&path);
+        let source_path_str = source_path.to_string_lossy().to_string();
+        let is_raw = is_raw_file(&source_path_str);
+        let settings = load_settings(app_handle.clone()).unwrap_or_default();
+        let as_shot = crate::as_shot::as_shot(&source_path_str);
+
+        let sidecar = crate::exif_processing::load_sidecar(&sidecar_path);
+        let base_adjustments = if sidecar.adjustments.is_null() {
+            serde_json::json!({})
+        } else {
+            sidecar.adjustments
+        };
+
+        let bytes = fs::read(&source_path)
+            .or_else(|_| read_file_mapped(&source_path).map(|mmap| mmap.to_vec()))
+            .map_err(|e| format!("Failed to read '{}': {e}", source_path.display()))?;
+        let base_image = load_and_composite(
+            &bytes,
+            &source_path_str,
+            &base_adjustments,
+            false,
+            &settings,
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+        let (transformed, _) =
+            apply_all_transformations(Cow::Borrowed(&base_image), &base_adjustments);
+        let preview_image = if transformed.width().max(transformed.height()) > 900 {
+            transformed.thumbnail(900, 900)
+        } else {
+            transformed.into_owned()
+        };
+
+        // Masks are irrelevant for judging a colour treatment and cost time;
+        // crop/rotation are already baked in above.
+        let mask_bitmaps: Vec<ImageBuffer<Luma<u8>, Vec<u8>>> = Vec::new();
+        let mut previews = Vec::with_capacity(profiles.len());
+
+        for profile in profiles {
+            let js_adjustments = crate::style_profile::preview_adjustments_for_profile(
+                &path,
+                &profile,
+                intensity,
+                &app_handle,
+            );
+            let render = resolve_render_options(&settings, is_raw);
+            let mut all_adjustments =
+                get_all_adjustments_from_json(&js_adjustments, is_raw, as_shot, render);
+            all_adjustments.global.show_clipping = 0;
+
+            let lut = js_adjustments["lutPath"]
+                .as_str()
+                .filter(|lut_path| !lut_path.trim().is_empty())
+                .and_then(|lut_path| lut_processing::get_or_load_lut(&state, lut_path).ok());
+            let unique_hash = calculate_full_job_hash(
+                &format!("{source_path_str}::style-preview::{}", profile.id),
+                &js_adjustments,
+            );
+
+            let processed = process_and_get_dynamic_image(
+                &context,
+                &state,
+                &preview_image,
+                unique_hash,
+                RenderRequest {
+                    adjustments: all_adjustments,
+                    mask_bitmaps: &mask_bitmaps,
+                    lut,
+                    roi: None,
+                },
+                "preview_style_profiles",
+            )?;
+
+            let (width, height) = processed.dimensions();
+            let rgb_pixels = processed.to_rgb8().into_vec();
+            let encoded = Encoder::new(Preset::BaselineFastest)
+                .quality(84)
+                .encode_rgb(&rgb_pixels, width, height)
+                .map_err(|e| format!("Failed to encode preview: {e}"))?;
+            previews.push(encoded);
+        }
+
+        Ok(previews)
+    })
+    .await
+    .map_err(|e| format!("Preview task failed: {e}"))?
+}
+
 fn setup_logging(app_handle: &tauri::AppHandle) {
     let log_dir = match app_handle.path().app_log_dir() {
         Ok(dir) => dir,
@@ -2438,6 +2544,9 @@ pub fn run() {
             style_profile::assign_artist_to_paths,
             style_profile::match_style_profiles_for_paths,
             style_profile::apply_style_profile_to_paths,
+            style_profile::apply_custom_style_profile,
+            prompt_style::generate_style_candidates,
+            preview_style_profiles,
             style_profile::auto_style_paths_with_ai,
             lens_correction::get_lensfun_makers,
             lens_correction::get_lensfun_lenses_for_maker,

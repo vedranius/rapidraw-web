@@ -2797,7 +2797,7 @@ pub async fn apply_adjustments_to_paths(
 /// Merges `overlay` into `target` (top-level keys). `activeTools` is merged as a
 /// set of switches rather than replaced, so a pasted/applied look only touches
 /// the tools it needs and leaves the user's other switches untouched.
-fn merge_adjustments_value(target: &mut Value, overlay: &Value) {
+pub(crate) fn merge_adjustments_value(target: &mut Value, overlay: &Value) {
     let (Some(target_map), Some(overlay_map)) = (target.as_object_mut(), overlay.as_object())
     else {
         return;

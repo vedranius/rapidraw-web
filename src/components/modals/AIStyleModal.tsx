@@ -1,7 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Palette, Sparkles, GraduationCap, Trash2, Check, Wand2, AlertCircle, Tag } from 'lucide-react';
+import {
+  Loader2,
+  Palette,
+  Sparkles,
+  GraduationCap,
+  Trash2,
+  Check,
+  Wand2,
+  AlertCircle,
+  Tag,
+  Pencil,
+  Save,
+  X,
+} from 'lucide-react';
 import { toast } from 'react-toastify';
 import { AutoStyleSummary, Invokes, StyleMatch, StyleProfile } from '../ui/AppProperties';
 import Button from '../ui/Button';
@@ -18,7 +31,7 @@ interface AIStyleModalProps {
   onApplied(): Promise<void> | void;
 }
 
-type Tab = 'profiles' | 'matches' | 'learn';
+type Tab = 'profiles' | 'prompt' | 'matches' | 'learn';
 
 const TAG_PREVIEW_LIMIT = 6;
 
@@ -52,8 +65,32 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   const [learnSubject, setLearnSubject] = useState('');
   const [derived, setDerived] = useState<StyleProfile | null>(null);
 
+  // Prompt-driven looks ("moody teal and orange concert, subtle grain").
+  const [prompt, setPrompt] = useState('');
+  const [candidates, setCandidates] = useState<StyleProfile[]>([]);
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [editingCandidate, setEditingCandidate] = useState<string | null>(null);
+  const [savedCandidates, setSavedCandidates] = useState<string[]>([]);
+  const previewRequest = useRef(0);
+
+  // Blob URLs live as long as the candidate card; revoke the previous batch
+  // whenever a new set of previews replaces it (and on unmount).
+  useEffect(() => {
+    return () => {
+      Object.values(previews).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [previews]);
+
   const pathCount = targetPaths.length;
   const targetKey = useMemo(() => targetPaths.join('\n'), [targetPaths]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(previews).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [previews]);
 
   useEffect(() => {
     if (isOpen) {
@@ -172,6 +209,288 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       setBusy(null);
     }
   };
+
+  const previewName = targetPaths[0]?.split(/[\\/]/).pop() ?? '';
+
+  const renderCandidatePreviews = useCallback(
+    async (list: StyleProfile[]) => {
+      const previewPath = targetPaths[0];
+      if (!previewPath || list.length === 0) {
+        setPreviews({});
+        setPreviewFailed(!previewPath);
+        return;
+      }
+      const request = ++previewRequest.current;
+      try {
+        const bytes = await invoke<number[][]>(Invokes.PreviewStyleProfiles, {
+          path: previewPath,
+          profiles: list,
+          intensity,
+        });
+        if (request !== previewRequest.current) return;
+        setPreviewFailed(false);
+        const next: Record<string, string> = {};
+        list.forEach((profile, index) => {
+          const data = bytes[index];
+          if (data && data.length > 0) {
+            next[profile.id] = URL.createObjectURL(new Blob([new Uint8Array(data)], { type: 'image/jpeg' }));
+          }
+        });
+        setPreviews(next);
+      } catch (err) {
+        if (request !== previewRequest.current) return;
+        console.error('Could not render style previews:', err);
+        setPreviews({});
+        setPreviewFailed(true);
+      }
+    },
+    [targetPaths, intensity],
+  );
+
+  const handleGenerateCandidates = async () => {
+    if (!prompt.trim()) {
+      toast.error(t('modals.aiStyle.promptEmpty'));
+      return;
+    }
+    setGenerating(true);
+    setEditingCandidate(null);
+    setSavedCandidates([]);
+    setPreviewFailed(false);
+    try {
+      const list = await invoke<StyleProfile[]>(Invokes.GenerateStyleCandidates, { prompt });
+      setCandidates(list);
+      await renderCandidatePreviews(list);
+    } catch (err) {
+      toast.error(t('modals.aiStyle.promptFailed', { err: String(err) }));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const candidateNumber = (profile: StyleProfile, key: string) => {
+    const value = profile.adjustments?.[key];
+    return typeof value === 'number' ? value : 0;
+  };
+
+  const editCandidate = (id: string, key: string, value: number, refresh: boolean) => {
+    const next = candidates.map((profile) =>
+      profile.id === id ? { ...profile, adjustments: { ...profile.adjustments, [key]: value } } : profile,
+    );
+    setCandidates(next);
+    if (refresh) void renderCandidatePreviews(next);
+  };
+
+  const handleApplyCandidate = async (profile: StyleProfile) => {
+    setBusy(`apply-candidate:${profile.id}`);
+    try {
+      await invoke(Invokes.ApplyCustomStyleProfile, {
+        paths: targetPaths,
+        profile,
+        intensity,
+      });
+      toast.success(t('modals.aiStyle.applied', { n: pathCount }));
+      await onApplied();
+      onClose();
+    } catch (err) {
+      toast.error(t('modals.aiStyle.applyFailed', { err: String(err) }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleSaveCandidate = async (profile: StyleProfile) => {
+    setBusy(`save-candidate:${profile.id}`);
+    try {
+      const list = await invoke<StyleProfile[]>(Invokes.SaveStyleProfile, {
+        profile: { ...profile, intensity },
+      });
+      setProfiles(list);
+      setSavedCandidates((current) => (current.includes(profile.id) ? current : [...current, profile.id]));
+      toast.success(t('modals.aiStyle.saved'));
+    } catch (err) {
+      toast.error(t('modals.aiStyle.saveFailed', { err: String(err) }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const renderPrompt = () => (
+    <div className="space-y-4">
+      <Text variant={TextVariants.small} className="text-text-secondary">
+        {t('modals.aiStyle.promptHint')}
+      </Text>
+
+      <textarea
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        placeholder={t('modals.aiStyle.promptPlaceholder')}
+        aria-label={t('modals.aiStyle.tabPrompt')}
+        maxLength={600}
+        rows={3}
+        className="w-full resize-none rounded-md border border-border-color bg-bg-primary px-3 py-2 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent"
+      />
+
+      <div className="flex items-center justify-between gap-3">
+        <Text variant={TextVariants.small} className="text-text-secondary">
+          {t('modals.aiStyle.promptPreviewNote', { name: previewName })}
+        </Text>
+        <Button
+          onClick={handleGenerateCandidates}
+          disabled={generating || !prompt.trim()}
+          className="flex items-center gap-2 shrink-0"
+        >
+          {generating ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
+          {generating ? t('modals.aiStyle.promptGenerating') : t('modals.aiStyle.promptGenerate')}
+        </Button>
+      </div>
+
+      {candidates.length > 0 && (
+        <>
+          <div className="rounded-lg bg-bg-primary p-3">
+            <Slider
+              label={t('modals.aiStyle.intensity')}
+              min={0}
+              max={100}
+              step={1}
+              value={intensity}
+              defaultValue={100}
+              onChange={(e) => setIntensity(Number(e.target.value))}
+              onPointerUp={() => void renderCandidatePreviews(candidates)}
+              fillOrigin="min"
+              suffix="%"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[42vh] overflow-y-auto pr-1">
+            {candidates.map((candidate) => {
+              const preview = previews[candidate.id];
+              const saved = savedCandidates.includes(candidate.id);
+              return (
+                <div key={candidate.id} className="rounded-lg border border-border-color bg-bg-primary overflow-hidden">
+                  <div className="aspect-[3/2] bg-black/20">
+                    {preview ? (
+                      <img src={preview} alt={candidate.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center px-3 text-center text-xs text-text-secondary">
+                        {previewFailed
+                          ? t('modals.aiStyle.promptPreviewFailed')
+                          : t('modals.aiStyle.promptPreviewPending')}
+                      </div>
+                    )}
+                  </div>
+                  <div className="p-2 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <Text variant={TextVariants.label} className="truncate">
+                        {candidate.name}
+                      </Text>
+                      {saved && <Check size={14} className="text-accent shrink-0" />}
+                    </div>
+                    {candidate.description && (
+                      <Text variant={TextVariants.small} className="text-text-secondary line-clamp-2">
+                        {candidate.description}
+                      </Text>
+                    )}
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <Button
+                        className="flex-1 flex items-center justify-center gap-1"
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                        onClick={() => void handleApplyCandidate(candidate)}
+                        disabled={busy === `apply-candidate:${candidate.id}`}
+                      >
+                        {busy === `apply-candidate:${candidate.id}` ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <Wand2 size={13} />
+                        )}
+                        {t('modals.aiStyle.candidateApply')}
+                      </Button>
+                      <Button
+                        className="flex items-center justify-center gap-1 bg-surface text-text-primary border border-border-color"
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                        onClick={() => void handleSaveCandidate(candidate)}
+                        disabled={busy === `save-candidate:${candidate.id}`}
+                      >
+                        {busy === `save-candidate:${candidate.id}` ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <Save size={13} />
+                        )}
+                        {t('modals.aiStyle.candidateSave')}
+                      </Button>
+                      <Button
+                        className="flex items-center justify-center gap-1 bg-surface text-text-primary border border-border-color"
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                        onClick={() =>
+                          setEditingCandidate((current) => (current === candidate.id ? null : candidate.id))
+                        }
+                      >
+                        <Pencil size={13} />
+                        {t('modals.aiStyle.candidateEdit')}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {editingCandidate &&
+            (() => {
+              const candidate = candidates.find((profile) => profile.id === editingCandidate);
+              if (!candidate) return null;
+              const slider = (
+                key: string,
+                label: string,
+                min: number,
+                max: number,
+                step = 1,
+                fillOrigin: 'min' | 'default' = 'min',
+              ) => (
+                <Slider
+                  key={key}
+                  label={label}
+                  min={min}
+                  max={max}
+                  step={step}
+                  value={candidateNumber(candidate, key)}
+                  defaultValue={0}
+                  onChange={(e) => editCandidate(candidate.id, key, Number(e.target.value), false)}
+                  onPointerUp={() => editCandidate(candidate.id, key, candidateNumber(candidate, key), true)}
+                  fillOrigin={fillOrigin}
+                />
+              );
+              return (
+                <div className="rounded-lg border border-accent p-3 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <Text variant={TextVariants.label}>{t('modals.aiStyle.candidateEditor')}</Text>
+                    <button
+                      className="p-1 rounded hover:bg-surface text-text-secondary"
+                      onClick={() => setEditingCandidate(null)}
+                      aria-label={t('modals.aiStyle.close')}
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {slider('contrast', t('adjustments.basic.contrast'), -40, 40, 1, 'default')}
+                    {slider('brightness', t('adjustments.basic.brightness'), -40, 40, 1, 'default')}
+                    {slider('saturation', t('adjustments.color.saturation'), -60, 40, 1, 'default')}
+                    {slider('temperature', t('adjustments.color.temperature'), -40, 40, 1, 'default')}
+                    {slider('highlights', t('adjustments.basic.highlights'), -60, 40, 1, 'default')}
+                    {slider('shadows', t('adjustments.basic.shadows'), -40, 60, 1, 'default')}
+                    {slider('grainAmount', t('adjustments.effects.grain'), 0, 60)}
+                    {slider('vignetteAmount', t('adjustments.effects.vignette'), -60, 0)}
+                  </div>
+                  <Text variant={TextVariants.small} className="text-text-secondary">
+                    {t('modals.aiStyle.candidateEditHint')}
+                  </Text>
+                </div>
+              );
+            })()}
+        </>
+      )}
+    </div>
+  );
 
   const handleLearn = async () => {
     if (!learnName.trim()) {
@@ -552,6 +871,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
 
   const tabs = [
     { key: 'profiles' as Tab, label: t('modals.aiStyle.tabProfiles'), icon: <Palette size={15} /> },
+    { key: 'prompt' as Tab, label: t('modals.aiStyle.tabPrompt'), icon: <Wand2 size={15} /> },
     { key: 'matches' as Tab, label: t('modals.aiStyle.tabMatches'), icon: <Sparkles size={15} /> },
     { key: 'learn' as Tab, label: t('modals.aiStyle.tabLearn'), icon: <GraduationCap size={15} /> },
   ];
@@ -620,6 +940,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
             ) : (
               <>
                 {tab === 'profiles' && renderProfiles()}
+                {tab === 'prompt' && renderPrompt()}
                 {tab === 'matches' && renderMatches()}
                 {tab === 'learn' && renderLearn()}
               </>

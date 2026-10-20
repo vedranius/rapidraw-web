@@ -56,7 +56,7 @@ Implementacija: `src-tauri/src/culling.rs`; UI: `src/components/modals/CullingMo
 ## 3. AI Style (stilovi, LUT-ovi, boje prema sadržaju)
 
 Otvara se desnim klikom na selekciju → **AI Style** (ili u editoru → _Productivity_
-→ _AI Style_). Ima tri kartice:
+→ _AI Style_). Ima četiri kartice:
 
 ### Profiles
 
@@ -123,6 +123,37 @@ Ovo je dio koji radi ono što si opisao (npr. „Iron Maiden look"):
 
 Dobiveni profil dobiva `detectTags` iz najčešćih tagova izvornih slika, pa se
 automatski veže na sličan sadržaj.
+
+### Describe (opišeš look → dobiješ 4 varijante)
+
+Kartica **Describe** pretvara slobodan opis u gotove stilove. Napišeš npr.
+_„moody teal and orange concert look, soft highlights, subtle grain"_ ili
+_„mračni koncert, tirkizno i narančasto, zrnato"_ i klikneš **Generate 4 looks**.
+
+Generator je **lokalan i determinističan** (nema poziva na LLM): prepoznaje
+engleski i hrvatski vokabular za subjekt (concert, wedding, portrait, landscape,
+food, street, night, festival, sports, wildlife, architecture, product, car),
+mood (cinematic, moody/dark, airy/bright, teal & orange, vintage, modern,
+natural, punchy, soft/dreamy, matte, B&W/noir/sepia, neon, golden hour, warm,
+cool, earthy, muted…), filmske stockove (Portra, Ektar, Gold, Fuji 400H,
+Cinestill 250D, Vision 500T, Ilford/Tri-X) i modifikatore (_subtle_, _strong_,
+_extreme_).
+
+Dobiješ četiri varijante istog intenta — **Balanced**, **Soft**, **Bold**,
+**Film** — koje se razlikuju u kontrastu, clarityju, grain/fadeu i jačini LUT-a.
+Svaka kartica ima **pravi GPU preview** na prvoj odabranoj fotografiji (900 px,
+isti adjustmenti + per-image adaptacija koje će se primijeniti), pa ne moraš
+pogađati kako će izgledati.
+
+- **Apply** primjenjuje look na cijelu selekciju bez spremanja u biblioteku.
+- **Save** ga sprema u _Profiles_ (isti `id`, ponovni save ažurira postojeći).
+- **Edit** otvara 8 klizača (contrast, brightness, saturation, temperature,
+  highlights, shadows, grain, vignette); preview se osvježi kad pustiš klizač.
+- **Intensity** skalira cijeli look prije primjene.
+
+Ako opis nema prepoznatih pojmova, generator ipak vrati blagi _Natural_ look
+(contrast +6, vibrance +5, clarity +4) umjesto greške. Nepoznate riječi se
+zanemaruju. Ograničenje opisa je 600 znakova.
 
 ### Per-image adaptacija (svjetlina i boje)
 
@@ -207,6 +238,7 @@ tvoje reference + taga), te obrađuje boje/LUT/krivulje u skladu s tim.
 | Semantičko bodovanje cullinga          | `src-tauri/src/culling.rs`                                   |
 | Koncertni vokabular                    | `src-tauri/src/tagging_utils/candidates.rs`                  |
 | Style profili, učenje, match, primjena | `src-tauri/src/style_profile.rs`                             |
+| Prompt → 4 looka (lokalni interpreter) | `src-tauri/src/prompt_style.rs`                              |
 | Registracija naredbi                   | `src-tauri/src/lib.rs`                                       |
 | UI                                     | `src/components/modals/AIStyleModal.tsx`, `CullingModal.tsx` |
 | Tipovi / Invokes                       | `src/components/ui/AppProperties.tsx`                        |
@@ -216,7 +248,8 @@ tvoje reference + taga), te obrađuje boje/LUT/krivulje u skladu s tim.
 Tauri naredbe: `list_style_profiles`, `save_style_profile`, `delete_style_profile`,
 `derive_style_profile_from_paths`, `assign_artist_to_paths`,
 `match_style_profiles_for_paths`, `apply_style_profile_to_paths`,
-`auto_style_paths_with_ai`.
+`auto_style_paths_with_ai`, `generate_style_candidates`,
+`apply_custom_style_profile`, `preview_style_profiles`.
 
 Korisnički profili se spremaju u `<app data>/style_profiles/style_profiles.json`.
 
@@ -230,6 +263,9 @@ Korisnički profili se spremaju u `<app data>/style_profiles/style_profiles.json
 - **„Najbolji kadar"** je i dalje djelomično subjektivan (izraz lica, trenutak).
   AI daje jak _shortlist_ i bira najboljeg u burstu, ali ne zamjenjuje u potpunosti
   tvoju procjenu.
+- **Describe** ne razumije slobodan jezik kao LLM: to je kurirani rječnik
+  fotografskih pojmova. Neobične formulacije mogu promašiti; tada pomogne
+  konkretniji opis (npr. „teal shadows, orange highlights, Portra, grain").
 - Modeli (CLIP/SAM) traže prethodno preuzimanje i imaju svoje licence — provjeri
   prije komercijalne distribucije. Fork je AGPL-3.0.
 

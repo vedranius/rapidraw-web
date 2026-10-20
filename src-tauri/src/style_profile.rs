@@ -147,7 +147,7 @@ const HSL_CHANNELS: [&str; 8] = [
 /// HSL mixer values as `[(hue, saturation, luminance); 8]` for reds..magentas.
 /// This is what gives a look its colour identity instead of a blunt global
 /// saturation slider.
-fn hsl_look(values: [(f64, f64, f64); 8]) -> Value {
+pub(crate) fn hsl_look(values: [(f64, f64, f64); 8]) -> Value {
     let mut map = Map::new();
     for (i, name) in HSL_CHANNELS.iter().enumerate() {
         let (hue, saturation, luminance) = values[i];
@@ -165,7 +165,7 @@ fn hsl_look(values: [(f64, f64, f64); 8]) -> Value {
 
 /// Three-way colour grading: `(hue, saturation, luminance)` per tonal range.
 /// Hue is in degrees, saturation/luminance in -100..100.
-fn grading(
+pub(crate) fn grading(
     shadows: (f64, f64, f64),
     midtones: (f64, f64, f64),
     highlights: (f64, f64, f64),
@@ -184,7 +184,7 @@ fn grading(
 }
 
 /// Point curves. A channel left empty is an identity line. X/Y are 0..255.
-fn curves(
+pub(crate) fn curves(
     luma: &[(f64, f64)],
     red: &[(f64, f64)],
     green: &[(f64, f64)],
@@ -210,7 +210,7 @@ fn curves(
 /// Reference to one of the film LUTs bundled with the app
 /// (`src-tauri/resources/film_luts`). The concrete path is resolved in
 /// [`all_style_profiles`] because it depends on the installation directory.
-fn film_lut(name: &str, intensity: f64) -> Option<StyleProfileLut> {
+pub(crate) fn film_lut(name: &str, intensity: f64) -> Option<StyleProfileLut> {
     Some(StyleProfileLut {
         name: name.to_string(),
         path: String::new(),
@@ -1212,7 +1212,7 @@ fn save_user_style_profiles(
 /// references. Paths depend on the installation directory, so they cannot be
 /// hard-coded; if the resource is missing (e.g. a stripped build) the path is
 /// left empty and the look is applied without the LUT instead of breaking.
-fn resolve_builtin_lut_paths(app_handle: &AppHandle, profiles: &mut [StyleProfile]) {
+pub(crate) fn resolve_builtin_lut_paths(app_handle: &AppHandle, profiles: &mut [StyleProfile]) {
     let Some(dir) = crate::lut_processing::film_luts_dir(app_handle) else {
         log::warn!(
             "Built-in film LUT directory is unavailable; style profiles will run without LUTs"
@@ -1242,7 +1242,20 @@ fn resolve_builtin_lut_paths(app_handle: &AppHandle, profiles: &mut [StyleProfil
 fn all_style_profiles(app_handle: &AppHandle) -> Vec<StyleProfile> {
     let mut profiles = builtin_style_profiles();
     resolve_builtin_lut_paths(app_handle, &mut profiles);
-    profiles.extend(load_user_style_profiles(app_handle));
+
+    let mut user = load_user_style_profiles(app_handle);
+    // Saved prompt looks keep the bundled LUT *name*; refresh the path so a
+    // profile still works when the app data is moved between machines.
+    for profile in &mut user {
+        if let Some(lut) = profile.lut.as_mut()
+            && lut.is_built_in
+        {
+            lut.path.clear();
+        }
+    }
+    resolve_builtin_lut_paths(app_handle, &mut user);
+
+    profiles.extend(user);
     profiles
 }
 
@@ -1525,26 +1538,37 @@ pub fn profile_to_adjustments(profile: &StyleProfile, intensity: Option<f64>) ->
         obj.entry("pointCurves".to_string()).or_insert(curves);
     }
 
-    if let Some(lut) = &profile.lut {
-        // An unresolved built-in LUT has an empty path. Do not point the render
-        // pipeline at it: the look should simply fall back to the grading.
-        if !lut.path.trim().is_empty()
-            && let Some(obj) = adjustments.as_object_mut()
-        {
-            obj.insert("lutPath".to_string(), json!(lut.path));
-            obj.insert("lutName".to_string(), json!(lut.name));
-            obj.insert("lutIsSceneReferred".to_string(), json!(lut.is_built_in));
-            // Intensity also controls the LUT blend, otherwise a 0% look would
-            // still be coloured by the film emulation.
-            obj.insert(
-                "lutIntensity".to_string(),
-                json!(lut.intensity.clamp(0.0, 100.0) * fraction),
-            );
-            let active = obj
-                .entry("activeTools".to_string())
-                .or_insert_with(|| json!({}));
-            if let Some(active_obj) = active.as_object_mut() {
-                active_obj.insert("lut".to_string(), json!(true));
+    let resolved_lut = profile
+        .lut
+        .as_ref()
+        .filter(|lut| !lut.path.trim().is_empty());
+    match resolved_lut {
+        Some(lut) => {
+            if let Some(obj) = adjustments.as_object_mut() {
+                obj.insert("lutPath".to_string(), json!(lut.path));
+                obj.insert("lutName".to_string(), json!(lut.name));
+                obj.insert("lutIsSceneReferred".to_string(), json!(lut.is_built_in));
+                // Intensity also controls the LUT blend, otherwise a 0% look
+                // would still be coloured by the film emulation.
+                obj.insert(
+                    "lutIntensity".to_string(),
+                    json!(lut.intensity.clamp(0.0, 100.0) * fraction),
+                );
+                let active = obj
+                    .entry("activeTools".to_string())
+                    .or_insert_with(|| json!({}));
+                if let Some(active_obj) = active.as_object_mut() {
+                    active_obj.insert("lut".to_string(), json!(true));
+                }
+            }
+        }
+        None => {
+            // A look is a complete treatment: do not silently keep the film
+            // emulation from a previously applied look.
+            if let Some(obj) = adjustments.as_object_mut() {
+                obj.insert("lutPath".to_string(), json!(""));
+                obj.insert("lutName".to_string(), json!(""));
+                obj.insert("lutIntensity".to_string(), json!(0.0));
             }
         }
     }
@@ -2210,6 +2234,30 @@ pub async fn apply_style_profile_to_paths(
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Style profile '{}' not found", profile_id))?;
 
+    apply_profile_object_to_paths(paths, profile, intensity, app_handle).await
+}
+
+/// Applies a profile object that may not be saved yet (a generated candidate).
+#[tauri::command]
+pub async fn apply_custom_style_profile(
+    paths: Vec<String>,
+    profile: StyleProfile,
+    intensity: Option<f64>,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    apply_profile_object_to_paths(paths, profile, intensity, app_handle).await
+}
+
+pub(crate) async fn apply_profile_object_to_paths(
+    paths: Vec<String>,
+    profile: StyleProfile,
+    intensity: Option<f64>,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
     let intensity = intensity.unwrap_or(profile.intensity).clamp(0.0, 100.0);
     log::info!(
         "AI Style: applying profile '{}' to {} images (intensity {:.0})",
@@ -2244,6 +2292,46 @@ pub async fn apply_style_profile_to_paths(
     .map_err(|error| format!("Style adaptation task failed: {error}"))?;
 
     apply_adjustments_to_paths_map(entries, app_handle).await
+}
+
+/// Builds the complete adjustments object a profile would write for `path`,
+/// including the same per-photo adaptation the apply command uses. The preview
+/// renderer feeds this straight into the normal GPU pipeline.
+pub(crate) fn preview_adjustments_for_profile(
+    path: &str,
+    profile: &StyleProfile,
+    intensity: Option<f64>,
+    app_handle: &AppHandle,
+) -> Value {
+    let (_, sidecar_path) = parse_virtual_path(path);
+    let existing = crate::exif_processing::load_sidecar(&sidecar_path).adjustments;
+    let mut base = if existing.is_null() {
+        crate::image_processing::default_adjustments()
+    } else {
+        existing
+    };
+
+    let tags = tags_for_path(path);
+    let mut overlay = profile_to_adjustments(profile, intensity);
+    merge_adjustments_additive(
+        &mut overlay,
+        &tone_tweak_adjustments(tone_tweak_for_tags(&tags)),
+    );
+    if let Some(stats) = stats_for_path(app_handle, path) {
+        adapt_look_to_photo(&mut overlay, profile, &stats, &tags);
+    } else {
+        clamp_look_adjustments(&mut overlay);
+    }
+
+    crate::file_management::merge_adjustments_value(&mut base, &overlay);
+
+    // The preview renderer deliberately skips mask bitmaps (they are expensive
+    // and irrelevant for judging a colour treatment), so drop the definitions
+    // as well instead of asking the GPU pass for missing bitmaps.
+    if let Some(object) = base.as_object_mut() {
+        object.remove("masks");
+    }
+    base
 }
 
 /// Small, per-image corrections derived from content/lighting tags, so the same
@@ -2315,6 +2403,11 @@ fn merge_adjustments_additive(base: &mut Value, overlay: &Value) {
 /// Only frames below the floor (nearly black) are lifted, and only frames above
 /// the ceiling (blown) are pulled down, both by a bounded amount.
 fn profile_luma_range(profile: &StyleProfile) -> (f64, f64) {
+    // Prompt-generated looks carry an explicit mood ("very dark", "high key"),
+    // so only rescue truly unusable frames instead of normalising the exposure.
+    if profile.id.starts_with("generated-") {
+        return (0.04, 0.80);
+    }
     match profile.id.as_str() {
         "builtin-concert-dark" | "builtin-concert-mono" => (0.085, 0.55),
         "builtin-concert-neon" => (0.085, 0.55),
@@ -2421,7 +2514,12 @@ fn adapt_look_to_photo(
             | "builtin-concert-neon"
             | "builtin-concert-mono"
             | "builtin-night-neon"
-    );
+    ) || profile.detect_tags.iter().any(|tag| {
+        matches!(
+            tag.as_str(),
+            "concert" | "live music" | "metal concert" | "rock concert" | "night"
+        )
+    });
     let (highlight_trigger, highlight_gain, highlight_max) = if concert_like {
         (0.030, 800.0, 12.0)
     } else {
@@ -2765,7 +2863,26 @@ mod tests {
         });
 
         let adjustments = profile_to_adjustments(&profile, None);
-        assert!(adjustments.get("lutPath").is_none());
+        // The look falls back to its grading and explicitly disables any LUT
+        // left on the photo by a previous edit.
+        assert_eq!(adjustments["lutPath"], json!(""));
+        assert_eq!(adjustments["lutIntensity"], json!(0.0));
+    }
+
+    #[test]
+    fn look_without_lut_clears_the_previous_lut() {
+        let mut profile = profile_with_tags("p", &[]);
+        profile.lut = None;
+        let overlay = profile_to_adjustments(&profile, None);
+        let mut base = json!({
+            "lutPath": "/tmp/old.cube",
+            "lutName": "old",
+            "lutIntensity": 80.0,
+        });
+        crate::file_management::merge_adjustments_value(&mut base, &overlay);
+        assert_eq!(base["lutPath"], json!(""));
+        assert_eq!(base["lutName"], json!(""));
+        assert_eq!(base["lutIntensity"], json!(0.0));
     }
 
     #[test]
