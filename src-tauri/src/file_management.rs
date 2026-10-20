@@ -177,7 +177,13 @@ pub fn cached_analysis_source(
 fn analysis_preview_source(app_handle: &AppHandle, path_str: &str) -> Option<PathBuf> {
     let cache_dir = resolve_thumbnail_cache_dir(app_handle).ok()?;
     let analysis_dir = cache_dir.parent()?.join("analysis");
-    fs::create_dir_all(&analysis_dir).ok()?;
+    analysis_preview_in_dir(&analysis_dir, path_str)
+}
+
+/// Cache-only part of [`analysis_preview_source`], usable without an
+/// `AppHandle` so the extraction can be exercised in tests.
+fn analysis_preview_in_dir(analysis_dir: &Path, path_str: &str) -> Option<PathBuf> {
+    fs::create_dir_all(analysis_dir).ok()?;
 
     let hash = compute_thumbnail_cache_hash(path_str, b"analysis")?;
     let target = analysis_dir.join(format!("{hash}.jpg"));
@@ -4621,5 +4627,88 @@ mod thumbnail_queue_tests {
 
         assert_eq!(queue.len(), 2);
         assert_eq!(incoming, vec!["new-1".to_string()]);
+    }
+}
+
+/// Exercises the cache that keeps AI Style from measuring its own previous
+/// grade. Ignored because it needs the real photo library:
+///
+/// ```text
+/// cargo test --lib real_analysis_preview -- --ignored --nocapture
+/// ```
+#[cfg(test)]
+mod analysis_preview_tests {
+    use super::*;
+
+    fn photos_dir() -> Option<PathBuf> {
+        if let Ok(dir) = std::env::var("RAPIDRAW_PHOTOS_DIR") {
+            return Some(PathBuf::from(dir));
+        }
+        let dir = PathBuf::from(std::env::var("HOME").ok()?)
+            .join("Pictures/The Catch 22s - BBF - 16.10.2026.");
+        dir.exists().then_some(dir)
+    }
+
+    #[test]
+    #[ignore = "needs the real photo library"]
+    fn real_analysis_preview_is_cached_and_measurable() {
+        let Some(photos) = photos_dir() else {
+            eprintln!("skipping: no photo library");
+            return;
+        };
+
+        let edited = walkdir::WalkDir::new(&photos)
+            .max_depth(2)
+            .into_iter()
+            .filter_map(Result::ok)
+            .map(|entry| entry.into_path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rrdata"))
+            .find(|path| {
+                fs::read_to_string(path)
+                    .ok()
+                    .and_then(|content| serde_json::from_str::<ImageMetadata>(&content).ok())
+                    .map(|meta| !meta.adjustments.is_null())
+                    .unwrap_or(false)
+            })
+            .expect("an edited sidecar");
+        let raf = PathBuf::from(edited.to_string_lossy().trim_end_matches(".rrdata"));
+        if !raf.exists() {
+            eprintln!("skipping: {} has no RAF source", edited.display());
+            return;
+        }
+        let raf_str = raf.to_string_lossy().into_owned();
+
+        let cache =
+            std::env::temp_dir().join(format!("rapidraw-analysis-preview-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&cache);
+
+        let first = analysis_preview_in_dir(&cache, &raf_str).expect("preview extracted");
+        let second = analysis_preview_in_dir(&cache, &raf_str).expect("preview reused");
+        assert_eq!(first, second, "the cache key must not depend on edits");
+        assert!(first.exists());
+
+        let preview = image::open(&first).expect("cached preview decodes");
+        let longest = preview.width().max(preview.height());
+        assert!(
+            (100..=1024).contains(&longest),
+            "unexpected preview size {}x{}",
+            preview.width(),
+            preview.height()
+        );
+
+        let stats = crate::photo_analysis::analyze_image(&preview, Some(6400));
+        println!(
+            "{} -> {}x{}, median {:.3}, saturation {:.3}, colourfulness {:.3}",
+            raf.file_name().unwrap().to_string_lossy(),
+            preview.width(),
+            preview.height(),
+            stats.luma_median,
+            stats.saturation,
+            stats.colorfulness
+        );
+        assert!(stats.luma_median > 0.0 && stats.luma_median < 1.0);
+        assert!(stats.colorfulness >= 0.0);
+
+        let _ = fs::remove_dir_all(&cache);
     }
 }
