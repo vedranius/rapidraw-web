@@ -129,15 +129,18 @@ automatski veže na sličan sadržaj.
 Kartica **Describe** pretvara slobodan opis u gotove stilove. Napišeš npr.
 _„moody teal and orange concert look, soft highlights, subtle grain"_ ili
 _„mračni koncert, tirkizno i narančasto, zrnato"_ i klikneš **Generate 4 looks**.
+Ispod polja su i **primjeri** (uključujući hrvatski); klik ih upiše u polje pa
+možeš odmah doraditi opis.
 
 Generator je **lokalan i determinističan** (nema poziva na LLM): prepoznaje
 engleski i hrvatski vokabular za subjekt (concert, wedding, portrait, landscape,
 food, street, night, festival, sports, wildlife, architecture, product, car),
-mood (cinematic, moody/dark, airy/bright, teal & orange, vintage, modern,
-natural, punchy, soft/dreamy, matte, B&W/noir/sepia, neon, golden hour, warm,
-cool, earthy, muted…), filmske stockove (Portra, Ektar, Gold, Fuji 400H,
-Cinestill 250D, Vision 500T, Ilford/Tri-X) i modifikatore (_subtle_, _strong_,
-_extreme_).
+mood (cinematic, moody/dark, airy/bright, teal & orange, vintage (i
+Polaroid/disposable), modern, natural, punchy, soft/dreamy, matte,
+B&W/noir/sepia, neon, golden hour, warm, cool, earthy, muted…), filmske stockove
+(Portra, Ektar, Gold, Fuji 400H, Cinestill 250D, Vision 500T, Ilford/Tri-X),
+finiš (grain, vignette, halation/glow, clarity/detail, dehaze) i modifikatore
+(_subtle_, _strong_, _extreme_).
 
 Dobiješ četiri varijante istog intenta — **Balanced**, **Soft**, **Bold**,
 **Film** — koje se razlikuju u kontrastu, clarityju, grain/fadeu i jačini LUT-a.
@@ -148,7 +151,10 @@ pogađati kako će izgledati.
 - **Apply** primjenjuje look na cijelu selekciju bez spremanja u biblioteku.
 - **Save** ga sprema u _Profiles_ (isti `id`, ponovni save ažurira postojeći).
 - **Edit** otvara 8 klizača (contrast, brightness, saturation, temperature,
-  highlights, shadows, grain, vignette); preview se osvježi kad pustiš klizač.
+  highlights, shadows, grain, vignette); rasponi prate generator pa se Bold
+  kontrast i crno-bijela zasićenost otvaraju na točnoj poziciji. Preview se
+  osvježi kad pustiš klizač, a kartica izgubi kvačicu „spremljeno" jer se
+  spremljena kopija više ne podudara.
 - **Intensity** skalira cijeli look prije primjene.
 
 Ako opis nema prepoznatih pojmova, generator ipak vrati blagi _Natural_ look

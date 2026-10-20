@@ -3594,6 +3594,20 @@ mod real_photos {
         }
 
         let mut profiles = builtin_style_profiles();
+        // Prompt-generated looks share the same adaptation path, so exercise
+        // them on every real frame too.
+        profiles.extend(
+            crate::prompt_style::generate_candidates("moody teal and orange concert, subtle grain")
+                .expect("generate concert looks"),
+        );
+        profiles.extend(
+            crate::prompt_style::generate_candidates("warm airy wedding, Portra 400")
+                .expect("generate wedding looks"),
+        );
+        profiles.extend(
+            crate::prompt_style::generate_candidates("black and white concert")
+                .expect("generate monochrome looks"),
+        );
         resolve_test_luts(&mut profiles);
 
         for profile in profiles.iter().filter(|profile| {
@@ -3671,9 +3685,9 @@ mod real_photos {
             summarize("lut intensity", luts);
         }
 
-        // Every built-in look, on every real frame, must stay finite and inside
-        // the editor's ranges. This catches a bad profile even for looks that
-        // are not part of the printed sample above.
+        // Every look (built-in and prompt-generated), on every real frame, must
+        // stay finite and inside the editor's ranges. This catches a bad profile
+        // even for looks that are not part of the printed sample above.
         for profile in &profiles {
             for (_, stats, _) in &samples {
                 let mut adapted = profile_to_adjustments(profile, Some(100.0));
