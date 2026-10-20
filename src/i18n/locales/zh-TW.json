@@ -1245,6 +1245,7 @@
     "aiStyle": {
       "title": "AI Style",
       "subtitle": "Apply a content-aware look, or learn one from your edited photos.",
+      "adaptHint": "每張照片都會被分析（亮度、色彩、雜訊），風格會自動調整。",
       "tabProfiles": "Profiles",
       "tabMatches": "Matches",
       "tabLearn": "Learn",

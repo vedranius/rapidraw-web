@@ -1301,6 +1301,7 @@
     "aiStyle": {
       "title": "AI Style",
       "subtitle": "Apply a content-aware look, or learn one from your edited photos.",
+      "adaptHint": "Każde zdjęcie jest analizowane (jasność, kolor, szum), a styl automatycznie się do niego dopasowuje.",
       "tabProfiles": "Profiles",
       "tabMatches": "Matches",
       "tabLearn": "Learn",

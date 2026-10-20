@@ -564,8 +564,11 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
         <Text variant={TextVariants.title} className="mb-1 text-center">
           {t('modals.aiStyle.title')}
         </Text>
-        <Text variant={TextVariants.small} className="text-center text-text-secondary mb-5">
+        <Text variant={TextVariants.small} className="text-center text-text-secondary mb-1">
           {t('modals.aiStyle.subtitle')}
+        </Text>
+        <Text variant={TextVariants.small} className="text-center text-text-secondary/70 mb-5">
+          {t('modals.aiStyle.adaptHint')}
         </Text>
 
         {!pathCount ? (

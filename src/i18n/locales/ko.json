@@ -1245,6 +1245,7 @@
     "aiStyle": {
       "title": "AI Style",
       "subtitle": "Apply a content-aware look, or learn one from your edited photos.",
+      "adaptHint": "각 사진을 분석하여(밝기, 색상, 노이즈) 룩이 자동으로 맞춰집니다.",
       "tabProfiles": "Profiles",
       "tabMatches": "Matches",
       "tabLearn": "Learn",

@@ -225,11 +225,16 @@ fn analyze_image(
     let thumbnail = img.thumbnail(ANALYSIS_DIM, ANALYSIS_DIM);
     let gray_thumbnail = thumbnail.to_luma8();
 
-    // Brightness, clipping, saturation, colourfulness, cast and ISO noise are
-    // measured on the same preview; they drive the technical part of the score
-    // and are surfaced to the UI so the choice is inspectable.
+    // Brightness, clipping, saturation, colourfulness and cast are measured on
+    // the *display-referred* image, not the linear RAW base: the base is flat
+    // (median ~0.5, saturation ~0.04) and would make every frame look identical.
+    // The camera's embedded preview is already tone-mapped and, for non-RAW
+    // files, the decoded image is. This also keeps the numbers consistent with
+    // the 480 px thumbnails AI Style analyses.
     let iso = crate::exif_processing::read_iso(path, &file_bytes);
-    let stats = crate::photo_analysis::analyze_image(&thumbnail, iso);
+    let stats_image = crate::image_loader::safe_embedded_preview_fallback(&file_bytes, path)
+        .unwrap_or_else(|| thumbnail.clone());
+    let stats = crate::photo_analysis::analyze_image(&stats_image, iso);
     let exposure_metric = crate::photo_analysis::exposure_quality(&stats);
     let color_metric = crate::photo_analysis::color_quality(&stats);
 
@@ -517,5 +522,188 @@ mod tests {
 
         assert!(strong > weak, "{strong} should beat {weak}");
         assert!(weak > defective, "{weak} should beat {defective}");
+    }
+}
+
+/// Real-library culling smoke test. Needs the local photos, so it is ignored by
+/// default:
+///
+/// ```text
+/// cargo test --lib real_culling_scores -- --ignored --nocapture
+/// ```
+///
+/// Only sidecars that already contain EXIF are sampled, so the test never
+/// modifies the library (the EXIF persistence path is a no-op for them).
+#[cfg(test)]
+mod real_photos {
+    use super::*;
+    use crate::app_settings::AppSettings;
+    use crate::image_processing::ImageFlag;
+    use std::path::PathBuf;
+
+    fn photos_dir() -> PathBuf {
+        std::env::var("RAPIDRAW_PHOTOS_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                PathBuf::from(std::env::var("HOME").unwrap_or_default())
+                    .join("Pictures/The Catch 22s - BBF - 16.10.2026.")
+            })
+    }
+
+    fn mean(values: &[f64]) -> f64 {
+        if values.is_empty() {
+            return f64::NAN;
+        }
+        values.iter().sum::<f64>() / values.len() as f64
+    }
+
+    #[test]
+    #[ignore = "needs the local photo library and RAW decoding"]
+    fn real_culling_scores() {
+        let root = photos_dir();
+        if !root.is_dir() {
+            eprintln!("skipping: {} missing", root.display());
+            return;
+        }
+
+        let mut picks: Vec<PathBuf> = Vec::new();
+        let mut others: Vec<PathBuf> = Vec::new();
+        for entry in walkdir::WalkDir::new(&root)
+            .max_depth(2)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            let sidecar = entry.into_path();
+            if !sidecar.to_string_lossy().ends_with(".rrdata") {
+                continue;
+            }
+            let metadata = crate::exif_processing::load_sidecar(&sidecar);
+            if metadata.exif.is_none() {
+                continue; // avoid touching the user's sidecars
+            }
+            let raf = PathBuf::from(sidecar.to_string_lossy().trim_end_matches(".rrdata"));
+            if !raf.exists() {
+                continue;
+            }
+            match metadata.flag {
+                Some(ImageFlag::Pick) => picks.push(raf),
+                _ => others.push(raf),
+            }
+        }
+        picks.sort();
+        others.sort();
+
+        let take = |paths: &[PathBuf], count: usize| -> Vec<PathBuf> {
+            if paths.is_empty() {
+                return Vec::new();
+            }
+            let step = (paths.len() / count.max(1)).max(1);
+            paths.iter().step_by(step).take(count).cloned().collect()
+        };
+        let mut sample = take(&picks, 16);
+        sample.extend(take(&others, 16));
+
+        let hasher = HasherConfig::new()
+            .hash_alg(HashAlg::Gradient)
+            .hash_size(8, 8)
+            .to_hasher();
+        let settings = AppSettings::default();
+
+        let mut pick_scores = Vec::new();
+        let mut other_scores = Vec::new();
+        let mut all_scores = Vec::new();
+        let mut rows = Vec::new();
+
+        for path in &sample {
+            let path_str = path.to_string_lossy();
+            match analyze_image(&path_str, &hasher, &settings) {
+                Ok(analysis) => {
+                    let result = &analysis.result;
+                    let is_pick = picks.iter().any(|pick| pick == path);
+                    if is_pick {
+                        pick_scores.push(result.ai_score);
+                    } else {
+                        other_scores.push(result.ai_score);
+                    }
+                    all_scores.push(result.ai_score);
+                    rows.push(format!(
+                        "  {:<12} {} ai {:.3} q {:.3} exp {:.3} col {:.3} med {:.2} clip {:.3}/{:.3} iso {}",
+                        path.file_name().unwrap().to_string_lossy(),
+                        if is_pick { "PICK  " } else { "reject" },
+                        result.ai_score,
+                        result.quality_score,
+                        result.exposure_metric,
+                        result.color_metric,
+                        result.luma_median,
+                        result.shadow_clip,
+                        result.highlight_clip,
+                        result.iso.map(|iso| iso.to_string()).unwrap_or_else(|| "-".into()),
+                    ));
+
+                    for value in [
+                        result.quality_score,
+                        result.ai_score,
+                        result.semantic_score,
+                        result.exposure_metric,
+                        result.color_metric,
+                        result.luma_median,
+                        result.shadow_clip,
+                        result.highlight_clip,
+                        result.saturation,
+                        result.colorfulness,
+                    ] {
+                        assert!(
+                            value.is_finite(),
+                            "non-finite metric for {}",
+                            path.display()
+                        );
+                    }
+                    for value in [
+                        result.quality_score,
+                        result.ai_score,
+                        result.semantic_score,
+                        result.exposure_metric,
+                        result.color_metric,
+                    ] {
+                        assert!(
+                            (0.0..=1.0).contains(&value),
+                            "metric out of range for {}: {value}",
+                            path.display()
+                        );
+                    }
+                    assert!((0.0..=1.0).contains(&result.luma_median));
+                }
+                Err(error) => eprintln!("  failed {}: {error}", path.display()),
+            }
+        }
+
+        for row in &rows {
+            println!("{row}");
+        }
+        println!(
+            "\nanalysed {} frames ({} picks, {} others)",
+            all_scores.len(),
+            pick_scores.len(),
+            other_scores.len()
+        );
+        println!(
+            "  ai mean  picks {:.3}  others {:.3}",
+            mean(&pick_scores),
+            mean(&other_scores)
+        );
+        let overall = mean(&all_scores);
+        let variance = all_scores
+            .iter()
+            .map(|score| (score - overall).powi(2))
+            .sum::<f64>()
+            / all_scores.len().max(1) as f64;
+        println!("  ai mean  all {:.3}  std {:.3}", overall, variance.sqrt());
+
+        assert!(all_scores.len() >= 10, "not enough frames analysed");
+        assert!(
+            variance.sqrt() > 0.005,
+            "AI scores are suspiciously flat (std {:.4}) — the ranking would be useless",
+            variance.sqrt()
+        );
     }
 }

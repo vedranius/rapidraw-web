@@ -66,7 +66,10 @@ fn emit_thumbnail_cache_setup_error(app_handle: &AppHandle, path: &str, reason: 
     );
 }
 
-fn compute_thumbnail_cache_hash(path_str: &str, adjustments_bytes: &[u8]) -> Option<String> {
+pub(crate) fn compute_thumbnail_cache_hash(
+    path_str: &str,
+    adjustments_bytes: &[u8],
+) -> Option<String> {
     let (source_path, _) = parse_virtual_path(path_str);
 
     let img_mod_time = fs::metadata(&source_path)
@@ -96,16 +99,18 @@ pub fn cached_analysis_source(
 
     // Mirror `generate_single_thumbnail_and_cache` byte-for-byte: the cache key
     // includes the serialised adjustments, so any difference here would point at
-    // a thumbnail that does not exist.
-    let (adjustments_bytes, exif) = match fs::read_to_string(&sidecar_path) {
+    // a thumbnail that does not exist. Keep the parsed value as well so we can
+    // tell an untouched file from an already graded one.
+    let (adjustments_bytes, adjustments, exif) = match fs::read_to_string(&sidecar_path) {
         Ok(content) => match serde_json::from_str::<ImageMetadata>(&content) {
             Ok(meta) => (
                 serde_json::to_vec(&meta.adjustments).unwrap_or_default(),
+                meta.adjustments,
                 meta.exif,
             ),
-            Err(_) => (Vec::new(), None),
+            Err(_) => (Vec::new(), Value::Null, None),
         },
-        Err(_) => (Vec::new(), None),
+        Err(_) => (Vec::new(), Value::Null, None),
     };
 
     let iso = exif.and_then(|exif| {
@@ -127,11 +132,80 @@ pub fn cached_analysis_source(
         })
     });
 
-    let cache_hash = compute_thumbnail_cache_hash(path_str, &adjustments_bytes)?;
     let cache_dir = resolve_thumbnail_cache_dir(app_handle).ok()?;
-    let small_path = cache_dir.join(format!("{cache_hash}_small.jpg"));
+    let find_small = |bytes: &[u8]| -> Option<PathBuf> {
+        let hash = compute_thumbnail_cache_hash(path_str, bytes)?;
+        let small_path = cache_dir.join(format!("{hash}_small.jpg"));
+        small_path.exists().then_some(small_path)
+    };
 
-    small_path.exists().then_some((small_path, iso))
+    // 1. The untouched render. Newly imported sidecars store `{}`, a reset
+    //    stores `{"baselineExposure": true}`; both are "no edits".
+    if let Some(path) = find_small(br#"{}"#) {
+        return Some((path, iso));
+    }
+    let reset_bytes =
+        serde_json::to_vec(&crate::image_processing::default_adjustments()).unwrap_or_default();
+    if let Some(path) = find_small(&reset_bytes) {
+        return Some((path, iso));
+    }
+
+    let has_edits = adjustments
+        .as_object()
+        .map(|object| !object.is_empty())
+        .unwrap_or(false);
+
+    // 2. Unedited files: their current preview is the untouched one.
+    if !has_edits && let Some(path) = find_small(&adjustments_bytes) {
+        return Some((path, iso));
+    }
+
+    // 3. Edited files without a preserved import thumbnail: analyse the camera
+    //    preview instead of the graded render. Using the graded preview would
+    //    stack the previous look into the next adaptation.
+    if let Some(path) = analysis_preview_source(app_handle, path_str) {
+        return Some((path, iso));
+    }
+
+    // 4. Last resort: whatever render is cached right now.
+    find_small(&adjustments_bytes).map(|path| (path, iso))
+}
+
+/// Extracts and caches a display-referred preview of the *source* file for
+/// analysis. The key is path + mtime (independent of edits), so applying
+/// several looks to the same photo always measures the same input.
+fn analysis_preview_source(app_handle: &AppHandle, path_str: &str) -> Option<PathBuf> {
+    let cache_dir = resolve_thumbnail_cache_dir(app_handle).ok()?;
+    let analysis_dir = cache_dir.parent()?.join("analysis");
+    fs::create_dir_all(&analysis_dir).ok()?;
+
+    let hash = compute_thumbnail_cache_hash(path_str, b"analysis")?;
+    let target = analysis_dir.join(format!("{hash}.jpg"));
+    if target.exists() {
+        return Some(target);
+    }
+
+    let (source_path, _) = parse_virtual_path(path_str);
+    if is_cloud_placeholder(&source_path) {
+        return None;
+    }
+    let bytes = fs::read(&source_path).ok()?;
+    let preview = crate::image_loader::safe_embedded_preview_fallback(&bytes, path_str)
+        .or_else(|| image::open(&source_path).ok())?;
+    let preview = if preview.width().max(preview.height()) > 1024 {
+        preview.thumbnail(1024, 1024)
+    } else {
+        preview
+    };
+
+    let temp = target.with_extension("tmp");
+    let mut file = fs::File::create(&temp).ok()?;
+    JpegEncoder::new_with_quality(&mut file, 90)
+        .encode_image(&preview)
+        .ok()?;
+    drop(file);
+    fs::rename(&temp, &target).ok()?;
+    Some(target)
 }
 
 struct ImageFileMetadata {

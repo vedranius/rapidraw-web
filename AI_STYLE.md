@@ -136,12 +136,14 @@ analizira njezin keširani 480 px preview (`photo_analysis.rs`) i izmjeri:
 
 Iz tih brojeva `adapt_look_to_photo()` prije primjene prilagodi look:
 
-- **Ekspozicija**: medijan se vodi prema cilju koji ovisi o stilu (koncert 0.28–0.36,
-  portret 0.46, vjenčanje 0.52), ograničeno na ±0.8–0.9 EV. Ako slika već ima
-  izbijeljene highlighte (>1 %), ekspozicija se **ne** diže — umjesto toga se
-  podižu sjene.
-- **Highlighti/sjene**: recovery izbijeljenih dijelova i lift zdrobljenih sjena,
-  malo prema potrebi.
+- **Ekspozicija**: look ima *raspon* prihvatljivog medijana (koncert 0.085–0.55,
+  portret 0.15–0.70, vjenčanje 0.20–0.75). Unutar raspona se ekspozicija **ne
+  dira**; samo gotovo crni kadrovi (< floor) dobiju lift do +0.6 EV, a pregoreni
+  (> ceiling) korekciju do −0.5 EV. Ako slika već ima izbijeljene highlighte
+  (>1 %), lift se blokira.
+- **Highlighti/sjene**: koncertni/„night" lookovi čuvaju izbijena stage svjetla
+  i ne dižu zdrobljene sjene (trigger je clip > 3 % / 6 %), dok portretni i
+  neutralni lookovi normalno recovering (clip > 0.5 % / 1 %).
 - **Kontrast**: blago gore na mliječnim/ravnim kadrovima, blago dolje na već
   kontrastnim.
 - **Zasićenost**: na već neon-zasićenoj sceni pozitivna saturacija/vibrance se
@@ -157,6 +159,22 @@ Rezultat: ista „Iron Maiden" ili filmska receptura izgleda različito na
 nedovoljno eksponiranoj, preeksponiranoj i već zasićenoj fotografiji — što je i
 bio cilj. Analiza se kešira po putanji + mtime; ako thumbnail još ne postoji,
 look se primijeni s tvorničkim vrijednostima.
+
+**Kalibracija na stvarnim fotkama.** Rasponi nisu izmišljeni: uspoređeno je 72
+izvezenih (uređenih) koncertnih fotografija s njihovim izvornim previewima.
+Rezultat: medijan svjetline se u prosjeku **ne mijenja** (EV 0.00), zasićenost i
+colourfulness također ostaju gotovo identični, a fotograf zadržava izbijena
+stage svjetla i blago zdrobljene sjene. Zato adaptacija čuva izgled umjesto da
+sve gura u srednje sive tonove. Testovi (`real_library_adaptation`,
+`real_library_edit_targets`, `real_culling_scores`) su `#[ignore]` i vrte se
+lokalno:
+
+```bash
+cd src-tauri
+cargo test --lib real_library_adaptation -- --ignored --nocapture
+cargo test --lib real_library_edit_targets -- --ignored --nocapture
+cargo test --lib real_culling_scores -- --ignored --nocapture
+```
 
 ---
 

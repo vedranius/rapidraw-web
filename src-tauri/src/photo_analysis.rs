@@ -94,13 +94,19 @@ pub fn analyze_image(image: &DynamicImage, iso: Option<u32>) -> PhotoStats {
         return PhotoStats::default();
     }
 
+    // Convert to 8-bit *before* resizing. `DynamicImage::thumbnail` on the
+    // Rgba32F image the RAW pipeline produces multiplies the float channels
+    // (a 0.5 corner becomes 255), which made every frame read as pure white.
+    // The whole culling score then collapsed to a constant. Resizing the
+    // already-tone-mapped 8-bit image is both correct and faster.
+    let rgb = image.to_rgb8();
     let sample = if width > 512 || height > 512 {
-        image.thumbnail(512, 512)
+        DynamicImage::ImageRgb8(rgb).thumbnail(512, 512).to_rgb8()
     } else {
-        image.clone()
+        rgb
     };
 
-    analyze_rgb(&sample.to_rgb8(), iso)
+    analyze_rgb(&sample, iso)
 }
 
 pub fn analyze_rgb(rgb: &RgbImage, iso: Option<u32>) -> PhotoStats {
@@ -198,8 +204,10 @@ pub fn analyze_rgb(rgb: &RgbImage, iso: Option<u32>) -> PhotoStats {
         } else {
             0.0
         },
-        // ~0.25 on the 0..1 scale corresponds to a vividly colourful frame.
-        colorfulness: (colorfulness_raw / 0.25).clamp(0.0, 1.0),
+        // ~0.35 on the 0..1 scale corresponds to a vividly colourful frame;
+        // real concert shots measure 0.15-0.35, so this keeps headroom instead
+        // of pinning every neon frame at 1.0.
+        colorfulness: (colorfulness_raw / 0.35).clamp(0.0, 1.0),
         cast_rb: mean_r - mean_b,
         cast_gm: mean_g - 0.5 * (mean_r + mean_b),
         corner_ratio: if center_pixels > 0.0 && center_luma > 1.0e-6 {
@@ -337,6 +345,25 @@ mod tests {
 
         let warm = analyze_rgb(&RgbImage::from_pixel(32, 32, Rgb([200, 120, 80])), None);
         assert!(warm.cast_rb > 0.1);
+    }
+
+    #[test]
+    fn float_images_are_analysed_in_display_space() {
+        // Regression: `DynamicImage::thumbnail` on an Rgba32F image (what the RAW
+        // pipeline produces) used to turn a 0.5 grey frame into pure white, which
+        // collapsed every culling score to the same constant.
+        let mut float = image::Rgba32FImage::new(640, 640);
+        for pixel in float.pixels_mut() {
+            *pixel = image::Rgba([0.5, 0.5, 0.5, 1.0]);
+        }
+        let stats = analyze_image(&DynamicImage::ImageRgba32F(float), None);
+        assert!(
+            (stats.luma_median - 0.5).abs() < 0.05,
+            "float frame read as {:.2} instead of ~0.50",
+            stats.luma_median
+        );
+        assert!(stats.highlight_clip < 0.01);
+        assert!(stats.contrast < 0.01);
     }
 
     #[test]

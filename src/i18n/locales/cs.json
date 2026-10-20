@@ -1248,6 +1248,7 @@
     "aiStyle": {
       "title": "AI Style",
       "subtitle": "Apply a content-aware look, or learn one from your edited photos.",
+      "adaptHint": "Každá fotografie se analyzuje (jas, barvy, šum) a vzhled se jí automaticky přizpůsobí.",
       "tabProfiles": "Profiles",
       "tabMatches": "Matches",
       "tabLearn": "Learn",

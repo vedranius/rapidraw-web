@@ -2224,19 +2224,19 @@ fn tone_tweak_for_tags(tags: &[String]) -> ToneTweak {
 
 fn tone_tweak_adjustments(tweak: ToneTweak) -> Value {
     match tweak {
+        // Exposure is deliberately absent: it is set by the measured range
+        // model, which knows whether the frame is actually too dark. Duplicating
+        // it here would push every "night" frame up regardless of its histogram.
         ToneTweak::Neutral => json!({}),
         ToneTweak::LiftShadows => json!({
-            "exposure": 0.15,
-            "shadows": 6.0,
-            "blacks": 2.0,
+            "shadows": 8.0,
+            "blacks": 3.0,
         }),
         ToneTweak::TameHighlights => json!({
-            "exposure": -0.1,
-            "highlights": -6.0,
-            "whites": -3.0,
+            "highlights": -8.0,
+            "whites": -4.0,
         }),
         ToneTweak::Backlit => json!({
-            "exposure": 0.1,
             "shadows": 10.0,
             "highlights": -6.0,
         }),
@@ -2257,21 +2257,30 @@ fn merge_adjustments_additive(base: &mut Value, overlay: &Value) {
     }
 }
 
-/// Where a given look wants the median tone to land. Concert looks are meant to
-/// stay moody, wedding/portrait looks brighter; `None` (learned/user profiles)
-/// uses a neutral 0.42.
-fn profile_target_luma(profile: &StyleProfile) -> f64 {
+/// Acceptable median-luma range for a look.
+///
+/// This is deliberately a *range*, not a target: inside it the look leaves
+/// exposure untouched. Measured against the photographer's own edited concert
+/// exports, the final median luma is the same as the source preview (median EV
+/// shift 0.00), so "normalising" every frame to mid-grey would destroy the dark
+/// stage mood — exactly the over-exposure the first iteration suffered from.
+/// Only frames below the floor (nearly black) are lifted, and only frames above
+/// the ceiling (blown) are pulled down, both by a bounded amount.
+fn profile_luma_range(profile: &StyleProfile) -> (f64, f64) {
     match profile.id.as_str() {
-        "builtin-concert-dark" | "builtin-concert-mono" => 0.30,
-        "builtin-concert-neon" => 0.32,
-        "builtin-concert-warm" => 0.36,
-        "builtin-night-neon" => 0.28,
-        "builtin-cinematic" => 0.36,
-        "builtin-street-mono" => 0.38,
-        "builtin-golden-hour" => 0.40,
-        "builtin-portrait-natural" | "builtin-festival-pop" | "builtin-sports-crisp" => 0.46,
-        "builtin-wedding-airy" | "builtin-food-warm" => 0.50,
-        _ => 0.42,
+        "builtin-concert-dark" | "builtin-concert-mono" => (0.085, 0.55),
+        "builtin-concert-neon" => (0.085, 0.55),
+        "builtin-concert-warm" => (0.095, 0.58),
+        "builtin-night-neon" => (0.080, 0.50),
+        "builtin-cinematic" => (0.100, 0.60),
+        "builtin-street-mono" => (0.100, 0.65),
+        "builtin-golden-hour" => (0.120, 0.66),
+        "builtin-portrait-natural" => (0.150, 0.70),
+        "builtin-festival-pop" | "builtin-sports-crisp" => (0.140, 0.70),
+        "builtin-wedding-airy" => (0.200, 0.75),
+        "builtin-food-warm" => (0.180, 0.72),
+        "builtin-landscape-vivid" | "builtin-wildlife-detail" => (0.130, 0.70),
+        _ => (0.120, 0.65),
     }
 }
 
@@ -2323,46 +2332,69 @@ fn adapt_look_to_photo(
     stats: &PhotoStats,
     tags: &[String],
 ) {
-    // --- Exposure: median-based, highlight-aware ---------------------------
-    let target = profile_target_luma(profile);
+    // --- Exposure: only rescue outliers, never "normalise" the whole set ---
+    let (luma_floor, luma_ceiling) = profile_luma_range(profile);
     let median = stats.luma_median.max(0.01);
-    let mut delta_ev = (target / median).log2();
+    let mut delta_ev = if median < luma_floor {
+        // Bring near-black frames back into the usable range, but never more
+        // than 0.6 EV: the shadows tool does the rest without flattening.
+        (luma_floor / median).log2().min(0.6)
+    } else if median > luma_ceiling {
+        (luma_ceiling / median).log2().max(-0.5)
+    } else {
+        0.0
+    };
 
-    if delta_ev > 0.0 {
-        if stats.highlight_clip > 0.01 {
-            // Already blowing highlights: raising exposure makes it worse. The
-            // shadow lift below opens the frame without adding more clipping.
-            delta_ev = 0.0;
-        } else if stats.highlight_clip > 0.004 {
-            delta_ev *= 0.25;
-        } else if stats.luma_p95 > 0.94 {
-            delta_ev *= 0.55;
-        }
-    } else if stats.shadow_clip > 0.05 {
-        // Do not crush a frame that is already sitting on the floor.
-        delta_ev *= 0.5;
+    if delta_ev > 0.0 && stats.highlight_clip > 0.01 {
+        // Already blowing highlights: raising exposure makes it worse. The
+        // shadow lift below opens the frame without adding more clipping.
+        delta_ev = 0.0;
     }
 
-    let delta_ev = if delta_ev.abs() < 0.12 {
+    let delta_ev = if delta_ev.abs() < 0.10 {
         0.0
     } else {
-        delta_ev.clamp(-0.8, 0.9)
+        delta_ev.clamp(-0.5, 0.6)
     };
     if delta_ev != 0.0 {
         add_to_scalar(adjustments, "exposure", delta_ev);
     }
 
     // --- Highlight recovery / shadow lift ---------------------------------
-    if stats.highlight_clip > 0.002 || stats.luma_p95 > 0.90 {
-        let recover = (stats.highlight_clip * 2500.0 + (stats.luma_p95 - 0.90).max(0.0) * 120.0)
-            .clamp(3.0, 28.0);
+    //
+    // Measured against the photographer's own concert exports: they keep the
+    // clipped stage lights (highlight clip unchanged) and even crush shadows a
+    // little for punch. So concert/night looks only rescue extreme cases, while
+    // portrait/wedding-style looks can recover normally.
+    let concert_like = matches!(
+        profile.id.as_str(),
+        "builtin-concert-dark"
+            | "builtin-concert-warm"
+            | "builtin-concert-neon"
+            | "builtin-concert-mono"
+            | "builtin-night-neon"
+    );
+    let (highlight_trigger, highlight_gain, highlight_max) = if concert_like {
+        (0.030, 800.0, 12.0)
+    } else {
+        (0.005, 2000.0, 24.0)
+    };
+    if stats.highlight_clip > highlight_trigger || stats.luma_p95 > 0.97 {
+        let recover = (stats.highlight_clip * highlight_gain
+            + (stats.luma_p95 - 0.97).max(0.0) * 150.0)
+            .clamp(2.0, highlight_max);
         add_to_scalar(adjustments, "highlights", -recover);
-        add_to_scalar(adjustments, "whites", -recover * 0.35);
+        add_to_scalar(adjustments, "whites", -recover * 0.3);
     }
 
-    if stats.shadow_clip > 0.01 || stats.luma_p05 < 0.02 {
-        let lift = (stats.shadow_clip * 1200.0 + (0.02 - stats.luma_p05).max(0.0) * 300.0)
-            .clamp(2.0, 18.0);
+    let (shadow_trigger, shadow_gain, shadow_max) = if concert_like {
+        (0.060, 700.0, 8.0)
+    } else {
+        (0.010, 1200.0, 18.0)
+    };
+    if stats.shadow_clip > shadow_trigger || stats.luma_p05 < 0.01 {
+        let lift = (stats.shadow_clip * shadow_gain + (0.01 - stats.luma_p05).max(0.0) * 300.0)
+            .clamp(1.5, shadow_max);
         add_to_scalar(adjustments, "shadows", lift);
         add_to_scalar(adjustments, "blacks", lift * 0.2);
     }
@@ -2375,8 +2407,10 @@ fn adapt_look_to_photo(
     }
 
     // --- Saturation: do not pour neon on top of neon ----------------------
-    if stats.saturation > 0.50 {
-        let factor = (0.50 / stats.saturation).clamp(0.55, 1.0);
+    // Real concert previews sit around 0.45-0.55 saturation, so the guard only
+    // steps in on genuinely extreme frames (lasers, heavy RGB washes).
+    if stats.saturation > 0.60 {
+        let factor = (0.60 / stats.saturation).clamp(0.60, 1.0);
         if adjustments["saturation"].as_f64().unwrap_or(0.0) > 0.0 {
             scale_existing_scalar(adjustments, "saturation", factor);
         }
@@ -2391,10 +2425,10 @@ fn adapt_look_to_photo(
     if let Some(obj) = adjustments.as_object_mut()
         && let Some(lut_intensity) = obj.get("lutIntensity").and_then(Value::as_f64)
     {
-        let factor = if stats.colorfulness > 0.55 {
-            0.80
-        } else if stats.colorfulness > 0.40 {
-            0.90
+        let factor = if stats.colorfulness > 0.85 {
+            0.85
+        } else if stats.colorfulness > 0.65 {
+            0.92
         } else {
             1.0
         };
@@ -2828,9 +2862,10 @@ mod tests {
     fn dark_photo_gets_a_positive_exposure_lift() {
         let stats = PhotoStats {
             luma_median: 0.10,
-            luma_p05: 0.01,
+            luma_p05: 0.004,
             luma_p95: 0.45,
             contrast: 0.10,
+            shadow_clip: 0.03,
             ..PhotoStats::default()
         };
         let mut adjustments = look_inputs();
@@ -2838,6 +2873,53 @@ mod tests {
         assert!(adjustments["exposure"].as_f64().unwrap() > 0.3);
         // Crushed shadows are lifted too.
         assert!(adjustments["shadows"].as_f64().unwrap() > 10.0);
+    }
+
+    #[test]
+    fn concert_look_preserves_an_already_usable_exposure() {
+        // Real concert previews sit around 0.15-0.20 median. The range model
+        // must leave them alone instead of milking them to mid-grey.
+        let profile = builtin_style_profiles()
+            .into_iter()
+            .find(|profile| profile.id == "builtin-concert-dark")
+            .unwrap();
+        let before = profile_to_adjustments(&profile, Some(100.0));
+        for median in [0.11, 0.145, 0.17, 0.22, 0.30, 0.45] {
+            let stats = PhotoStats {
+                luma_median: median,
+                luma_p05: median * 0.2,
+                luma_p95: (median * 2.5).min(0.9),
+                contrast: 0.18,
+                ..PhotoStats::default()
+            };
+            let mut after = before.clone();
+            adapt_look_to_photo(&mut after, &profile, &stats, &[]);
+            assert_eq!(
+                after["exposure"].as_f64().unwrap_or(0.0),
+                before["exposure"].as_f64().unwrap_or(0.0),
+                "median {median} should keep its exposure"
+            );
+        }
+    }
+
+    #[test]
+    fn nearly_black_concert_frame_gets_a_bounded_lift() {
+        let profile = builtin_style_profiles()
+            .into_iter()
+            .find(|profile| profile.id == "builtin-concert-dark")
+            .unwrap();
+        let before = profile_to_adjustments(&profile, Some(100.0));
+        let stats = PhotoStats {
+            luma_median: 0.03,
+            luma_p05: 0.002,
+            luma_p95: 0.20,
+            ..PhotoStats::default()
+        };
+        let mut after = before.clone();
+        adapt_look_to_photo(&mut after, &profile, &stats, &[]);
+        let delta =
+            after["exposure"].as_f64().unwrap_or(0.0) - before["exposure"].as_f64().unwrap_or(0.0);
+        assert!(delta > 0.2 && delta <= 0.6, "{delta}");
     }
 
     #[test]
@@ -2908,5 +2990,562 @@ mod tests {
         adapt_look_to_photo(&mut adjustments, &adapt_profile(), &stats, &[]);
         let temperature = adjustments["temperature"].as_f64().unwrap();
         assert!(temperature < 0.0 && temperature >= -6.0, "{temperature}");
+    }
+}
+
+/// Real-library smoke test. Not part of CI (it needs the local photos), run with:
+///
+/// ```text
+/// cargo test --lib real_library_adaptation -- --ignored --nocapture
+/// ```
+///
+/// It walks the concert folder, finds the cached 480 px previews that AI Style
+/// would analyse, and checks that the adapted looks stay sane on real frames
+/// (dark stage, clipping highlights, neon). Override the location with
+/// `RAPIDRAW_PHOTOS_DIR` / `RAPIDRAW_THUMB_CACHE` and the sample size with
+/// `RAPIDRAW_LIMIT`.
+#[cfg(test)]
+mod real_photos {
+    use super::*;
+    use crate::image_processing::ImageMetadata;
+    use crate::photo_analysis::PhotoStats;
+    use std::path::{Path, PathBuf};
+
+    pub(super) fn real_photos_dir() -> PathBuf {
+        std::env::var("RAPIDRAW_PHOTOS_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                PathBuf::from(std::env::var("HOME").unwrap_or_default())
+                    .join("Pictures/The Catch 22s - BBF - 16.10.2026.")
+            })
+    }
+
+    pub(super) fn thumb_cache_dirs() -> Vec<PathBuf> {
+        if let Ok(dir) = std::env::var("RAPIDRAW_THUMB_CACHE") {
+            return vec![PathBuf::from(dir)];
+        }
+        let home = std::env::var("HOME").unwrap_or_default();
+        let cache_root = PathBuf::from(home).join(".cache");
+        let mut dirs = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&cache_root) {
+            for entry in entries.flatten() {
+                let path = entry.path().join("thumbnails");
+                if path.is_dir() {
+                    dirs.push(path);
+                }
+            }
+        }
+        dirs.sort();
+        dirs
+    }
+
+    fn parse_iso(exif: &Option<std::collections::HashMap<String, String>>) -> Option<u32> {
+        exif.as_ref().and_then(|exif| {
+            [
+                "PhotographicSensitivity",
+                "ISOSpeedRatings",
+                "ISOSpeed",
+                "ISO",
+            ]
+            .iter()
+            .find_map(|key| exif.get(*key))
+            .and_then(|value| {
+                value
+                    .chars()
+                    .filter(|character| character.is_ascii_digit())
+                    .collect::<String>()
+                    .parse::<u32>()
+                    .ok()
+            })
+        })
+    }
+
+    fn resolve_test_luts(profiles: &mut [StyleProfile]) {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/film_luts");
+        let entries = crate::lut_processing::list_luts_in_dir(&dir, true).unwrap_or_default();
+        for profile in profiles {
+            if let Some(lut) = profile.lut.as_mut()
+                && lut.path.is_empty()
+                && let Some(entry) = entries.iter().find(|entry| entry.name == lut.name)
+            {
+                lut.path = entry.path.clone();
+            }
+        }
+    }
+
+    fn percentile(sorted: &[f64], fraction: f64) -> f64 {
+        if sorted.is_empty() {
+            return f64::NAN;
+        }
+        let index = ((sorted.len() - 1) as f64 * fraction).round() as usize;
+        sorted[index.min(sorted.len() - 1)]
+    }
+
+    fn summarize(name: &str, mut values: Vec<f64>) {
+        values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        println!(
+            "  {name:<18} min {:.3}  p10 {:.3}  p50 {:.3}  p90 {:.3}  max {:.3}",
+            percentile(&values, 0.0),
+            percentile(&values, 0.10),
+            percentile(&values, 0.50),
+            percentile(&values, 0.90),
+            percentile(&values, 1.0),
+        );
+    }
+
+    #[test]
+    #[ignore = "needs the local photo library"]
+    fn real_library_adaptation() {
+        let photos_dir = real_photos_dir();
+        let thumb_dirs = thumb_cache_dirs();
+        let limit: usize = std::env::var("RAPIDRAW_LIMIT")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(250);
+
+        if !photos_dir.exists() || thumb_dirs.is_empty() {
+            eprintln!(
+                "skipping: {} or no thumbnail cache under ~/.cache",
+                photos_dir.display()
+            );
+            return;
+        }
+
+        let mut sidecars: Vec<PathBuf> = walkdir::WalkDir::new(&photos_dir)
+            .max_depth(2)
+            .into_iter()
+            .filter_map(Result::ok)
+            .map(|entry| entry.into_path())
+            .filter(|path| path.to_string_lossy().ends_with(".rrdata"))
+            .collect();
+        sidecars.sort();
+
+        let mut samples: Vec<(PathBuf, PhotoStats, String)> = Vec::new();
+        let mut missing = 0usize;
+        let mut default_previews = 0usize;
+        for sidecar in sidecars.iter().take(limit) {
+            let raf = PathBuf::from(sidecar.to_string_lossy().trim_end_matches(".rrdata"));
+            if !raf.exists() {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(sidecar) else {
+                continue;
+            };
+            let Ok(metadata) = serde_json::from_str::<ImageMetadata>(&content) else {
+                continue;
+            };
+            let adjustments = serde_json::to_vec(&metadata.adjustments).unwrap_or_default();
+            let raf_str = raf.to_string_lossy().into_owned();
+            let Some(hash) =
+                crate::file_management::compute_thumbnail_cache_hash(&raf_str, &adjustments)
+            else {
+                continue;
+            };
+            // Mirror the production lookup: prefer the untouched render, then
+            // fall back to the camera preview for graded files.
+            let find_small = |bytes: &[u8]| -> Option<PathBuf> {
+                let hash = crate::file_management::compute_thumbnail_cache_hash(&raf_str, bytes)?;
+                thumb_dirs
+                    .iter()
+                    .map(|dir| dir.join(format!("{hash}_small.jpg")))
+                    .find(|candidate| candidate.exists())
+            };
+            let untouched = find_small(br#"{}"#).or_else(|| {
+                let reset = serde_json::to_vec(&crate::image_processing::default_adjustments())
+                    .unwrap_or_default();
+                find_small(&reset)
+            });
+            let iso = parse_iso(&metadata.exif);
+            let edited = metadata
+                .adjustments
+                .as_object()
+                .map(|object| !object.is_empty())
+                .unwrap_or(false);
+            let stats_source = if let Some(untouched) = untouched {
+                default_previews += 1;
+                crate::photo_analysis::analyze_thumbnail_cached(&untouched, iso)
+                    .map(|stats| (*stats).clone())
+            } else if edited {
+                let preview = std::fs::read(&raf).ok().and_then(|bytes| {
+                    crate::image_loader::safe_embedded_preview_fallback(&bytes, &raf_str)
+                });
+                preview.map(|preview| {
+                    default_previews += 1;
+                    crate::photo_analysis::analyze_image(&preview, iso)
+                })
+            } else {
+                find_small(&adjustments).and_then(|current| {
+                    crate::photo_analysis::analyze_thumbnail_cached(&current, iso)
+                        .map(|stats| (*stats).clone())
+                })
+            };
+            let Some(stats) = stats_source else {
+                missing += 1;
+                continue;
+            };
+            samples.push((raf, stats, String::new()));
+        }
+
+        println!(
+            "\nreal photos: {} analysed, {} from the unedited render, {} thumbnails missing (of {} sidecars)",
+            samples.len(),
+            default_previews,
+            missing,
+            sidecars.len().min(limit)
+        );
+        assert!(
+            samples.len() >= 10,
+            "expected at least 10 real thumbnails to analyse, got {}",
+            samples.len()
+        );
+
+        println!("\nmeasured photo stats:");
+        summarize(
+            "median luma",
+            samples.iter().map(|(_, s, _)| s.luma_median).collect(),
+        );
+        summarize(
+            "p05 luma",
+            samples.iter().map(|(_, s, _)| s.luma_p05).collect(),
+        );
+        summarize(
+            "p95 luma",
+            samples.iter().map(|(_, s, _)| s.luma_p95).collect(),
+        );
+        summarize(
+            "contrast",
+            samples.iter().map(|(_, s, _)| s.contrast).collect(),
+        );
+        summarize(
+            "shadow clip",
+            samples.iter().map(|(_, s, _)| s.shadow_clip).collect(),
+        );
+        summarize(
+            "highlight clip",
+            samples.iter().map(|(_, s, _)| s.highlight_clip).collect(),
+        );
+        summarize(
+            "saturation",
+            samples.iter().map(|(_, s, _)| s.saturation).collect(),
+        );
+        summarize(
+            "colourfulness",
+            samples.iter().map(|(_, s, _)| s.colorfulness).collect(),
+        );
+        summarize(
+            "cast R-B",
+            samples.iter().map(|(_, s, _)| s.cast_rb).collect(),
+        );
+        let isos: Vec<f64> = samples
+            .iter()
+            .filter_map(|(_, s, _)| s.iso.map(|iso| iso as f64))
+            .collect();
+        summarize("ISO", isos);
+
+        println!("\nfirst frames:");
+        for (path, stats, _) in samples.iter().take(8) {
+            println!(
+                "  {:<18} med {:.2} p95 {:.2} clip {:.3}/{:.3} sat {:.2} col {:.2} cast {:+.2} iso {}",
+                path.file_name().unwrap().to_string_lossy(),
+                stats.luma_median,
+                stats.luma_p95,
+                stats.shadow_clip,
+                stats.highlight_clip,
+                stats.saturation,
+                stats.colorfulness,
+                stats.cast_rb,
+                stats
+                    .iso
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "-".into()),
+            );
+        }
+
+        let mut profiles = builtin_style_profiles();
+        resolve_test_luts(&mut profiles);
+
+        for profile in profiles.iter().filter(|profile| {
+            matches!(
+                profile.id.as_str(),
+                "builtin-concert-dark"
+                    | "builtin-concert-warm"
+                    | "builtin-concert-neon"
+                    | "builtin-concert-mono"
+                    | "builtin-portrait-natural"
+                    | "builtin-cinematic"
+            )
+        }) {
+            let mut exposure_deltas = Vec::new();
+            let mut highlights = Vec::new();
+            let mut shadows = Vec::new();
+            let mut saturations = Vec::new();
+            let mut luts = Vec::new();
+
+            for (_, stats, _) in &samples {
+                let base = profile_to_adjustments(profile, Some(100.0));
+                let mut adapted = base.clone();
+                adapt_look_to_photo(&mut adapted, profile, stats, &[]);
+
+                let delta = adapted["exposure"].as_f64().unwrap_or(0.0)
+                    - base["exposure"].as_f64().unwrap_or(0.0);
+                assert!(
+                    delta.is_finite() && delta.abs() <= 1.05,
+                    "{}: {delta}",
+                    profile.id
+                );
+
+                // Highlights may only be pulled down, shadows only lifted.
+                let base_highlights = base["highlights"].as_f64().unwrap_or(0.0);
+                let adapted_highlights = adapted["highlights"].as_f64().unwrap_or(0.0);
+                assert!(
+                    adapted_highlights <= base_highlights + 1e-6,
+                    "{}: highlights went up",
+                    profile.id
+                );
+                let base_shadows = base["shadows"].as_f64().unwrap_or(0.0);
+                let adapted_shadows = adapted["shadows"].as_f64().unwrap_or(0.0);
+                assert!(
+                    adapted_shadows >= base_shadows - 1e-6,
+                    "{}: shadows went down",
+                    profile.id
+                );
+
+                // Clipped frames must not get a positive push.
+                if stats.highlight_clip > 0.01 {
+                    assert!(delta <= 1e-6, "{}: lifted a clipped frame", profile.id);
+                }
+                // Vivid frames must not get more saturation.
+                let base_sat = base["saturation"].as_f64().unwrap_or(0.0);
+                if stats.saturation > 0.50 && base_sat > 0.0 {
+                    assert!(
+                        adapted["saturation"].as_f64().unwrap_or(0.0) <= base_sat + 1e-6,
+                        "{}: saturated an already vivid frame",
+                        profile.id
+                    );
+                }
+
+                exposure_deltas.push(delta);
+                highlights.push(adaptation_value(&adapted, "highlights"));
+                shadows.push(adaptation_value(&adapted, "shadows"));
+                saturations.push(adaptation_value(&adapted, "saturation"));
+                luts.push(adaptation_value(&adapted, "lutIntensity"));
+            }
+
+            println!("\nprofile {} ({})", profile.name, profile.id);
+            summarize("exposure shift", exposure_deltas);
+            summarize("highlights", highlights);
+            summarize("shadows", shadows);
+            summarize("saturation", saturations);
+            summarize("lut intensity", luts);
+        }
+    }
+
+    fn adaptation_value(adjustments: &Value, key: &str) -> f64 {
+        adjustments[key].as_f64().unwrap_or(0.0)
+    }
+}
+
+/// Measures what the photographer actually did: compares the user's edited
+/// exports in `Izabrane/2048px` with the unedited RAW previews of the same
+/// frames. The resulting EV/saturation deltas are the real target the automatic
+/// looks should aim for. Run with:
+///
+/// ```text
+/// cargo test --lib real_library_edit_targets -- --ignored --nocapture
+/// ```
+#[cfg(test)]
+mod real_edit_targets {
+    use super::real_photos::{real_photos_dir, thumb_cache_dirs};
+    use crate::image_processing::ImageMetadata;
+    use crate::photo_analysis::{PhotoStats, analyze_image, analyze_thumbnail_cached};
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+
+    fn analyze_export(path: &Path) -> Option<PhotoStats> {
+        let image = image::open(path).ok()?;
+        Some(analyze_image(&image, None))
+    }
+
+    fn iso_from_sidecar(path: &Path) -> Option<u32> {
+        let content = std::fs::read_to_string(path).ok()?;
+        let metadata = serde_json::from_str::<ImageMetadata>(&content).ok()?;
+        metadata.exif.as_ref().and_then(|exif| {
+            [
+                "PhotographicSensitivity",
+                "ISOSpeedRatings",
+                "ISOSpeed",
+                "ISO",
+            ]
+            .iter()
+            .find_map(|key| exif.get(*key))
+            .and_then(|value| {
+                value
+                    .chars()
+                    .filter(|character| character.is_ascii_digit())
+                    .collect::<String>()
+                    .parse::<u32>()
+                    .ok()
+            })
+        })
+    }
+
+    fn source_thumbnail(raf: &Path) -> Option<PathBuf> {
+        let sidecar = PathBuf::from(format!("{}.rrdata", raf.to_string_lossy()));
+        let content = std::fs::read_to_string(&sidecar).ok()?;
+        let metadata = serde_json::from_str::<ImageMetadata>(&content).ok()?;
+        let adjustments = serde_json::to_vec(&metadata.adjustments).unwrap_or_default();
+        let raf_str = raf.to_string_lossy().into_owned();
+        let hash = crate::file_management::compute_thumbnail_cache_hash(&raf_str, &adjustments)?;
+        thumb_cache_dirs()
+            .iter()
+            .map(|dir| dir.join(format!("{hash}_small.jpg")))
+            .find(|candidate| candidate.exists())
+    }
+
+    fn percentile(sorted: &[f64], fraction: f64) -> f64 {
+        if sorted.is_empty() {
+            return f64::NAN;
+        }
+        let index = ((sorted.len() - 1) as f64 * fraction).round() as usize;
+        sorted[index.min(sorted.len() - 1)]
+    }
+
+    fn summarize(name: &str, mut values: Vec<f64>) {
+        values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        println!(
+            "  {name:<20} min {:+.3}  p10 {:+.3}  p50 {:+.3}  p90 {:+.3}  max {:+.3}",
+            percentile(&values, 0.0),
+            percentile(&values, 0.10),
+            percentile(&values, 0.50),
+            percentile(&values, 0.90),
+            percentile(&values, 1.0),
+        );
+    }
+
+    #[test]
+    #[ignore = "needs the local photo library"]
+    fn real_library_edit_targets() {
+        let photos_dir = real_photos_dir();
+        let export_dir = photos_dir.join("Izabrane/2048px");
+        if !export_dir.is_dir() {
+            eprintln!("skipping: {} missing", export_dir.display());
+            return;
+        }
+
+        // stem (DSCF5578) -> RAF path
+        let mut rafs: HashMap<String, PathBuf> = HashMap::new();
+        for entry in walkdir::WalkDir::new(&photos_dir)
+            .max_depth(2)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            let path = entry.into_path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("RAF")
+                && let Some(stem) = path.file_stem().and_then(|stem| stem.to_str())
+            {
+                rafs.insert(stem.to_string(), path);
+            }
+        }
+
+        let mut exports: Vec<PathBuf> = std::fs::read_dir(&export_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                matches!(
+                    path.extension().and_then(|ext| ext.to_str()),
+                    Some("jpg") | Some("jpeg") | Some("JPG")
+                )
+            })
+            .collect();
+        exports.sort();
+
+        let mut ev_deltas = Vec::new();
+        let mut median_source = Vec::new();
+        let mut median_export = Vec::new();
+        let mut sat_source = Vec::new();
+        let mut sat_export = Vec::new();
+        let mut colour_source = Vec::new();
+        let mut colour_export = Vec::new();
+        let mut contrast_source = Vec::new();
+        let mut contrast_export = Vec::new();
+        let mut p95_source = Vec::new();
+        let mut p95_export = Vec::new();
+        let mut hclip_source = Vec::new();
+        let mut hclip_export = Vec::new();
+        let mut sclip_source = Vec::new();
+        let mut sclip_export = Vec::new();
+        let mut pairs = 0usize;
+
+        println!("\nedited exports vs source previews:");
+        for export in &exports {
+            let Some(stem) = export
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.split('_').next())
+            else {
+                continue;
+            };
+            let Some(raf) = rafs.get(stem) else {
+                continue;
+            };
+            let Some(thumbnail) = source_thumbnail(raf) else {
+                continue;
+            };
+            let Some(source) = analyze_thumbnail_cached(&thumbnail, iso_from_sidecar(raf)) else {
+                continue;
+            };
+            let Some(edited) = analyze_export(export) else {
+                continue;
+            };
+            pairs += 1;
+            let ev = (edited.luma_median / source.luma_median.max(0.01)).log2();
+            ev_deltas.push(ev);
+            median_source.push(source.luma_median);
+            median_export.push(edited.luma_median);
+            sat_source.push(source.saturation);
+            sat_export.push(edited.saturation);
+            colour_source.push(source.colorfulness);
+            colour_export.push(edited.colorfulness);
+            contrast_source.push(source.contrast);
+            contrast_export.push(edited.contrast);
+            p95_source.push(source.luma_p95);
+            p95_export.push(edited.luma_p95);
+            hclip_source.push(source.highlight_clip);
+            hclip_export.push(edited.highlight_clip);
+            sclip_source.push(source.shadow_clip);
+            sclip_export.push(edited.shadow_clip);
+
+            if ev_deltas.len() <= 12 {
+                println!(
+                    "  {stem:<10} EV {:+.2}  med {:.2} -> {:.2}  sat {:.2} -> {:.2}  col {:.2} -> {:.2}",
+                    ev,
+                    source.luma_median,
+                    edited.luma_median,
+                    source.saturation,
+                    edited.saturation,
+                    source.colorfulness,
+                    edited.colorfulness,
+                );
+            }
+        }
+
+        println!("\n{pairs} matched source/export pairs");
+        assert!(pairs >= 5, "expected at least 5 pairs, got {pairs}");
+        summarize("desired EV shift", ev_deltas);
+        summarize("source median", median_source);
+        summarize("export median", median_export);
+        summarize("source saturation", sat_source);
+        summarize("export saturation", sat_export);
+        summarize("source colourfulness", colour_source);
+        summarize("export colourfulness", colour_export);
+        summarize("source contrast", contrast_source);
+        summarize("export contrast", contrast_export);
+        summarize("source p95", p95_source);
+        summarize("export p95", p95_export);
+        summarize("source highlight clip", hclip_source);
+        summarize("export highlight clip", hclip_export);
+        summarize("source shadow clip", sclip_source);
+        summarize("export shadow clip", sclip_export);
     }
 }
