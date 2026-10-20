@@ -272,6 +272,10 @@ Korisnički profili se spremaju u `<app data>/style_profiles/style_profiles.json
 - **Describe** ne razumije slobodan jezik kao LLM: to je kurirani rječnik
   fotografskih pojmova. Neobične formulacije mogu promašiti; tada pomogne
   konkretniji opis (npr. „teal shadows, orange highlights, Portra, grain").
+- **Generator drži** contrast/blacks u rasponu bliskom naučenom profilu (do
+  +26/−18 prije varijanti) kako jaki „moody" opisi ne bi srušili svijetle
+  RAW-ove u crno. Za ekstremniji izgled koristi **Bold** ili ručno doradi u
+  **Edit**.
 - Modeli (CLIP/SAM) traže prethodno preuzimanje i imaju svoje licence — provjeri
   prije komercijalne distribucije. Fork je AGPL-3.0.
 

@@ -671,6 +671,9 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
         intent.contrast += 16.0;
         intent.clarity += 6.0;
         intent.grain += 10.0;
+        // A monochrome frame needs real blacks or it turns into a grey haze,
+        // especially when the RAW preview is bright and low-contrast.
+        intent.blacks -= 6.0;
         if has(text, &["noir"]) {
             intent.blacks -= 16.0;
             intent.vignette -= 18.0;
@@ -953,13 +956,22 @@ fn build_adjustments(intent: &LookIntent, variant: Variant) -> Value {
     };
 
     let scale = |value: f64| round(value * strength);
+    // Cap the stacked intent *before* the variant scale so Balanced and Bold
+    // stay distinct instead of both hitting the final clamp.
+    let contrast_intent = intent.contrast.clamp(-20.0, 26.0);
+    let blacks_intent = intent.blacks.clamp(-18.0, 20.0);
     let mut adjustments = json!({
         "brightness": round(clamp(scale(intent.brightness), -60.0, 60.0)),
-        "contrast": round(clamp(scale(intent.contrast) * contrast_scale, -60.0, 60.0)),
-        "highlights": round(clamp(scale(intent.highlights), -80.0, 60.0)),
-        "shadows": round(clamp(scale(intent.shadows), -40.0, 60.0)),
+        // The subject and mood blocks stack additively, so a prompt such as
+        // "moody teal and orange concert" can otherwise land at +40 contrast
+        // and -30 blacks, which can crush a bright linear RAW preview. The
+        // learned photographer profile sits around +11 contrast / -20 blacks,
+        // so the generated defaults stay close to that range.
+        "contrast": round(clamp(scale(contrast_intent) * contrast_scale, -40.0, 34.0)),
+        "highlights": round(clamp(scale(intent.highlights), -50.0, 60.0)),
+        "shadows": round(clamp(scale(intent.shadows), -20.0, 60.0)),
         "whites": round(clamp(scale(intent.whites), -40.0, 40.0)),
-        "blacks": round(clamp(scale(intent.blacks), -40.0, 40.0)),
+        "blacks": round(clamp(scale(blacks_intent), -20.0, 40.0)),
         "clarity": round(clamp(scale(intent.clarity) * clarity_scale, -30.0, 40.0)),
         "dehaze": round(clamp(scale(intent.dehaze), -10.0, 30.0)),
         "vibrance": round(clamp(scale(intent.vibrance) * sat_scale, -40.0, 40.0)),
@@ -1023,7 +1035,7 @@ fn build_adjustments(intent: &LookIntent, variant: Variant) -> Value {
     };
     let fade = clamp(scale(fade), 0.0, 32.0);
     if fade > 0.5 || intent.contrast.abs() > 8.0 {
-        let contrast = clamp(scale(intent.contrast) * contrast_scale, -40.0, 45.0);
+        let contrast = clamp(scale(contrast_intent) * contrast_scale, -40.0, 45.0);
         let lift = fade;
         let mid_lift = lift * 0.4;
         let shoulder = (contrast * 0.12).clamp(-8.0, 10.0);
