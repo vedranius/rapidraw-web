@@ -149,50 +149,6 @@ impl LookIntent {
             entry.2 += luminance;
         }
     }
-
-    fn summary(&self) -> String {
-        let mut traits: Vec<String> = Vec::new();
-        if self.mono {
-            traits.push(if self.sepia {
-                "sepia tone".to_string()
-            } else {
-                "black and white".to_string()
-            });
-        }
-        let tinted = [self.shadow_grade, self.mid_grade, self.highlight_grade]
-            .into_iter()
-            .flatten()
-            .any(|(_, saturation)| saturation > 0.0);
-        if tinted && (!self.mono || self.sepia) {
-            traits.push("split toning".to_string());
-        }
-        let contrast = self.contrast * self.strength;
-        if contrast > 10.0 {
-            traits.push("punchy contrast".to_string());
-        } else if contrast < -6.0 {
-            traits.push("soft contrast".to_string());
-        }
-        let temperature = self.temperature * self.strength;
-        if temperature > 4.0 {
-            traits.push("warm white balance".to_string());
-        } else if temperature < -4.0 {
-            traits.push("cool white balance".to_string());
-        }
-        if self.grain * self.strength > 4.0 {
-            traits.push("subtle grain".to_string());
-        }
-        if self.fade * self.strength > 4.0 {
-            traits.push("faded blacks".to_string());
-        }
-        if let Some(lut) = self.lut {
-            traits.push(format!("{lut} LUT"));
-        }
-        if traits.is_empty() {
-            "clean, natural colour".to_string()
-        } else {
-            traits.join(", ")
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1096,19 +1052,131 @@ fn default_lut_for(intent: &LookIntent) -> &'static str {
     }
 }
 
+/// Describes the finished candidate rather than the abstract intent, so a Soft
+/// variant is not advertised with the Balanced variant's punchy contrast, and a
+/// monochrome look never mentions the film LUT that was dropped.
+fn summary_from_adjustments(
+    adjustments: &Value,
+    intent: &LookIntent,
+    lut: Option<&crate::style_profile::StyleProfileLut>,
+) -> String {
+    let mut traits: Vec<String> = Vec::new();
+    if intent.mono {
+        traits.push(if intent.sepia {
+            "sepia tone".to_string()
+        } else {
+            "black and white".to_string()
+        });
+    }
+
+    if !intent.mono || intent.sepia {
+        let tinted = ["shadows", "midtones", "highlights"].iter().any(|band| {
+            adjustments
+                .get("colorGrading")
+                .and_then(|grading| grading.get(*band))
+                .and_then(|band| band.get("saturation"))
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0)
+                > 0.5
+        });
+        if tinted {
+            traits.push("split toning".to_string());
+        }
+    }
+
+    let value = |key: &str| adjustments.get(key).and_then(Value::as_f64).unwrap_or(0.0);
+
+    let contrast = value("contrast");
+    if contrast > 15.0 {
+        traits.push("punchy contrast".to_string());
+    } else if contrast < -6.0 {
+        traits.push("soft contrast".to_string());
+    }
+
+    let temperature = value("temperature");
+    if temperature > 4.0 {
+        traits.push("warm white balance".to_string());
+    } else if temperature < -4.0 {
+        traits.push("cool white balance".to_string());
+    }
+
+    if value("grainAmount") > 4.0 {
+        traits.push("subtle grain".to_string());
+    }
+
+    let faded = adjustments
+        .get("curves")
+        .and_then(|curves| curves.get("luma"))
+        .and_then(|luma| luma.get(0))
+        .and_then(|point| point.get("y"))
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0)
+        > 2.0;
+    if faded {
+        traits.push("faded blacks".to_string());
+    }
+
+    if !intent.mono && value("vibrance") > 10.0 {
+        traits.push("vibrance boost".to_string());
+    }
+
+    if let Some(lut) = lut {
+        traits.push(format!("{} LUT", lut.name));
+    }
+
+    if traits.is_empty() {
+        "clean, natural colour".to_string()
+    } else {
+        traits.join(", ")
+    }
+}
+
+/// Specific requests name the result before generic adjectives: "cinematic
+/// neon" should become "Neon Portrait", not "Cinematic Portrait".
+const LABEL_PRIORITY: &[&str] = &[
+    "Neon",
+    "Golden Hour",
+    "Teal & Orange",
+    "Sepia",
+    "Noir",
+    "Black & White",
+    "Vintage Film",
+    "Matte",
+    "Dreamy",
+    "Punchy",
+    "Airy",
+    "Warm",
+    "Cool",
+    "Earthy",
+    "Red",
+    "Purple",
+    "Muted",
+    "Moody",
+    "Cinematic",
+    "Natural",
+    "Modern",
+];
+
+fn preferred_label(intent: &LookIntent) -> Option<&str> {
+    LABEL_PRIORITY
+        .iter()
+        .find(|preferred| intent.labels.iter().any(|label| label == *preferred))
+        .copied()
+        .or_else(|| intent.labels.first().copied())
+}
+
 fn base_label(intent: &LookIntent) -> String {
     let subject = intent.subject.map(subject_label);
-    let style = if intent.mono {
-        intent
-            .labels
-            .iter()
-            .find(|label| matches!(**label, "Black & White" | "Noir" | "Sepia"))
-            .copied()
-            .or_else(|| intent.labels.first().copied())
-    } else {
-        intent.labels.first().copied()
-    };
+    let style = preferred_label(intent);
     match (subject, style) {
+        // Avoid "Portra Portrait": when one label contains the other, the more
+        // specific style already says everything.
+        (Some(subject), Some(style))
+            if style.to_lowercase().contains(&subject.to_lowercase())
+                || subject.to_lowercase().contains(&style.to_lowercase()) =>
+        {
+            style.to_string()
+        }
         (Some(subject), Some(style)) => format!("{style} {subject}"),
         (Some(subject), None) => format!("{subject} Look"),
         (None, Some(style)) => style.to_string(),
@@ -1136,7 +1204,7 @@ fn build_profile(prompt: &str, intent: &LookIntent, variant: Variant) -> StylePr
         "Generated from \"{}\". {} variation: {}.",
         prompt.trim(),
         variant.label(),
-        intent.summary()
+        summary_from_adjustments(&adjustments, intent, lut.as_ref())
     );
 
     StyleProfile {
@@ -1369,6 +1437,44 @@ mod tests {
 
         let teal_orange = named("tirkizno i narančasto", Variant::Balanced);
         assert!(teal_orange.name.contains("Teal & Orange"));
+    }
+
+    #[test]
+    fn monochrome_description_does_not_mention_a_dropped_lut() {
+        let profile = named("black and white portrait", Variant::Balanced);
+        assert!(profile.lut.is_none());
+        let description = profile.description.unwrap_or_default();
+        assert!(!description.contains("LUT"), "{description}");
+    }
+
+    #[test]
+    fn the_most_specific_label_names_the_look() {
+        let neon = named("cinematic neon night portrait", Variant::Balanced);
+        assert!(neon.name.starts_with("Neon"), "{}", neon.name);
+
+        let teal = named("moody teal and orange concert", Variant::Balanced);
+        assert!(teal.name.starts_with("Teal & Orange"), "{}", teal.name);
+    }
+
+    #[test]
+    fn description_reflects_the_variant_that_was_built() {
+        let soft = named("moody teal and orange concert, subtle", Variant::Soft);
+        let bold = named("moody teal and orange concert, subtle", Variant::Bold);
+        let soft_text = soft.description.unwrap_or_default();
+        let bold_text = bold.description.unwrap_or_default();
+        assert_ne!(soft_text, bold_text);
+        assert!(
+            !soft_text.contains("punchy contrast"),
+            "the soft variant should not be described as punchy: {soft_text}"
+        );
+        assert!(bold_text.contains("punchy contrast"), "{bold_text}");
+    }
+
+    #[test]
+    fn film_stock_label_does_not_repeat_the_subject() {
+        let profile = named("Kodak Portra 400 portrait", Variant::Balanced);
+        assert_eq!(profile.name, "Portra — Balanced");
+        assert!(profile.detect_tags.iter().any(|tag| tag == "portrait"));
     }
 
     #[test]
