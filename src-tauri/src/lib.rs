@@ -56,6 +56,7 @@ mod multi_exposure;
 mod negative_conversion;
 mod panorama_stitching;
 mod panorama_utils;
+mod photo_analysis;
 mod preset_converter;
 mod raw_processing;
 mod relight;

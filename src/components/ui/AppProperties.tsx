@@ -494,6 +494,14 @@ interface ImageAnalysisResult {
   sharpnessMetric: number;
   centerFocusMetric: number;
   exposureMetric: number;
+  colorMetric: number;
+  lumaMean: number;
+  lumaMedian: number;
+  shadowClip: number;
+  highlightClip: number;
+  saturation: number;
+  colorfulness: number;
+  iso?: number | null;
   width: number;
   height: number;
 }

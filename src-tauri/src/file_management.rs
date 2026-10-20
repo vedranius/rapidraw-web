@@ -84,6 +84,56 @@ fn compute_thumbnail_cache_hash(path_str: &str, adjustments_bytes: &[u8]) -> Opt
     Some(hasher.finalize().to_hex().to_string())
 }
 
+/// Returns the cached 480 px preview of `path_str` together with the ISO from its
+/// sidecar. AI Style analyses this preview to adapt exposure, colour and noise
+/// reduction to the actual photo. Returns `None` when the thumbnail has not been
+/// generated yet (the caller then applies the look's defaults).
+pub fn cached_analysis_source(
+    app_handle: &AppHandle,
+    path_str: &str,
+) -> Option<(PathBuf, Option<u32>)> {
+    let (_, sidecar_path) = parse_virtual_path(path_str);
+
+    // Mirror `generate_single_thumbnail_and_cache` byte-for-byte: the cache key
+    // includes the serialised adjustments, so any difference here would point at
+    // a thumbnail that does not exist.
+    let (adjustments_bytes, exif) = match fs::read_to_string(&sidecar_path) {
+        Ok(content) => match serde_json::from_str::<ImageMetadata>(&content) {
+            Ok(meta) => (
+                serde_json::to_vec(&meta.adjustments).unwrap_or_default(),
+                meta.exif,
+            ),
+            Err(_) => (Vec::new(), None),
+        },
+        Err(_) => (Vec::new(), None),
+    };
+
+    let iso = exif.and_then(|exif| {
+        [
+            "PhotographicSensitivity",
+            "ISOSpeedRatings",
+            "ISOSpeed",
+            "ISO",
+        ]
+        .iter()
+        .find_map(|key| exif.get(*key))
+        .and_then(|value| {
+            value
+                .chars()
+                .filter(|character| character.is_ascii_digit())
+                .collect::<String>()
+                .parse::<u32>()
+                .ok()
+        })
+    });
+
+    let cache_hash = compute_thumbnail_cache_hash(path_str, &adjustments_bytes)?;
+    let cache_dir = resolve_thumbnail_cache_dir(app_handle).ok()?;
+    let small_path = cache_dir.join(format!("{cache_hash}_small.jpg"));
+
+    small_path.exists().then_some((small_path, iso))
+}
+
 struct ImageFileMetadata {
     is_edited: bool,
     tags: Option<Vec<String>>,
@@ -2657,11 +2707,85 @@ pub async fn apply_adjustments_to_paths(
     adjustments: Value,
     app_handle: AppHandle,
 ) -> Result<(), String> {
+    let entries = paths
+        .into_iter()
+        .map(|path| (path, adjustments.clone()))
+        .collect();
+    apply_adjustments_to_paths_map(entries, app_handle).await
+}
+
+/// Merges `overlay` into `target` (top-level keys). `activeTools` is merged as a
+/// set of switches rather than replaced, so a pasted/applied look only touches
+/// the tools it needs and leaves the user's other switches untouched.
+fn merge_adjustments_value(target: &mut Value, overlay: &Value) {
+    let (Some(target_map), Some(overlay_map)) = (target.as_object_mut(), overlay.as_object())
+    else {
+        return;
+    };
+
+    for (key, value) in overlay_map {
+        if key == "activeTools"
+            && let (Some(existing), Some(pasted)) = (
+                target_map.get_mut(key).and_then(Value::as_object_mut),
+                value.as_object(),
+            )
+        {
+            for (tool, enabled) in pasted {
+                existing.insert(tool.clone(), enabled.clone());
+            }
+            continue;
+        }
+        target_map.insert(key.clone(), value.clone());
+    }
+}
+
+fn apply_one_adjustments(
+    path: &str,
+    adjustments: &Value,
+    lens_db: Option<&crate::lens_correction::LensDatabase>,
+    enable_xmp_sync: bool,
+    create_xmp_if_missing: bool,
+) {
+    let (source_path, sidecar_path) = parse_virtual_path(path);
+
+    let mut existing_metadata =
+        crate::exif_processing::load_sidecar_with_exif(&sidecar_path, &source_path);
+
+    let mut new_adjustments = existing_metadata.adjustments;
+    if new_adjustments.is_null() {
+        new_adjustments = default_adjustments();
+    }
+
+    merge_adjustments_value(&mut new_adjustments, adjustments);
+
+    resolve_lens_params_in_adjustments(&mut new_adjustments, &existing_metadata.exif, lens_db);
+
+    existing_metadata.adjustments = new_adjustments;
+
+    let _ = crate::exif_processing::write_sidecar(&sidecar_path, &source_path, &existing_metadata);
+
+    if enable_xmp_sync {
+        sync_metadata_to_xmp(&source_path, &existing_metadata, create_xmp_if_missing);
+    }
+}
+
+/// Applies a **different** adjustments object to every path in one background
+/// job. AI Style uses this so exposure, highlight recovery, white balance and
+/// noise reduction can be adapted to each photo's own histogram while still
+/// writing all sidecars and queueing all thumbnails only once.
+pub async fn apply_adjustments_to_paths_map(
+    entries: Vec<(String, Value)>,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+
     let state = app_handle.state::<AppState>();
-    add_to_thumbnail_queue(&state, paths.len(), &app_handle);
+    add_to_thumbnail_queue(&state, entries.len(), &app_handle);
 
     tauri::async_runtime::spawn_blocking(move || {
-        log::info!("Applying adjustments to {} paths", paths.len());
+        log::info!("Applying per-image adjustments to {} paths", entries.len());
         let settings = load_settings(app_handle.clone()).unwrap_or_default();
         let enable_xmp_sync = settings.enable_xmp_sync.unwrap_or(false);
         let create_xmp_if_missing = settings.create_xmp_if_missing.unwrap_or(false);
@@ -2673,59 +2797,17 @@ pub async fn apply_adjustments_to_paths(
             .unwrap()
             .clone();
 
-        paths.par_iter().for_each(|path| {
-            let (source_path, sidecar_path) = parse_virtual_path(path);
-
-            let mut existing_metadata =
-                crate::exif_processing::load_sidecar_with_exif(&sidecar_path, &source_path);
-
-            let mut new_adjustments = existing_metadata.adjustments;
-            if new_adjustments.is_null() {
-                new_adjustments = default_adjustments();
-            }
-
-            if let (Some(new_map), Some(pasted_map)) =
-                (new_adjustments.as_object_mut(), adjustments.as_object())
-            {
-                for (k, v) in pasted_map {
-                    // `activeTools` is a set of per-tool switches: merge it so a
-                    // pasted/applied look only enables the tools it needs and
-                    // leaves the user's other switches (e.g. a disabled mask or
-                    // manual geometry) untouched.
-                    if k == "activeTools"
-                        && let (Some(existing), Some(pasted)) = (
-                            new_map.get_mut(k).and_then(Value::as_object_mut),
-                            v.as_object(),
-                        )
-                    {
-                        for (tool, enabled) in pasted {
-                            existing.insert(tool.clone(), enabled.clone());
-                        }
-                        continue;
-                    }
-                    new_map.insert(k.clone(), v.clone());
-                }
-            }
-
-            resolve_lens_params_in_adjustments(
-                &mut new_adjustments,
-                &existing_metadata.exif,
+        entries.par_iter().for_each(|(path, adjustments)| {
+            apply_one_adjustments(
+                path,
+                adjustments,
                 lens_db.as_deref(),
+                enable_xmp_sync,
+                create_xmp_if_missing,
             );
-
-            existing_metadata.adjustments = new_adjustments;
-
-            let _ = crate::exif_processing::write_sidecar(
-                &sidecar_path,
-                &source_path,
-                &existing_metadata,
-            );
-
-            if enable_xmp_sync {
-                sync_metadata_to_xmp(&source_path, &existing_metadata, create_xmp_if_missing);
-            }
         });
 
+        let paths: Vec<String> = entries.iter().map(|(path, _)| path.clone()).collect();
         enqueue_thumbnail_regeneration(&app_handle, &paths);
     });
 

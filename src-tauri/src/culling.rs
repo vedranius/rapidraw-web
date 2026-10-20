@@ -32,6 +32,14 @@ pub struct ImageAnalysisResult {
     pub sharpness_metric: f64,
     pub center_focus_metric: f64,
     pub exposure_metric: f64,
+    pub color_metric: f64,
+    pub luma_mean: f64,
+    pub luma_median: f64,
+    pub shadow_clip: f64,
+    pub highlight_clip: f64,
+    pub saturation: f64,
+    pub colorfulness: f64,
+    pub iso: Option<u32>,
     pub width: u32,
     pub height: u32,
 }
@@ -63,9 +71,10 @@ struct ImageAnalysisData {
     result: ImageAnalysisResult,
 }
 
-const WEIGHT_SHARPNESS: f64 = 0.40;
-const WEIGHT_CENTER_FOCUS: f64 = 0.35;
+const WEIGHT_SHARPNESS: f64 = 0.35;
+const WEIGHT_CENTER_FOCUS: f64 = 0.30;
 const WEIGHT_EXPOSURE: f64 = 0.25;
+const WEIGHT_COLOR: f64 = 0.10;
 
 // How much the AI/CLIP semantic score (from the `.rrdata` sidecar tags that the
 // background indexer already wrote) contributes to the final `ai_score`, versus
@@ -196,31 +205,6 @@ fn calculate_laplacian_variance(image: &GrayImage) -> f64 {
         / laplacian_values.len() as f64
 }
 
-fn calculate_exposure_metric(image: &GrayImage) -> f64 {
-    let histogram = imageproc::stats::histogram(image);
-    let total_pixels = (image.width() * image.height()) as f64;
-    if total_pixels == 0.0 {
-        return 0.0;
-    }
-
-    let clip_threshold_dark = 5;
-    let clip_threshold_bright = 250;
-
-    let dark_pixels = histogram.channels[0][0..clip_threshold_dark]
-        .iter()
-        .sum::<u32>() as f64;
-    let bright_pixels = histogram.channels[0][clip_threshold_bright..256]
-        .iter()
-        .sum::<u32>() as f64;
-
-    let dark_clip_ratio = dark_pixels / total_pixels;
-    let bright_clip_ratio = bright_pixels / total_pixels;
-
-    let penalty = (dark_clip_ratio * 5.0) + (bright_clip_ratio * 5.0);
-
-    (1.0f64 - penalty).max(0.0)
-}
-
 fn analyze_image(
     path: &str,
     hasher: &image_hasher::Hasher,
@@ -241,8 +225,15 @@ fn analyze_image(
     let thumbnail = img.thumbnail(ANALYSIS_DIM, ANALYSIS_DIM);
     let gray_thumbnail = thumbnail.to_luma8();
 
+    // Brightness, clipping, saturation, colourfulness, cast and ISO noise are
+    // measured on the same preview; they drive the technical part of the score
+    // and are surfaced to the UI so the choice is inspectable.
+    let iso = crate::exif_processing::read_iso(path, &file_bytes);
+    let stats = crate::photo_analysis::analyze_image(&thumbnail, iso);
+    let exposure_metric = crate::photo_analysis::exposure_quality(&stats);
+    let color_metric = crate::photo_analysis::color_quality(&stats);
+
     let sharpness_metric = calculate_laplacian_variance(&gray_thumbnail);
-    let exposure_metric = calculate_exposure_metric(&gray_thumbnail);
 
     let (thumb_w, thumb_h) = gray_thumbnail.dimensions();
     let center_crop = imageops::crop_imm(
@@ -258,9 +249,11 @@ fn analyze_image(
     let normalized_sharpness = ((sharpness_metric + 1.0).log10() / 3.5).min(1.0);
     let normalized_center_focus = ((center_focus_metric + 1.0).log10() / 3.5).min(1.0);
 
-    let quality_score = (normalized_sharpness * WEIGHT_SHARPNESS)
+    let quality_score = ((normalized_sharpness * WEIGHT_SHARPNESS)
         + (normalized_center_focus * WEIGHT_CENTER_FOCUS)
-        + (exposure_metric * WEIGHT_EXPOSURE);
+        + (exposure_metric * WEIGHT_EXPOSURE)
+        + (color_metric * WEIGHT_COLOR))
+        * (1.0 - crate::photo_analysis::noise_penalty(&stats));
 
     // Semantic layer: reuse the CLIP tags that the background indexer already
     // wrote into the `.rrdata` sidecar. No extra model inference happens during
@@ -295,6 +288,14 @@ fn analyze_image(
             sharpness_metric,
             center_focus_metric,
             exposure_metric,
+            color_metric,
+            luma_mean: stats.luma_mean,
+            luma_median: stats.luma_median,
+            shadow_clip: stats.shadow_clip,
+            highlight_clip: stats.highlight_clip,
+            saturation: stats.saturation,
+            colorfulness: stats.colorfulness,
+            iso: stats.iso,
             width,
             height,
         },

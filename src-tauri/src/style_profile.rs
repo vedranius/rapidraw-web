@@ -21,7 +21,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tauri::{AppHandle, Manager};
 
-use crate::file_management::{apply_adjustments_to_paths, parse_virtual_path};
+use crate::file_management::{
+    apply_adjustments_to_paths_map, cached_analysis_source, parse_virtual_path,
+};
+use crate::photo_analysis::{PhotoStats, analyze_thumbnail_cached};
 
 /// Values that are pure "look" scalars and have a neutral (0) default, so they
 /// can be scaled by intensity and averaged when learning a profile.
@@ -2140,6 +2143,13 @@ pub async fn match_style_profiles_for_paths(
     .map_err(|e| format!("Style matching task failed: {e}"))?
 }
 
+/// Cached stats for one photo, or `None` when its 480 px preview has not been
+/// generated yet (the look is then applied with its defaults).
+fn stats_for_path(app_handle: &AppHandle, path: &str) -> Option<std::sync::Arc<PhotoStats>> {
+    let (thumbnail, iso) = cached_analysis_source(app_handle, path)?;
+    analyze_thumbnail_cached(&thumbnail, iso)
+}
+
 #[tauri::command]
 pub async fn apply_style_profile_to_paths(
     paths: Vec<String>,
@@ -2152,13 +2162,40 @@ pub async fn apply_style_profile_to_paths(
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Style profile '{}' not found", profile_id))?;
 
-    let adjustments = profile_to_adjustments(&profile, intensity);
+    let intensity = intensity.unwrap_or(profile.intensity).clamp(0.0, 100.0);
     log::info!(
-        "AI Style: applying profile '{}' to {} images",
+        "AI Style: applying profile '{}' to {} images (intensity {:.0})",
         profile.name,
-        paths.len()
+        paths.len(),
+        intensity
     );
-    apply_adjustments_to_paths(paths, adjustments, app_handle).await
+
+    // Per-image analysis (JPEG decode of the cached 480 px previews) is CPU
+    // work; keep it off the async runtime's core threads and off the GTK thread.
+    let task_handle = app_handle.clone();
+    let task_profile = profile.clone();
+    let entries = tauri::async_runtime::spawn_blocking(move || {
+        let mut entries = Vec::with_capacity(paths.len());
+        for path in paths {
+            let tags = tags_for_path(&path);
+            let mut adjustments = profile_to_adjustments(&task_profile, Some(intensity));
+            merge_adjustments_additive(
+                &mut adjustments,
+                &tone_tweak_adjustments(tone_tweak_for_tags(&tags)),
+            );
+            if let Some(stats) = stats_for_path(&task_handle, &path) {
+                adapt_look_to_photo(&mut adjustments, &task_profile, &stats, &tags);
+            } else {
+                clamp_look_adjustments(&mut adjustments);
+            }
+            entries.push((path, adjustments));
+        }
+        entries
+    })
+    .await
+    .map_err(|error| format!("Style adaptation task failed: {error}"))?;
+
+    apply_adjustments_to_paths_map(entries, app_handle).await
 }
 
 /// Small, per-image corrections derived from content/lighting tags, so the same
@@ -2220,6 +2257,217 @@ fn merge_adjustments_additive(base: &mut Value, overlay: &Value) {
     }
 }
 
+/// Where a given look wants the median tone to land. Concert looks are meant to
+/// stay moody, wedding/portrait looks brighter; `None` (learned/user profiles)
+/// uses a neutral 0.42.
+fn profile_target_luma(profile: &StyleProfile) -> f64 {
+    match profile.id.as_str() {
+        "builtin-concert-dark" | "builtin-concert-mono" => 0.30,
+        "builtin-concert-neon" => 0.32,
+        "builtin-concert-warm" => 0.36,
+        "builtin-night-neon" => 0.28,
+        "builtin-cinematic" => 0.36,
+        "builtin-street-mono" => 0.38,
+        "builtin-golden-hour" => 0.40,
+        "builtin-portrait-natural" | "builtin-festival-pop" | "builtin-sports-crisp" => 0.46,
+        "builtin-wedding-airy" | "builtin-food-warm" => 0.50,
+        _ => 0.42,
+    }
+}
+
+fn add_to_scalar(adjustments: &mut Value, key: &str, delta: f64) {
+    let Some(obj) = adjustments.as_object_mut() else {
+        return;
+    };
+    let current = obj.get(key).and_then(Value::as_f64).unwrap_or(0.0);
+    obj.insert(key.to_string(), json!(current + delta));
+}
+
+/// Scales an existing (usually positive) look value, e.g. taming `vibrance` when
+/// the photo is already neon-bright.
+fn scale_existing_scalar(adjustments: &mut Value, key: &str, factor: f64) {
+    let Some(obj) = adjustments.as_object_mut() else {
+        return;
+    };
+    if let Some(value) = obj.get(key).and_then(Value::as_f64) {
+        obj.insert(key.to_string(), json!(value * factor));
+    }
+}
+
+fn replace_scalar(adjustments: &mut Value, key: &str, value: f64) {
+    if let Some(obj) = adjustments.as_object_mut() {
+        obj.insert(key.to_string(), json!(value));
+    }
+}
+
+fn contains_tag(tags: &[String], needle: &str) -> bool {
+    tags.iter().any(|tag| normalize_tag(tag) == needle)
+}
+
+/// Adapts a look to what the photo *actually* contains.
+///
+/// One fixed preset cannot work for a correctly exposed daylight frame and a
+/// dark, clipping stage shot. This reads the measured histogram/colour stats and:
+///
+/// * moves the median tone towards the look's target with a bounded EV shift and
+///   backs off when highlights are already clipping,
+/// * recovers blown highlights and lifts crushed shadows,
+/// * re-balances SATURATION when the scene is already neon-vivid,
+/// * applies a small grey-world white-balance correction for neutral/skin looks
+///   on a strong cast (never for neon/stage-light scenes or warm looks),
+/// * lowers clarity/sharpening and adds noise reduction on high-ISO frames,
+/// * reduces the LUT blend when the photo already carries a lot of colour.
+fn adapt_look_to_photo(
+    adjustments: &mut Value,
+    profile: &StyleProfile,
+    stats: &PhotoStats,
+    tags: &[String],
+) {
+    // --- Exposure: median-based, highlight-aware ---------------------------
+    let target = profile_target_luma(profile);
+    let median = stats.luma_median.max(0.01);
+    let mut delta_ev = (target / median).log2();
+
+    if delta_ev > 0.0 {
+        if stats.highlight_clip > 0.01 {
+            // Already blowing highlights: raising exposure makes it worse. The
+            // shadow lift below opens the frame without adding more clipping.
+            delta_ev = 0.0;
+        } else if stats.highlight_clip > 0.004 {
+            delta_ev *= 0.25;
+        } else if stats.luma_p95 > 0.94 {
+            delta_ev *= 0.55;
+        }
+    } else if stats.shadow_clip > 0.05 {
+        // Do not crush a frame that is already sitting on the floor.
+        delta_ev *= 0.5;
+    }
+
+    let delta_ev = if delta_ev.abs() < 0.12 {
+        0.0
+    } else {
+        delta_ev.clamp(-0.8, 0.9)
+    };
+    if delta_ev != 0.0 {
+        add_to_scalar(adjustments, "exposure", delta_ev);
+    }
+
+    // --- Highlight recovery / shadow lift ---------------------------------
+    if stats.highlight_clip > 0.002 || stats.luma_p95 > 0.90 {
+        let recover = (stats.highlight_clip * 2500.0 + (stats.luma_p95 - 0.90).max(0.0) * 120.0)
+            .clamp(3.0, 28.0);
+        add_to_scalar(adjustments, "highlights", -recover);
+        add_to_scalar(adjustments, "whites", -recover * 0.35);
+    }
+
+    if stats.shadow_clip > 0.01 || stats.luma_p05 < 0.02 {
+        let lift = (stats.shadow_clip * 1200.0 + (0.02 - stats.luma_p05).max(0.0) * 300.0)
+            .clamp(2.0, 18.0);
+        add_to_scalar(adjustments, "shadows", lift);
+        add_to_scalar(adjustments, "blacks", lift * 0.2);
+    }
+
+    // --- Contrast: help flat frames, avoid crunching contrasty ones --------
+    if stats.contrast < 0.09 {
+        add_to_scalar(adjustments, "contrast", 4.0);
+    } else if stats.contrast > 0.32 {
+        add_to_scalar(adjustments, "contrast", -5.0);
+    }
+
+    // --- Saturation: do not pour neon on top of neon ----------------------
+    if stats.saturation > 0.50 {
+        let factor = (0.50 / stats.saturation).clamp(0.55, 1.0);
+        if adjustments["saturation"].as_f64().unwrap_or(0.0) > 0.0 {
+            scale_existing_scalar(adjustments, "saturation", factor);
+        }
+        if adjustments["vibrance"].as_f64().unwrap_or(0.0) > 0.0 {
+            scale_existing_scalar(adjustments, "vibrance", factor);
+        }
+    } else if stats.saturation < 0.12 {
+        add_to_scalar(adjustments, "vibrance", 4.0);
+    }
+
+    // --- LUT blend: keep strong film colour away from already-vivid frames -
+    if let Some(obj) = adjustments.as_object_mut()
+        && let Some(lut_intensity) = obj.get("lutIntensity").and_then(Value::as_f64)
+    {
+        let factor = if stats.colorfulness > 0.55 {
+            0.80
+        } else if stats.colorfulness > 0.40 {
+            0.90
+        } else {
+            1.0
+        };
+        obj.insert(
+            "lutIntensity".to_string(),
+            json!((lut_intensity * factor).clamp(0.0, 100.0)),
+        );
+    }
+
+    // --- Noise: high ISO gets less crunch and more noise reduction ---------
+    let iso = stats.iso.unwrap_or(0);
+    let reduction = match iso {
+        iso if iso >= 6400 => 0.60,
+        iso if iso >= 3200 => 0.45,
+        iso if iso >= 1600 => 0.25,
+        _ => 0.0,
+    };
+    if reduction > 0.0 {
+        for key in ["clarity", "structure", "sharpness"] {
+            if adjustments[key].as_f64().unwrap_or(0.0) > 0.0 {
+                scale_existing_scalar(adjustments, key, 1.0 - reduction);
+            }
+        }
+        add_to_scalar(adjustments, "lumaNoiseReduction", 20.0 * reduction);
+        add_to_scalar(adjustments, "colorNoiseReduction", 12.0 * reduction);
+    }
+
+    // --- Vignette: don't double up on an already-dark border --------------
+    if stats.corner_ratio < 0.80
+        && let Some(vignette) = adjustments["vignetteAmount"].as_f64()
+        && vignette < 0.0
+    {
+        replace_scalar(adjustments, "vignetteAmount", vignette * 0.5);
+    }
+
+    // --- White balance: conservative grey-world for neutral/skin looks -----
+    let neutral_look = matches!(
+        profile.id.as_str(),
+        "builtin-portrait-natural"
+            | "builtin-wedding-airy"
+            | "builtin-landscape-vivid"
+            | "builtin-sports-crisp"
+            | "builtin-wildlife-detail"
+            | "builtin-food-warm"
+    );
+    let colourful_scene = stats.colorfulness > 0.45
+        || [
+            "neon",
+            "stage lighting",
+            "stage lights",
+            "laser lights",
+            "colorful",
+        ]
+        .iter()
+        .any(|tag| contains_tag(tags, tag));
+
+    if neutral_look && !colourful_scene {
+        if stats.cast_rb.abs() > 0.07 {
+            let correction =
+                -stats.cast_rb.signum() * ((stats.cast_rb.abs() - 0.07) * 350.0).min(6.0);
+            add_to_scalar(adjustments, "temperature", correction);
+        }
+        if stats.cast_gm.abs() > 0.06 {
+            let correction =
+                stats.cast_gm.signum() * ((stats.cast_gm.abs() - 0.06) * 300.0).min(5.0);
+            add_to_scalar(adjustments, "tint", correction);
+        }
+    }
+
+    // Clamp once more: the adaptive deltas must stay inside editor ranges.
+    clamp_look_adjustments(adjustments);
+}
+
 /// The fully automatic pass: for every image, pick the best matching profile
 /// from its content tags and apply it. Images below `min_score` fall back to
 /// `fallback_profile_id` when provided, otherwise they are skipped.
@@ -2237,24 +2485,10 @@ pub async fn auto_style_paths_with_ai(
 
     let profiles = all_style_profiles(&app_handle);
     let min_score = min_score.unwrap_or(0.12);
-
-    // Sequential on purpose: this only reads sidecars and we must not occupy the
-    // global rayon pool with work that can be starved by (or starve) the GPU jobs.
-    let mut decisions: Vec<(String, Option<String>, String, ToneTweak)> =
-        Vec::with_capacity(paths.len());
-    for path in &paths {
-        let tags = tags_for_path(path);
-        let (profile_id, profile_name) = match best_profile_for_tags(&tags, &profiles, min_score) {
-            Some((_, _, profile)) => (Some(profile.id.clone()), profile.name.clone()),
-            None => (None, String::new()),
-        };
-        decisions.push((
-            path.clone(),
-            profile_id,
-            profile_name,
-            tone_tweak_for_tags(&tags),
-        ));
-    }
+    let fallback = fallback_profile_id
+        .as_ref()
+        .and_then(|id| profiles.iter().find(|p| p.id == *id))
+        .cloned();
 
     log::info!(
         "AI Style: auto pass over {} images (min score {:.2})",
@@ -2262,59 +2496,64 @@ pub async fn auto_style_paths_with_ai(
         min_score
     );
 
-    let fallback = fallback_profile_id
-        .as_ref()
-        .and_then(|id| profiles.iter().find(|p| p.id == *id));
+    // Matching + per-image analysis + look adaptation all happen in one blocking
+    // task: sidecar reads and 480 px JPEG decodes are cheap but must stay off
+    // the GTK/async threads. Nothing here touches the GPU or the global rayon
+    // pool, so it cannot deadlock with rendering.
+    let task_handle = app_handle.clone();
+    let profiles_for_task = profiles.clone();
+    let (entries, names, counts, skipped) = tauri::async_runtime::spawn_blocking(move || {
+        let mut entries = Vec::with_capacity(paths.len());
+        let mut names: HashMap<String, String> = HashMap::new();
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        let mut skipped: Vec<String> = Vec::new();
 
-    let mut groups: HashMap<(String, ToneTweak), Vec<String>> = HashMap::new();
-    let mut names: HashMap<String, String> = HashMap::new();
-    let mut counts: HashMap<String, usize> = HashMap::new();
-    let mut skipped: Vec<String> = Vec::new();
+        for path in paths {
+            let tags = tags_for_path(&path);
+            let matched = best_profile_for_tags(&tags, &profiles_for_task, min_score);
+            let chosen = matched
+                .as_ref()
+                .map(|(_, _, profile)| *profile)
+                .or(fallback.as_ref());
 
-    for (path, profile_id, profile_name, tweak) in decisions {
-        let chosen = profile_id.or_else(|| fallback.map(|fb| fb.id.clone()));
+            let Some(profile) = chosen else {
+                skipped.push(path);
+                continue;
+            };
 
-        match chosen {
-            Some(id) => {
-                let display_name = if profile_name.is_empty() {
-                    profiles
-                        .iter()
-                        .find(|p| p.id == id)
-                        .map(|p| p.name.clone())
-                        .unwrap_or_else(|| id.clone())
-                } else {
-                    profile_name
-                };
-                names.entry(id.clone()).or_insert(display_name);
-                *counts.entry(id.clone()).or_insert(0) += 1;
-                groups.entry((id, tweak)).or_default().push(path);
+            names
+                .entry(profile.id.clone())
+                .or_insert_with(|| profile.name.clone());
+            *counts.entry(profile.id.clone()).or_insert(0) += 1;
+
+            let look_intensity = intensity.unwrap_or(profile.intensity).clamp(0.0, 100.0);
+            let mut adjustments = profile_to_adjustments(profile, Some(look_intensity));
+            merge_adjustments_additive(
+                &mut adjustments,
+                &tone_tweak_adjustments(tone_tweak_for_tags(&tags)),
+            );
+            if let Some(stats) = stats_for_path(&task_handle, &path) {
+                adapt_look_to_photo(&mut adjustments, profile, &stats, &tags);
+            } else {
+                clamp_look_adjustments(&mut adjustments);
             }
-            None => skipped.push(path),
+            entries.push((path, adjustments));
         }
-    }
 
-    for ((profile_id, tweak), group_paths) in groups {
-        let Some(profile) = profiles.iter().find(|p| p.id == profile_id) else {
-            continue;
-        };
-        let mut adjustments = profile_to_adjustments(profile, intensity);
-        merge_adjustments_additive(&mut adjustments, &tone_tweak_adjustments(tweak));
-        clamp_look_adjustments(&mut adjustments);
-        log::info!(
-            "AI Style: auto-applying '{}' to {} images ({:?})",
-            profile.name,
-            group_paths.len(),
-            tweak
-        );
-        apply_adjustments_to_paths(group_paths, adjustments, app_handle.clone()).await?;
-    }
+        (entries, names, counts, skipped)
+    })
+    .await
+    .map_err(|error| format!("Style adaptation task failed: {error}"))?;
 
     let applied = counts.values().sum();
+    apply_adjustments_to_paths_map(entries, app_handle).await?;
+
     log::info!(
         "AI Style: auto pass done, {} applied, {} skipped",
         applied,
         skipped.len()
     );
+
     let by_profile: Vec<ProfileUsage> = counts
         .into_iter()
         .map(|(profile_id, count)| {
@@ -2552,5 +2791,122 @@ mod tests {
         let curve = adjustments["curves"]["luma"].as_array().unwrap();
         assert_eq!(curve.len(), CURVE_GRID.len());
         assert_eq!(curve[0]["x"], json!(0.0));
+    }
+
+    fn adapt_profile() -> StyleProfile {
+        StyleProfile {
+            id: "builtin-portrait-natural".into(),
+            name: "portrait".into(),
+            detect_tags: vec!["portrait".into()],
+            subject: None,
+            adjustments: json!({}),
+            lut: None,
+            intensity: 100.0,
+            built_in: true,
+            description: None,
+        }
+    }
+
+    fn look_inputs() -> Value {
+        json!({
+            "exposure": 0.0,
+            "highlights": -10.0,
+            "shadows": 10.0,
+            "whites": 0.0,
+            "blacks": 0.0,
+            "contrast": 0.0,
+            "saturation": 12.0,
+            "vibrance": 10.0,
+            "clarity": 12.0,
+            "structure": 12.0,
+            "sharpness": 20.0,
+            "vignetteAmount": -10.0,
+        })
+    }
+
+    #[test]
+    fn dark_photo_gets_a_positive_exposure_lift() {
+        let stats = PhotoStats {
+            luma_median: 0.10,
+            luma_p05: 0.01,
+            luma_p95: 0.45,
+            contrast: 0.10,
+            ..PhotoStats::default()
+        };
+        let mut adjustments = look_inputs();
+        adapt_look_to_photo(&mut adjustments, &adapt_profile(), &stats, &[]);
+        assert!(adjustments["exposure"].as_f64().unwrap() > 0.3);
+        // Crushed shadows are lifted too.
+        assert!(adjustments["shadows"].as_f64().unwrap() > 10.0);
+    }
+
+    #[test]
+    fn clipped_highlights_block_a_positive_lift_and_are_recovered() {
+        let stats = PhotoStats {
+            luma_median: 0.12,
+            luma_p95: 0.99,
+            highlight_clip: 0.10,
+            contrast: 0.14,
+            ..PhotoStats::default()
+        };
+        let mut adjustments = look_inputs();
+        adapt_look_to_photo(&mut adjustments, &adapt_profile(), &stats, &[]);
+        // A quarter of the (large) lift still keeps it modest.
+        assert!(adjustments["exposure"].as_f64().unwrap() <= 0.3);
+        assert!(adjustments["highlights"].as_f64().unwrap() < -10.0);
+        assert!(adjustments["whites"].as_f64().unwrap() < 0.0);
+    }
+
+    #[test]
+    fn already_vivid_photos_reduce_saturation_and_lut_blend() {
+        let mut profile = adapt_profile();
+        profile.lut = Some(StyleProfileLut {
+            name: "Kodak".into(),
+            path: "/tmp/kodak.cube".into(),
+            is_built_in: true,
+            intensity: 60.0,
+        });
+        let stats = PhotoStats {
+            saturation: 0.80,
+            colorfulness: 0.90,
+            contrast: 0.18,
+            ..PhotoStats::default()
+        };
+        let mut adjustments = look_inputs();
+        adjustments["lutIntensity"] = json!(60.0);
+        adapt_look_to_photo(&mut adjustments, &profile, &stats, &[]);
+        assert!(adjustments["saturation"].as_f64().unwrap() < 12.0);
+        assert!(adjustments["vibrance"].as_f64().unwrap() < 10.0);
+        assert!(adjustments["lutIntensity"].as_f64().unwrap() < 60.0);
+    }
+
+    #[test]
+    fn high_iso_reduces_crunch_and_adds_noise_reduction() {
+        let stats = PhotoStats {
+            iso: Some(12800),
+            noise: 0.75,
+            contrast: 0.18,
+            ..PhotoStats::default()
+        };
+        let mut adjustments = look_inputs();
+        adapt_look_to_photo(&mut adjustments, &adapt_profile(), &stats, &[]);
+        assert!(adjustments["clarity"].as_f64().unwrap() < 12.0);
+        assert!(adjustments["sharpness"].as_f64().unwrap() < 20.0);
+        assert!(adjustments["lumaNoiseReduction"].as_f64().unwrap() > 0.0);
+    }
+
+    #[test]
+    fn warm_neutral_photo_gets_a_conservative_cooling_correction() {
+        let stats = PhotoStats {
+            cast_rb: 0.20,
+            colorfulness: 0.20,
+            saturation: 0.30,
+            contrast: 0.18,
+            ..PhotoStats::default()
+        };
+        let mut adjustments = look_inputs();
+        adapt_look_to_photo(&mut adjustments, &adapt_profile(), &stats, &[]);
+        let temperature = adjustments["temperature"].as_f64().unwrap();
+        assert!(temperature < 0.0 && temperature >= -6.0, "{temperature}");
     }
 }

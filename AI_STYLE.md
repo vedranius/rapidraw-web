@@ -28,9 +28,18 @@ smoke machine, laser lights, mosh pit, headbanging, crowd surfing, festival crow
 
 Radi u postojećem **Cull** dijalogu (desni klik na selekciju → _Cull_).
 
-- Klasična kvaliteta (oštrina / centriranost / ekspozicija) spaja se sa
+- Klasična kvaliteta (oštrina / centriranost / ekspozicija / **boja**) spaja se sa
   **semantičkom ocjenom** iz CLIP tagova (npr. `portrait`/`face`/`musician` i
   `concert`/`stage` podižu ocjenu, `motion blur`/`noise` snižavaju).
+- Težine klasičnog dijela: **oštrina 0.35, centriranost 0.30, ekspozicija 0.25,
+  boja 0.10**. Ekspozicija više nije samo „kazna za clipping": mjeri se medijan
+  svjetline (široki prihvatljivi raspon, da noćni/koncertni kadar ne bude kažnjen
+  samo zato što je namjerno mračan) plus udio crnih i izbijeljenih piksela.
+- **Boja** se mjeri kroz zasićenost i _colourfulness_ (Hasler–Süsstrunk), pa
+  sivi/blijedi kadar dobije malo nižu ocjenu od kadra koji stvarno nosi boju.
+- **Šum**: ISO ≥ 1600/3200/6400/12800 daje mali penal (0.05–0.18), jer visoki
+  ISO jede detalj. U dijalogu se ispod `AI` ocjene prikazuje `E` (exposure
+  quality), `C` (color quality) i ISO, da je odluka provjerljiva.
 - Semantička ocjena vrednuje i **kompoziciju i svjetlo**: tagovi kao
   `rule of thirds`, `leading lines`, `framing`, `symmetry`, `reflection`,
   `depth of field`, `golden hour`, `soft light` daju mali pozitivan doprinos, pa
@@ -113,6 +122,41 @@ Ovo je dio koji radi ono što si opisao (npr. „Iron Maiden look"):
 
 Dobiveni profil dobiva `detectTags` iz najčešćih tagova izvornih slika, pa se
 automatski veže na sličan sadržaj.
+
+### Per-image adaptacija (svjetlina i boje)
+
+Stil se **ne** primjenjuje kao fiksni blob na sve slike. Za svaku fotografiju se
+analizira njezin keširani 480 px preview (`photo_analysis.rs`) i izmjeri:
+
+- medijan svjetline, 5./95. percentil, kontrast (std. devijacija),
+- udio crnih i izbijeljenih piksela,
+- prosječna zasićenost i _colourfulness_,
+- cast (toplo/hladno, zeleno/magenta) i omjer kutova prema centru (vinjeta),
+- ISO iz sidecara (šum).
+
+Iz tih brojeva `adapt_look_to_photo()` prije primjene prilagodi look:
+
+- **Ekspozicija**: medijan se vodi prema cilju koji ovisi o stilu (koncert 0.28–0.36,
+  portret 0.46, vjenčanje 0.52), ograničeno na ±0.8–0.9 EV. Ako slika već ima
+  izbijeljene highlighte (>1 %), ekspozicija se **ne** diže — umjesto toga se
+  podižu sjene.
+- **Highlighti/sjene**: recovery izbijeljenih dijelova i lift zdrobljenih sjena,
+  malo prema potrebi.
+- **Kontrast**: blago gore na mliječnim/ravnim kadrovima, blago dolje na već
+  kontrastnim.
+- **Zasićenost**: na već neon-zasićenoj sceni pozitivna saturacija/vibrance se
+  smanjuju (do ~45 %), da boje ne „izgore".
+- **LUT**: blend se smanjuje na 80–90 % kad slika već nosi puno boje.
+- **Šum**: na ISO ≥ 1600 smanjuje se clarity/structure/sharpness i dodaje
+  luma/color noise reduction.
+- **Vinjeta**: ne udvostručuje se ako su kutovi već tamni.
+- **White balance**: samo za neutralne/portretne stilove i samo kod izraženog
+  casta (nikad za neon/stage-light scene ni tople lookove), s malim capom.
+
+Rezultat: ista „Iron Maiden" ili filmska receptura izgleda različito na
+nedovoljno eksponiranoj, preeksponiranoj i već zasićenoj fotografiji — što je i
+bio cilj. Analiza se kešira po putanji + mtime; ako thumbnail još ne postoji,
+look se primijeni s tvorničkim vrijednostima.
 
 ---
 

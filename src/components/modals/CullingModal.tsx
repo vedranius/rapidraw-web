@@ -409,6 +409,10 @@ export default function CullingModal({
                                   score: group.representative.aiScore.toFixed(2),
                                 })}
                               </Text>
+                              <div className="truncate text-[10px] leading-tight text-white/70">
+                                {`E ${(group.representative.exposureMetric ?? 0).toFixed(2)} · C ${(group.representative.colorMetric ?? 0).toFixed(2)}`}
+                                {group.representative.iso ? ` · ISO ${group.representative.iso}` : ''}
+                              </div>
                               {group.representative.tags.length > 0 && (
                                 <div className="truncate text-[10px] leading-tight text-white/70">
                                   {group.representative.tags.join(' · ')}
