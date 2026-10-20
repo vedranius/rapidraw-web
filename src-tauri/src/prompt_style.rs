@@ -1227,7 +1227,9 @@ pub fn generate_candidates(prompt: &str) -> Result<Vec<StyleProfile>, String> {
     if prompt.is_empty() {
         return Err("Describe the look you want first.".to_string());
     }
-    if prompt.len() > 600 {
+    // Count characters, not UTF-8 bytes: a 300-character Croatian prompt is
+    // 600+ bytes and used to be rejected even though the textarea allowed it.
+    if prompt.chars().count() > 600 {
         return Err("Keep the description under 600 characters.".to_string());
     }
 
@@ -1475,6 +1477,16 @@ mod tests {
         let profile = named("Kodak Portra 400 portrait", Variant::Balanced);
         assert_eq!(profile.name, "Portra — Balanced");
         assert!(profile.detect_tags.iter().any(|tag| tag == "portrait"));
+    }
+
+    #[test]
+    fn prompt_limit_counts_characters_not_bytes() {
+        let croatian = "mračni koncert ".repeat(30); // 420 chars, 500+ bytes
+        assert!(croatian.chars().count() <= 600);
+        assert!(generate_candidates(&croatian).is_ok());
+
+        let too_long = "a".repeat(601);
+        assert!(generate_candidates(&too_long).is_err());
     }
 
     #[test]

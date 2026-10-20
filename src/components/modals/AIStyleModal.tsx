@@ -35,6 +35,15 @@ type Tab = 'profiles' | 'prompt' | 'matches' | 'learn';
 
 const TAG_PREVIEW_LIMIT = 6;
 
+// The interpreter understands English and Croatian, so the examples stay in
+// English and double as a hint of the vocabulary it recognises.
+const PROMPT_EXAMPLES = [
+  'moody teal and orange concert',
+  'warm airy wedding, Portra 400',
+  'cinematic neon night portrait',
+  'black and white street portrait',
+];
+
 function TagChip({ label }: { label: string }) {
   return (
     <span className="inline-block rounded-full bg-bg-primary px-2 py-0.5 text-[10px] text-text-secondary border border-border-color">
@@ -277,6 +286,9 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       profile.id === id ? { ...profile, adjustments: { ...profile.adjustments, [key]: value } } : profile,
     );
     setCandidates(next);
+    // The saved copy no longer matches once a slider moves; require an explicit
+    // Save again instead of showing a misleading check mark.
+    setSavedCandidates((current) => current.filter((savedId) => savedId !== id));
     if (refresh) void renderCandidatePreviews(next);
   };
 
@@ -329,6 +341,19 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
         rows={3}
         className="w-full resize-none rounded-md border border-border-color bg-bg-primary px-3 py-2 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent"
       />
+
+      <div className="flex flex-wrap gap-2">
+        {PROMPT_EXAMPLES.map((example) => (
+          <button
+            key={example}
+            type="button"
+            onClick={() => setPrompt(example)}
+            className="rounded-full border border-border-color bg-bg-primary px-3 py-1 text-xs text-text-secondary transition-colors hover:border-accent hover:text-text-primary"
+          >
+            {example}
+          </button>
+        ))}
+      </div>
 
       <div className="flex items-center justify-between gap-3">
         <Text variant={TextVariants.small} className="text-text-secondary">
@@ -472,11 +497,13 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
                     </button>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {slider('contrast', t('adjustments.basic.contrast'), -40, 40, 1, 'default')}
-                    {slider('brightness', t('adjustments.basic.brightness'), -40, 40, 1, 'default')}
-                    {slider('saturation', t('adjustments.color.saturation'), -60, 40, 1, 'default')}
+                    {/* Ranges match the generator's clamps so a Bold or
+                        black-and-white candidate never opens out of range. */}
+                    {slider('contrast', t('adjustments.basic.contrast'), -60, 60, 1, 'default')}
+                    {slider('brightness', t('adjustments.basic.brightness'), -60, 60, 1, 'default')}
+                    {slider('saturation', t('adjustments.color.saturation'), -100, 40, 1, 'default')}
                     {slider('temperature', t('adjustments.color.temperature'), -40, 40, 1, 'default')}
-                    {slider('highlights', t('adjustments.basic.highlights'), -60, 40, 1, 'default')}
+                    {slider('highlights', t('adjustments.basic.highlights'), -80, 60, 1, 'default')}
                     {slider('shadows', t('adjustments.basic.shadows'), -40, 60, 1, 'default')}
                     {slider('grainAmount', t('adjustments.effects.grain'), 0, 60)}
                     {slider('vignetteAmount', t('adjustments.effects.vignette'), -60, 0)}
@@ -886,7 +913,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       aria-modal="true"
     >
       <div
-        className={`bg-surface rounded-lg shadow-xl p-6 w-full max-w-4xl transform transition-all duration-300 ease-out ${
+        className={`bg-surface rounded-lg shadow-xl p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto transform transition-all duration-300 ease-out ${
           show ? 'scale-100 opacity-100 translate-y-0' : 'scale-95 opacity-0 -translate-y-4'
         }`}
         onClick={(e) => e.stopPropagation()}
