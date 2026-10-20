@@ -1726,6 +1726,21 @@ struct LookStats {
 
 impl LookStats {
     fn add_scalar(&mut self, key: &str, value: f64) {
+        // Colour-grading hues are angles: averaging 350° and 10° linearly gives
+        // 180° (the opposite colour). Accumulate sin/cos instead and rebuild the
+        // angle in `build_adjustments_from_stats`.
+        if key.ends_with(".hue") {
+            let radians = value.to_radians();
+            for (suffix, component) in [("#sin", radians.sin()), ("#cos", radians.cos())] {
+                let entry = self
+                    .scalars
+                    .entry(format!("{key}{suffix}"))
+                    .or_insert((0.0, 0));
+                entry.0 += component;
+                entry.1 += 1;
+            }
+            return;
+        }
         let entry = self.scalars.entry(key.to_string()).or_insert((0.0, 0));
         entry.0 += value;
         entry.1 += 1;
@@ -1866,11 +1881,44 @@ fn build_adjustments_from_stats(stats: &LookStats) -> Value {
     };
 
     for (key, (sum, count)) in &stats.scalars {
-        if *count == 0 {
+        if *count == 0 || key.ends_with("#sin") || key.ends_with("#cos") {
             continue;
         }
         let avg = (sum / *count as f64 * 100.0).round() / 100.0;
         set_path(&mut root, key, json!(avg));
+    }
+
+    // Circular mean for the hue angles collected above.
+    let mut hue_keys: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for key in stats.scalars.keys() {
+        if let Some(base) = key.strip_suffix("#sin") {
+            hue_keys.insert(base);
+        }
+    }
+    for key in hue_keys {
+        let component = |suffix: &str| -> f64 {
+            stats
+                .scalars
+                .get(&format!("{key}{suffix}"))
+                .map(|(sum, count)| {
+                    if *count == 0 {
+                        0.0
+                    } else {
+                        sum / *count as f64
+                    }
+                })
+                .unwrap_or(0.0)
+        };
+        let sin = component("#sin");
+        let cos = component("#cos");
+        // If the hues point everywhere (resultant near zero), there is no
+        // meaningful average. Leave the renderer default rather than inventing
+        // a random tint.
+        if sin.hypot(cos) < 0.15 {
+            continue;
+        }
+        let degrees = sin.atan2(cos).to_degrees().rem_euclid(360.0);
+        set_path(&mut root, key, json!((degrees * 100.0).round() / 100.0));
     }
 
     for (key, (sums, count)) in &stats.curves {
@@ -2827,6 +2875,29 @@ mod tests {
         assert_eq!(curve[0]["x"], json!(0.0));
     }
 
+    #[test]
+    fn learned_hues_use_a_circular_mean() {
+        // 350° and 10° are 20° apart, not 180°.
+        let mut stats = LookStats::default();
+        for hue in [350.0, 10.0, 355.0, 5.0] {
+            stats.add_scalar("colorGrading.highlights.hue", hue);
+        }
+        let adjustments = build_adjustments_from_stats(&stats);
+        let hue = adjustments["colorGrading"]["highlights"]["hue"]
+            .as_f64()
+            .unwrap();
+        assert!(hue < 10.0 || hue > 350.0, "wrapped hue was {hue}");
+
+        // Hues pointing in opposite directions have no meaningful average, so
+        // the learned look must not invent a tint.
+        let mut scattered = LookStats::default();
+        for hue in [0.0, 180.0, 0.0, 180.0] {
+            scattered.add_scalar("colorGrading.shadows.hue", hue);
+        }
+        let adjustments = build_adjustments_from_stats(&scattered);
+        assert!(adjustments["colorGrading"].get("shadows").is_none());
+    }
+
     fn adapt_profile() -> StyleProfile {
         StyleProfile {
             id: "builtin-portrait-natural".into(),
@@ -3337,6 +3408,129 @@ mod real_photos {
             summarize("shadows", shadows);
             summarize("saturation", saturations);
             summarize("lut intensity", luts);
+        }
+
+        // Every built-in look, on every real frame, must stay finite and inside
+        // the editor's ranges. This catches a bad profile even for looks that
+        // are not part of the printed sample above.
+        for profile in &profiles {
+            for (_, stats, _) in &samples {
+                let mut adapted = profile_to_adjustments(profile, Some(100.0));
+                adapt_look_to_photo(&mut adapted, profile, stats, &[]);
+                assert_finite(&adapted, &profile.id);
+                assert_scalar_ranges(&adapted, &profile.id);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "needs the local photo library"]
+    fn real_library_learning() {
+        let photos_dir = real_photos_dir();
+        if !photos_dir.exists() {
+            eprintln!("skipping: {} missing", photos_dir.display());
+            return;
+        }
+
+        let mut paths = Vec::new();
+        for entry in walkdir::WalkDir::new(&photos_dir)
+            .max_depth(2)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            let sidecar = entry.into_path();
+            if !sidecar.to_string_lossy().ends_with(".rrdata") {
+                continue;
+            }
+            let metadata = crate::exif_processing::load_sidecar(&sidecar);
+            let edited = metadata
+                .adjustments
+                .as_object()
+                .map(|object| !object.is_empty())
+                .unwrap_or(false);
+            if !edited {
+                continue;
+            }
+            let raf = PathBuf::from(sidecar.to_string_lossy().trim_end_matches(".rrdata"));
+            if raf.exists() {
+                paths.push(raf.to_string_lossy().into_owned());
+            }
+            if paths.len() >= 120 {
+                break;
+            }
+        }
+
+        if paths.len() < 5 {
+            eprintln!("skipping: only {} edited files found", paths.len());
+            return;
+        }
+
+        let profile = derive_profile_from_paths(&paths, "Real edits", None);
+        println!("learned from {} edited images", paths.len());
+        println!("detect tags: {:?}", profile.detect_tags);
+        if let Some(lut) = &profile.lut {
+            println!("lut: {} @ {:.0}", lut.name, lut.intensity);
+        }
+        println!(
+            "adjustments: {}",
+            serde_json::to_string_pretty(&profile.adjustments).unwrap()
+        );
+
+        assert!(
+            profile
+                .adjustments
+                .as_object()
+                .map(|object| !object.is_empty())
+                .unwrap_or(false),
+            "learning produced an empty look"
+        );
+        assert_finite(&profile.adjustments, &profile.id);
+        assert_scalar_ranges(&profile.adjustments, &profile.id);
+    }
+
+    fn assert_finite(value: &Value, profile_id: &str) {
+        match value {
+            Value::Number(number) => assert!(
+                number.as_f64().is_some_and(f64::is_finite),
+                "{profile_id}: non-finite number {number}"
+            ),
+            Value::Array(items) => {
+                for item in items {
+                    assert_finite(item, profile_id);
+                }
+            }
+            Value::Object(map) => {
+                for item in map.values() {
+                    assert_finite(item, profile_id);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn assert_scalar_ranges(adjustments: &Value, profile_id: &str) {
+        const RANGES: &[(&str, f64, f64)] = &[
+            ("exposure", -3.0, 3.0),
+            ("contrast", -100.0, 100.0),
+            ("highlights", -100.0, 100.0),
+            ("shadows", -100.0, 100.0),
+            ("whites", -100.0, 100.0),
+            ("blacks", -100.0, 100.0),
+            ("saturation", -100.0, 100.0),
+            ("vibrance", -100.0, 100.0),
+            ("temperature", -100.0, 100.0),
+            ("tint", -100.0, 100.0),
+            ("clarity", -100.0, 100.0),
+            ("dehaze", -100.0, 100.0),
+            ("lutIntensity", 0.0, 100.0),
+        ];
+        for (key, min, max) in RANGES {
+            if let Some(value) = adjustments.get(*key).and_then(Value::as_f64) {
+                assert!(
+                    (*min..=*max).contains(&value),
+                    "{profile_id}: {key}={value} outside {min}..{max}"
+                );
+            }
         }
     }
 
