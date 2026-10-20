@@ -53,20 +53,39 @@ Otvara se desnim klikom na selekciju → **AI Style** (ili u editoru → _Produc
 Popis stilova. Ugrađeni „žanrovski" stilovi dolaze s aplikacijom i automatski se
 podudaraju po sadržaju:
 
-| Profil                     | Aktivira se na                                                          |
-| -------------------------- | ----------------------------------------------------------------------- |
-| Concert — Dark & Punchy    | concert, live music, metal/rock concert, stage, guitarist, headbanging… |
-| Concert — Warm Stage       | acoustic concert, singer, saxophone, piano, audience…                   |
-| Festival — Bright & Vivid  | festival, festival crowd, neon, light show, confetti…                   |
-| Portrait — Natural & Soft  | portrait, candid, face, smile, person, couple, family…                  |
-| Wedding — Airy & Bright    | wedding, couple, celebration, flowers, cake, dancing…                   |
-| Golden Hour — Warm Glow    | golden hour, sunset, sunrise, dusk, sun, backlighting…                  |
-| Landscape — Vivid Nature   | landscape, mountains, forest, lake, waterfall, sky, coast…              |
-| Night — Neon & Moody       | night, neon, cityscape, stars, long exposure, moon…                     |
-| Sports — Crisp Action      | sports, running, cycling, swimming, stadium, arena…                     |
-| Wildlife — Detail & Color  | wildlife, animal, bird, eagle, tiger, deer, fox…                        |
-| Street — High-Contrast B&W | street, urban, architecture, monochrome, pattern, lines…                |
-| Food — Warm & Appetizing   | food, meal, dish, pizza, sushi, coffee, wine…                           |
+| Profil                     | LUT (film emulacija) | Aktivira se na                                                          |
+| -------------------------- | -------------------- | ----------------------------------------------------------------------- |
+| Concert — Dark & Punchy    | K-Vision 500T        | metal/rock concert, guitarist, drummer, mosh pit, smoke machine…        |
+| Concert — Warm Stage       | K-Gold 200           | acoustic/classical concert, saxophone, piano, violin, vocalist…         |
+| Concert — Neon / EDM       | K-Vision 500T        | dj, club/arena concert, laser lights, light show, neon…                 |
+| Concert — Monochrome       | —                    | monochrome, black and white, silhouette, low-key, stage…                |
+| Festival — Bright & Vivid  | K-Ektar 100          | festival, festival crowd, confetti, pyrotechnics…                       |
+| Portrait — Natural & Soft  | K-Portra 400         | portrait, candid, face, smile, person, couple, family…                  |
+| Wedding — Airy & Bright    | F-Pro 400H           | wedding, couple, celebration, flowers, cake, dancing…                   |
+| Golden Hour — Warm Glow    | K-Gold 200           | golden hour, sunset, sunrise, dusk, sun, backlighting…                  |
+| Landscape — Vivid Nature   | K-Ektar 100          | landscape, mountains, forest, lake, waterfall, sky, coast…              |
+| Night — Neon & Moody       | K-Vision 500T        | night, neon, cityscape, stars, long exposure, moon…                     |
+| Cinematic — Teal & Orange  | K-Vision 250D        | city, street, car, architecture, night, neon…                           |
+| Sports — Crisp Action      | K-Ektar 100          | sports, running, cycling, swimming, stadium, arena…                     |
+| Wildlife — Detail & Color  | K-Ektar 100          | wildlife, animal, bird, eagle, tiger, deer, fox…                        |
+| Street — High-Contrast B&W | —                    | street, urban, architecture, monochrome, candid…                        |
+| Food — Warm & Appetizing   | K-Gold 200           | food, meal, dish, pizza, sushi, coffee, wine…                           |
+
+**Kako su stilovi napravljeni.** Svaki stil je kombinacija ugrađene filmske LUT
+emulacije (30–55 % jačine) i pažljivo odabranog gradinga: HSL mixer (kože,
+zelenilo, neon), tro-smjerno color grading (shadows/midtones/highlights), point
+krivulja (S-krivulja ili filmic fade) te vignette/grain/glow gdje ima smisla.
+**Nijedan stil ne ubacuje fiksnu ekspoziciju** — fotografije su već eksponirane, a
+stari profil s `+6 EV` je bio glavni krivac za „sve je preeksponirano".
+
+Automatski prolaz dodatno prilagođava ton po slici na osnovu tagova: `low-key` /
+`dark` / `night` lagano diže sjene, `high-key` / `bright` čuva highlighte, a
+`backlighting` / `silhouette` dobiva lift sjena. Zato ista serija ne izgleda kao
+15 identičnih kopija.
+
+Kod podudaranja, generički tagovi (`concert`, `stage`, `musician`, `person`…)
+vrijede **upola** manje od specifičnih (`saxophone`, `mosh pit`, `dj`, `neon`…).
+Tako koncert sa saksofonom završi na _Warm Stage_, a ne na _Dark & Punchy_.
 
 Odabereš profil, podesiš **Intensity** (0–100 %) i klikneš _Apply to N images_.
 Primjena ide kroz postojeći `apply_adjustments_to_paths` (merge u `.rrdata` +
@@ -86,9 +105,10 @@ podudaranja dobiju odabrani profil kao fallback.
 Ovo je dio koji radi ono što si opisao (npr. „Iron Maiden look"):
 
 1. Odabereš fotografije koje je netko **već uredio** (idealno isti bend/event).
-2. Uporkovi se **prosjek** njihovih `.rrdata` adjustmenta (ekspozicija, kontrast,
-   HSL, color grading, krivulje) — i, ako je korišten, **LUT** koji se najčešće
-   pojavljuje.
+2. Izračuna se **prosjek** njihovih `.rrdata` adjustmenta (kontrast, HSL, color
+   grading, krivulje, clarity/grain…) — i, ako je korišten, **LUT** koji se
+   najčešće pojavljuje. Ekspozicija se **ne** usrednjava jer je per-foto stvar
+   (renderer već radi baseline exposure).
 3. To postane **StyleProfile** koji se spremi i kasnije primjenjuje jednim klikom.
 
 Dobiveni profil dobiva `detectTags` iz najčešćih tagova izvornih slika, pa se

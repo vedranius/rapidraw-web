@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::{File, copy, create_dir_all, read_dir};
 use std::io::{BufRead, BufReader, Cursor};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use base64::{Engine as _, engine::general_purpose};
 use mozjpeg_rs::{Encoder, Preset};
@@ -59,12 +59,28 @@ fn strip_verbatim(path: &Path) -> PathBuf {
     PathBuf::from(s.strip_prefix(r"\\?\").unwrap_or(&s).to_string())
 }
 
-fn film_luts_dir(app_handle: &AppHandle) -> Option<PathBuf> {
+pub(crate) fn film_luts_dir(app_handle: &AppHandle) -> Option<PathBuf> {
     app_handle
         .path()
         .resolve("resources/film_luts", tauri::path::BaseDirectory::Resource)
         .ok()
         .map(|p| strip_verbatim(&p))
+}
+
+/// Directory holding the LUTs shipped with the app, captured at startup so a
+/// stale absolute path can still be resolved after the app moved or an AppImage
+/// was remounted elsewhere.
+static BUILTIN_LUT_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn set_builtin_lut_dir(dir: PathBuf) {
+    let _ = BUILTIN_LUT_DIR.set(dir);
+}
+
+fn stale_builtin_lut_path(path_str: &str) -> Option<PathBuf> {
+    let dir = BUILTIN_LUT_DIR.get()?;
+    let file_name = Path::new(path_str).file_name()?;
+    let candidate = dir.join(file_name);
+    candidate.is_file().then_some(candidate)
 }
 
 pub fn get_luts_dir(app_data_dir: &Path) -> anyhow::Result<PathBuf> {
@@ -349,6 +365,21 @@ fn parse_hald(image: DynamicImage) -> anyhow::Result<Lut> {
 }
 
 pub fn parse_lut_file(path_str: &str) -> anyhow::Result<Lut> {
+    // A stored absolute path to a *bundled* LUT can go stale: an AppImage
+    // mounts under a new random directory on every launch and an installed app
+    // can move. Recover by file name from the bundled LUT directory instead of
+    // silently rendering without the look.
+    let resolved;
+    let path_str = if Path::new(path_str).exists() {
+        path_str
+    } else if let Some(candidate) = stale_builtin_lut_path(path_str) {
+        resolved = candidate.to_string_lossy().into_owned();
+        log::info!("LUT '{}' is stale; using bundled '{}'", path_str, resolved);
+        resolved.as_str()
+    } else {
+        path_str
+    };
+
     let normalized_path_str = path_str.strip_prefix(r"\\?\").unwrap_or(path_str);
 
     if normalized_path_str.starts_with(r"\\") || normalized_path_str.starts_with("//") {
@@ -725,4 +756,24 @@ pub fn load_and_parse_lut(path: String, state: State<AppState>) -> Result<LutPar
     cache.insert(path, Arc::new(lut));
 
     Ok(LutParseResult { size: lut_size })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The style profiles reference these files by name; a missing or corrupt
+    /// LUT would silently degrade every built-in look, so verify them in CI.
+    #[test]
+    fn bundled_film_luts_parse() {
+        let entries = list_luts_in_dir(Path::new("resources/film_luts"), true)
+            .expect("bundled film LUT directory");
+        assert!(entries.len() >= 6, "expected the bundled film LUTs");
+
+        for entry in entries {
+            parse_lut_file(&entry.path).unwrap_or_else(|error| {
+                panic!("bundled LUT '{}' failed to parse: {error}", entry.name)
+            });
+        }
+    }
 }

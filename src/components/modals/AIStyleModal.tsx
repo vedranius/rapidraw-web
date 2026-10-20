@@ -280,6 +280,9 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
                     </Text>
                     {profile.builtIn && <TagChip label={t('modals.aiStyle.builtIn')} />}
                     {profile.subject && <TagChip label={profile.subject} />}
+                    {profile.lut?.name && (
+                      <TagChip label={`LUT · ${profile.lut.name}`} />
+                    )}
                   </div>
                   {profile.description && (
                     <Text variant={TextVariants.small} className="text-text-secondary mt-1">

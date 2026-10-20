@@ -137,200 +137,505 @@ pub struct AutoStyleSummary {
 // Built-in profiles
 // ---------------------------------------------------------------------------
 
-fn full_hsl(values: [f64; 8]) -> Value {
-    // hue, saturation, luminance per channel; built-ins keep hue/luminance at 0
-    // except where noted, so the look is mostly a saturation shift.
-    let names = [
-        "reds", "oranges", "yellows", "greens", "aquas", "blues", "purples", "magentas",
-    ];
+const HSL_CHANNELS: [&str; 8] = [
+    "reds", "oranges", "yellows", "greens", "aquas", "blues", "purples", "magentas",
+];
+
+/// HSL mixer values as `[(hue, saturation, luminance); 8]` for reds..magentas.
+/// This is what gives a look its colour identity instead of a blunt global
+/// saturation slider.
+fn hsl_look(values: [(f64, f64, f64); 8]) -> Value {
     let mut map = Map::new();
-    for (i, name) in names.iter().enumerate() {
+    for (i, name) in HSL_CHANNELS.iter().enumerate() {
+        let (hue, saturation, luminance) = values[i];
         map.insert(
             (*name).to_string(),
-            json!({ "hue": 0.0, "saturation": values[i], "luminance": 0.0 }),
+            json!({
+                "hue": hue,
+                "saturation": saturation,
+                "luminance": luminance,
+            }),
         );
     }
     Value::Object(map)
 }
 
-fn color_grading(shadows_hue: f64, shadows_sat: f64, high_hue: f64, high_sat: f64) -> Value {
+/// Three-way colour grading: `(hue, saturation, luminance)` per tonal range.
+/// Hue is in degrees, saturation/luminance in -100..100.
+fn grading(
+    shadows: (f64, f64, f64),
+    midtones: (f64, f64, f64),
+    highlights: (f64, f64, f64),
+    balance: f64,
+    blending: f64,
+) -> Value {
+    let leaf = |(hue, saturation, luminance): (f64, f64, f64)| json!({ "hue": hue, "saturation": saturation, "luminance": luminance });
     json!({
-        "balance": 0.0,
-        "blending": 50.0,
+        "balance": balance,
+        "blending": blending,
         "global": { "hue": 0.0, "saturation": 0.0, "luminance": 0.0 },
-        "highlights": { "hue": high_hue, "saturation": high_sat, "luminance": 0.0 },
-        "midtones": { "hue": 0.0, "saturation": 0.0, "luminance": 0.0 },
-        "shadows": { "hue": shadows_hue, "saturation": shadows_sat, "luminance": 0.0 }
+        "shadows": leaf(shadows),
+        "midtones": leaf(midtones),
+        "highlights": leaf(highlights),
     })
 }
 
-/// Genre-based starter looks, matched against CLIP content tags. They are
-/// deliberately moderate; the real "band look" comes from learning a profile
-/// from the photographer's own edits (see `derive_style_profile_from_paths`).
+/// Point curves. A channel left empty is an identity line. X/Y are 0..255.
+fn curves(
+    luma: &[(f64, f64)],
+    red: &[(f64, f64)],
+    green: &[(f64, f64)],
+    blue: &[(f64, f64)],
+) -> Value {
+    fn points(points: &[(f64, f64)]) -> Value {
+        Value::Array(
+            points
+                .iter()
+                .map(|(x, y)| json!({ "x": x, "y": y }))
+                .collect(),
+        )
+    }
+    let identity: &[(f64, f64)] = &[(0.0, 0.0), (255.0, 255.0)];
+    json!({
+        "luma": points(if luma.is_empty() { identity } else { luma }),
+        "red": points(if red.is_empty() { identity } else { red }),
+        "green": points(if green.is_empty() { identity } else { green }),
+        "blue": points(if blue.is_empty() { identity } else { blue }),
+    })
+}
+
+/// Reference to one of the film LUTs bundled with the app
+/// (`src-tauri/resources/film_luts`). The concrete path is resolved in
+/// [`all_style_profiles`] because it depends on the installation directory.
+fn film_lut(name: &str, intensity: f64) -> Option<StyleProfileLut> {
+    Some(StyleProfileLut {
+        name: name.to_string(),
+        path: String::new(),
+        is_built_in: true,
+        intensity: intensity.clamp(0.0, 100.0),
+    })
+}
+
+fn tag_list(list: &[&str]) -> Vec<String> {
+    list.iter().map(|value| (*value).to_string()).collect()
+}
+
+/// The bundled film emulations, by exact resource name.
+const LUT_FUJI_400H: &str = "F-Pro 400H";
+const LUT_EKTAR_100: &str = "K-Ektar 100";
+const LUT_GOLD_200: &str = "K-Gold 200";
+const LUT_PORTRA_400: &str = "K-Portra 400";
+const LUT_VISION_250D: &str = "K-Vision 250D Cinematic";
+const LUT_VISION_500T: &str = "K-Vision 500T Cinematic";
+
+/// Genre-based starter looks, matched against CLIP content tags.
+///
+/// Design rules:
+/// * no fixed exposure — photos are already exposed; only small lifts for
+///   low-key scenes, and the automatic pass adds tag-aware tweaks on top,
+/// * every look combines a bundled film LUT with deliberate grading (HSL
+///   mixer + three-way colour grading + a point curve) instead of one blunt
+///   slider, so the result reads as a real "filter",
+/// * highlights are protected and blacks are deep but not crushed,
+/// * concert looks are split into dark/punchy, warm/acoustic, neon/EDM and
+///   monochrome so a whole event does not get one identical treatment.
 pub fn builtin_style_profiles() -> Vec<StyleProfile> {
     vec![
         StyleProfile {
             id: "builtin-concert-dark".to_string(),
             name: "Concert — Dark & Punchy".to_string(),
-            detect_tags: [
+            detect_tags: tag_list(&[
+                "metal concert",
+                "rock concert",
+                "rock band",
+                "guitarist",
+                "bassist",
+                "drummer",
+                "headbanging",
+                "mosh pit",
+                "crowd surfing",
+                "smoke machine",
+                "laser lights",
+                "pyrotechnics",
                 "concert",
                 "live music",
                 "live concert",
-                "metal concert",
-                "rock concert",
                 "stage",
                 "stage lighting",
                 "stage lights",
                 "spotlight",
-                "smoke machine",
-                "laser lights",
                 "musician",
                 "band",
-                "guitarist",
+                "performer",
                 "singer",
-                "drummer",
-                "headbanging",
-                "mosh pit",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+                "audience",
+                "gig",
+                "encore",
+            ]),
             subject: None,
             adjustments: json!({
                 "contrast": 14.0,
-                "highlights": -12.0,
-                "shadows": 8.0,
-                "blacks": -10.0,
-                "clarity": 12.0,
-                "dehaze": 8.0,
+                "highlights": -22.0,
+                "shadows": -4.0,
+                "whites": 6.0,
+                "blacks": -14.0,
+                "clarity": 10.0,
+                "structure": 8.0,
+                "dehaze": 6.0,
                 "vibrance": 10.0,
-                "saturation": -4.0,
-                "hsl": full_hsl([6.0, 8.0, 0.0, -6.0, -4.0, 6.0, 4.0, 4.0]),
-                "colorGrading": color_grading(220.0, 16.0, 35.0, 10.0),
-                "vignetteAmount": -18.0,
-                "grainAmount": 6.0
+                "saturation": -6.0,
+                "temperature": -2.0,
+                "tint": 2.0,
+                "hsl": hsl_look([
+                    (-4.0, 14.0, -4.0),
+                    (-2.0, 8.0, 0.0),
+                    (0.0, -14.0, -6.0),
+                    (0.0, -28.0, -10.0),
+                    (0.0, -10.0, -4.0),
+                    (-4.0, 2.0, -10.0),
+                    (0.0, 6.0, 0.0),
+                    (0.0, 12.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (210.0, 18.0, -2.0),
+                    (0.0, 0.0, 0.0),
+                    (38.0, 12.0, 0.0),
+                    -10.0,
+                    55.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 0.0), (28.0, 22.0), (96.0, 100.0), (176.0, 186.0), (255.0, 255.0)],
+                    &[],
+                    &[],
+                    &[(0.0, 8.0), (96.0, 96.0), (255.0, 255.0)],
+                ),
+                "glowAmount": 4.0,
+                "halationAmount": 8.0,
+                "vignetteAmount": -26.0,
+                "vignetteFeather": 55.0,
+                "vignetteMidpoint": 45.0,
+                "grainAmount": 8.0,
+                "grainRoughness": 55.0,
+                "grainSize": 30.0,
             }),
-            lut: None,
+            lut: film_lut(LUT_VISION_500T, 55.0),
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "Dark, high-contrast stage look with cool shadows and warm highlights.".to_string(),
+                "Cinematic tungsten film with deep blacks, cool shadows, warm stage lights and a subtle halation glow. Built for metal and rock shows.".to_string(),
             ),
         },
         StyleProfile {
             id: "builtin-concert-warm".to_string(),
             name: "Concert — Warm Stage".to_string(),
-            detect_tags: [
-                "concert",
-                "live music",
+            detect_tags: tag_list(&[
                 "acoustic concert",
-                "musician",
-                "singer",
+                "classical concert",
+                "club concert",
                 "saxophone",
                 "piano",
+                "violin",
+                "trumpet",
                 "acoustic guitar",
+                "keyboard",
+                "vocalist",
+                "concert",
+                "live music",
+                "musician",
+                "band",
+                "stage",
                 "audience",
-                "backlighting",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+                "singer",
+            ]),
             subject: None,
             adjustments: json!({
                 "contrast": 8.0,
-                "highlights": -8.0,
-                "shadows": 12.0,
-                "blacks": -4.0,
-                "clarity": 6.0,
-                "vibrance": 8.0,
-                "saturation": 2.0,
-                "temperature": 8.0,
-                "hsl": full_hsl([4.0, 10.0, 6.0, -4.0, -4.0, -6.0, 2.0, 2.0]),
-                "colorGrading": color_grading(30.0, 14.0, 45.0, 12.0),
-                "vignetteAmount": -10.0,
-                "grainAmount": 4.0
+                "highlights": -18.0,
+                "shadows": 14.0,
+                "whites": 4.0,
+                "blacks": -6.0,
+                "clarity": 2.0,
+                "dehaze": 4.0,
+                "vibrance": 10.0,
+                "temperature": 6.0,
+                "tint": 2.0,
+                "hsl": hsl_look([
+                    (2.0, 8.0, 4.0),
+                    (4.0, 12.0, 6.0),
+                    (6.0, 8.0, 4.0),
+                    (0.0, -10.0, 0.0),
+                    (0.0, -6.0, 0.0),
+                    (6.0, -8.0, 0.0),
+                    (0.0, 4.0, 0.0),
+                    (0.0, 4.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (30.0, 12.0, 0.0),
+                    (35.0, 4.0, 0.0),
+                    (45.0, 14.0, 0.0),
+                    10.0,
+                    50.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 4.0), (64.0, 70.0), (160.0, 178.0), (255.0, 250.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
+                "glowAmount": 6.0,
+                "vignetteAmount": -14.0,
+                "grainAmount": 6.0,
+            }),
+            lut: film_lut(LUT_GOLD_200, 45.0),
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "Warm Kodak Gold film look with creamy skin, amber stage light and a gentle filmic fade. Built for acoustic, jazz and soul sets.".to_string(),
+            ),
+        },
+        StyleProfile {
+            id: "builtin-concert-neon".to_string(),
+            name: "Concert — Neon / EDM".to_string(),
+            detect_tags: tag_list(&[
+                "club concert",
+                "arena concert",
+                "dj",
+                "turntable",
+                "laser lights",
+                "light show",
+                "smoke machine",
+                "pyrotechnics",
+                "confetti",
+                "neon",
+                "concert",
+                "live music",
+                "stage",
+                "stage lighting",
+                "festival",
+                "festival crowd",
+            ]),
+            subject: None,
+            adjustments: json!({
+                "contrast": 14.0,
+                "highlights": -20.0,
+                "shadows": 4.0,
+                "whites": 4.0,
+                "blacks": -12.0,
+                "clarity": 8.0,
+                "dehaze": 6.0,
+                "vibrance": 16.0,
+                "saturation": -2.0,
+                "temperature": -4.0,
+                "tint": 6.0,
+                "hsl": hsl_look([
+                    (0.0, 10.0, 0.0),
+                    (-2.0, -4.0, 0.0),
+                    (0.0, -10.0, 0.0),
+                    (0.0, -22.0, -6.0),
+                    (-6.0, 12.0, 0.0),
+                    (-8.0, 18.0, -6.0),
+                    (0.0, 18.0, 0.0),
+                    (0.0, 22.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (220.0, 24.0, 0.0),
+                    (270.0, 6.0, 0.0),
+                    (300.0, 18.0, 0.0),
+                    0.0,
+                    55.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 0.0), (32.0, 24.0), (128.0, 136.0), (208.0, 222.0), (255.0, 255.0)],
+                    &[],
+                    &[],
+                    &[(0.0, 12.0), (128.0, 130.0), (255.0, 255.0)],
+                ),
+                "glowAmount": 8.0,
+                "halationAmount": 6.0,
+                "vignetteAmount": -18.0,
+                "grainAmount": 5.0,
+            }),
+            lut: film_lut(LUT_VISION_500T, 40.0),
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "Cool cinematic base with teal shadows and magenta highlights so lasers and LED walls pop. Built for EDM, club and arena shows.".to_string(),
+            ),
+        },
+        StyleProfile {
+            id: "builtin-concert-mono".to_string(),
+            name: "Concert — Monochrome".to_string(),
+            detect_tags: tag_list(&[
+                "monochrome",
+                "black and white",
+                "silhouette",
+                "low-key",
+                "dramatic",
+                "concert",
+                "live music",
+                "stage",
+                "stage lighting",
+                "musician",
+                "singer",
+                "guitarist",
+                "drummer",
+            ]),
+            subject: None,
+            adjustments: json!({
+                "saturation": -100.0,
+                "contrast": 18.0,
+                "highlights": -25.0,
+                "shadows": 2.0,
+                "whites": 8.0,
+                "blacks": -18.0,
+                "clarity": 14.0,
+                "structure": 10.0,
+                "dehaze": 8.0,
+                "curves": curves(
+                    &[(0.0, 0.0), (32.0, 20.0), (128.0, 138.0), (224.0, 232.0), (255.0, 255.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
+                "vignetteAmount": -30.0,
+                "grainAmount": 14.0,
+                "grainRoughness": 60.0,
+                "grainSize": 35.0,
             }),
             lut: None,
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "Warm, soft stage-light look that flatters skin and wood tones.".to_string(),
+                "Gritty high-contrast black and white with strong structure and heavy grain. Great when the stage light does the work.".to_string(),
             ),
         },
         StyleProfile {
             id: "builtin-festival-pop".to_string(),
             name: "Festival — Bright & Vivid".to_string(),
-            detect_tags: [
+            detect_tags: tag_list(&[
                 "festival",
                 "festival crowd",
-                "concert",
-                "music",
-                "neon",
-                "colorful",
-                "crowd",
-                "light show",
+                "open air concert",
                 "confetti",
                 "pyrotechnics",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+                "light show",
+                "colorful",
+                "crowd",
+                "concert",
+                "live music",
+                "music",
+                "celebration",
+            ]),
             subject: None,
             adjustments: json!({
                 "contrast": 6.0,
-                "highlights": -6.0,
-                "shadows": 16.0,
+                "highlights": -12.0,
+                "shadows": 18.0,
                 "whites": 6.0,
+                "blacks": -2.0,
                 "clarity": 4.0,
-                "vibrance": 18.0,
-                "saturation": 6.0,
-                "hsl": full_hsl([6.0, 8.0, 8.0, 8.0, 6.0, 10.0, 8.0, 6.0]),
-                "colorGrading": color_grading(200.0, 8.0, 55.0, 8.0)
+                "vibrance": 20.0,
+                "saturation": 4.0,
+                "hsl": hsl_look([
+                    (0.0, 8.0, 0.0),
+                    (0.0, 6.0, 2.0),
+                    (-2.0, 10.0, 6.0),
+                    (0.0, 6.0, 2.0),
+                    (0.0, 8.0, 0.0),
+                    (0.0, 12.0, 0.0),
+                    (0.0, 10.0, 0.0),
+                    (0.0, 10.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (200.0, 8.0, 0.0),
+                    (0.0, 0.0, 0.0),
+                    (55.0, 8.0, 0.0),
+                    5.0,
+                    50.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 4.0), (64.0, 74.0), (160.0, 172.0), (255.0, 252.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
+                "vignetteAmount": -10.0,
+                "grainAmount": 3.0,
             }),
-            lut: None,
+            lut: film_lut(LUT_EKTAR_100, 40.0),
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "Bright, vivid festival look with lifted shadows and strong vibrance.".to_string(),
+                "Bright, saturated Kodak Ektar daylight look with lifted shadows. For outdoor festivals, confetti and daylight crowds.".to_string(),
             ),
         },
         StyleProfile {
             id: "builtin-portrait-natural".to_string(),
             name: "Portrait — Natural & Soft".to_string(),
-            detect_tags: [
-                "portrait", "candid", "face", "smile", "person", "woman", "man", "child", "couple",
-                "family", "group",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+            detect_tags: tag_list(&[
+                "portrait",
+                "candid",
+                "face",
+                "smile",
+                "person",
+                "woman",
+                "man",
+                "child",
+                "couple",
+                "family",
+                "group",
+                "natural light",
+                "soft light",
+            ]),
             subject: None,
             adjustments: json!({
-                "contrast": 4.0,
-                "highlights": -10.0,
+                "contrast": 3.0,
+                "highlights": -12.0,
                 "shadows": 10.0,
-                "blacks": 2.0,
-                "clarity": -4.0,
+                "whites": 2.0,
+                "clarity": -6.0,
+                "structure": -2.0,
                 "vibrance": 6.0,
                 "saturation": -2.0,
-                "temperature": 5.0,
-                "hsl": full_hsl([2.0, 6.0, 2.0, -2.0, -2.0, -2.0, 0.0, 0.0]),
-                "colorGrading": color_grading(25.0, 8.0, 45.0, 6.0),
+                "temperature": 4.0,
+                "tint": 1.0,
+                "hsl": hsl_look([
+                    (2.0, 2.0, 4.0),
+                    (4.0, 4.0, 8.0),
+                    (0.0, -4.0, 4.0),
+                    (0.0, -6.0, 0.0),
+                    (0.0, -2.0, 0.0),
+                    (0.0, -2.0, 0.0),
+                    (0.0, 0.0, 0.0),
+                    (0.0, 0.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (25.0, 8.0, 0.0),
+                    (30.0, 2.0, 0.0),
+                    (45.0, 6.0, 0.0),
+                    5.0,
+                    50.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 6.0), (64.0, 72.0), (160.0, 170.0), (255.0, 248.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
                 "vignetteAmount": -8.0,
-                "grainAmount": 2.0
+                "grainAmount": 3.0,
             }),
-            lut: None,
+            lut: film_lut(LUT_PORTRA_400, 30.0),
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "Gentle contrast and lifted shadows that keep skin tones soft and natural."
-                    .to_string(),
+                "Soft Kodak Portra portrait look: gentle contrast, creamy skin and a filmic highlight roll-off.".to_string(),
             ),
         },
         StyleProfile {
             id: "builtin-wedding-airy".to_string(),
             name: "Wedding — Airy & Bright".to_string(),
-            detect_tags: [
+            detect_tags: tag_list(&[
                 "wedding",
                 "couple",
                 "celebration",
@@ -340,82 +645,128 @@ pub fn builtin_style_profiles() -> Vec<StyleProfile> {
                 "dancing",
                 "portrait",
                 "group",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+                "romantic",
+                "love",
+                "soft light",
+            ]),
             subject: None,
             adjustments: json!({
-                "exposure": 6.0,
-                "contrast": -4.0,
-                "highlights": -6.0,
-                "shadows": 18.0,
-                "whites": 8.0,
-                "blacks": -4.0,
-                "clarity": -2.0,
+                "contrast": -6.0,
+                "highlights": -14.0,
+                "shadows": 22.0,
+                "whites": 10.0,
+                "clarity": -6.0,
                 "vibrance": 8.0,
-                "saturation": -2.0,
+                "saturation": -4.0,
                 "temperature": 4.0,
-                "vignetteAmount": -6.0
+                "tint": 2.0,
+                "hsl": hsl_look([
+                    (-2.0, 0.0, 4.0),
+                    (0.0, 4.0, 8.0),
+                    (0.0, -6.0, 6.0),
+                    (4.0, -14.0, 4.0),
+                    (0.0, -6.0, 0.0),
+                    (0.0, -6.0, 2.0),
+                    (0.0, -2.0, 0.0),
+                    (0.0, -2.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (25.0, 8.0, 0.0),
+                    (35.0, 2.0, 0.0),
+                    (50.0, 8.0, 0.0),
+                    8.0,
+                    50.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 12.0), (64.0, 82.0), (160.0, 176.0), (255.0, 250.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
+                "vignetteAmount": -4.0,
+                "grainAmount": 2.0,
             }),
-            lut: None,
+            lut: film_lut(LUT_FUJI_400H, 35.0),
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "Bright, airy look with lifted shadows and warm, creamy skin tones.".to_string(),
+                "Airy Fuji Pro 400H look with lifted blacks, pastel greens and clean skin. For weddings and bright celebrations.".to_string(),
             ),
         },
         StyleProfile {
             id: "builtin-golden-hour".to_string(),
             name: "Golden Hour — Warm Glow".to_string(),
-            detect_tags: [
+            detect_tags: tag_list(&[
                 "golden hour",
                 "sunset",
                 "sunrise",
                 "dusk",
                 "dawn",
                 "sun",
-                "warm colors",
+                "sunlight",
                 "backlighting",
+                "warm colors",
                 "beach",
                 "field",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+                "silhouette",
+            ]),
             subject: None,
             adjustments: json!({
-                "exposure": 2.0,
                 "contrast": 6.0,
-                "highlights": -8.0,
+                "highlights": -18.0,
                 "shadows": 14.0,
-                "blacks": -2.0,
-                "vibrance": 12.0,
-                "saturation": 4.0,
-                "temperature": 14.0,
+                "whites": 6.0,
+                "blacks": -4.0,
+                "clarity": 2.0,
+                "dehaze": 4.0,
+                "vibrance": 14.0,
+                "saturation": 2.0,
+                "temperature": 10.0,
                 "tint": 3.0,
-                "hsl": full_hsl([4.0, 8.0, 8.0, -4.0, -6.0, -8.0, 0.0, 2.0]),
-                "colorGrading": color_grading(30.0, 10.0, 50.0, 14.0),
-                "glowAmount": 10.0,
-                "vignetteAmount": -10.0,
-                "grainAmount": 2.0
+                "hsl": hsl_look([
+                    (-2.0, 8.0, 2.0),
+                    (-4.0, 14.0, 6.0),
+                    (-4.0, 10.0, 4.0),
+                    (6.0, -10.0, 0.0),
+                    (0.0, -6.0, 0.0),
+                    (0.0, -10.0, 2.0),
+                    (0.0, 0.0, 0.0),
+                    (0.0, 2.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (30.0, 10.0, 0.0),
+                    (35.0, 4.0, 0.0),
+                    (45.0, 18.0, 0.0),
+                    15.0,
+                    55.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 4.0), (64.0, 70.0), (160.0, 176.0), (255.0, 252.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
+                "glowAmount": 12.0,
+                "halationAmount": 4.0,
+                "vignetteAmount": -12.0,
+                "grainAmount": 3.0,
             }),
-            lut: None,
+            lut: film_lut(LUT_GOLD_200, 45.0),
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "Warm, glowing sunset look with rich golds and soft highlight roll-off."
-                    .to_string(),
+                "Kodak Gold glow with amber highlights and soft halation. For sunset, sunrise and backlit portraits.".to_string(),
             ),
         },
         StyleProfile {
             id: "builtin-landscape-vivid".to_string(),
             name: "Landscape — Vivid Nature".to_string(),
-            detect_tags: [
+            detect_tags: tag_list(&[
                 "landscape",
-                "mountains",
                 "mountain",
+                "mountains",
                 "valley",
+                "canyon",
                 "forest",
                 "lake",
                 "river",
@@ -426,229 +777,400 @@ pub fn builtin_style_profiles() -> Vec<StyleProfile> {
                 "meadow",
                 "coast",
                 "beach",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+                "nature",
+                "reflection",
+            ]),
             subject: None,
             adjustments: json!({
                 "contrast": 10.0,
-                "highlights": -10.0,
+                "highlights": -20.0,
                 "shadows": 16.0,
                 "whites": 6.0,
-                "blacks": -6.0,
+                "blacks": -8.0,
                 "clarity": 10.0,
                 "dehaze": 10.0,
                 "vibrance": 18.0,
-                "saturation": 6.0,
-                "sharpness": 8.0,
-                "hsl": full_hsl([0.0, 4.0, 6.0, 10.0, -2.0, 4.0, 0.0, 0.0]),
-                "vignetteAmount": -10.0
+                "saturation": 4.0,
+                "sharpness": 10.0,
+                "hsl": hsl_look([
+                    (0.0, 4.0, 0.0),
+                    (0.0, 2.0, 2.0),
+                    (-2.0, 8.0, 4.0),
+                    (-4.0, 14.0, 6.0),
+                    (-6.0, 10.0, 0.0),
+                    (-4.0, 14.0, -4.0),
+                    (0.0, 4.0, 0.0),
+                    (0.0, 0.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (210.0, 8.0, 0.0),
+                    (0.0, 0.0, 0.0),
+                    (45.0, 6.0, 0.0),
+                    0.0,
+                    50.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 0.0), (40.0, 34.0), (128.0, 132.0), (208.0, 218.0), (255.0, 255.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
+                "vignetteAmount": -10.0,
             }),
-            lut: None,
+            lut: film_lut(LUT_EKTAR_100, 35.0),
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "Punchy nature look: recovered highlights, deep greens and crisp detail."
-                    .to_string(),
+                "Deep greens, rich blues and crisp Kodak Ektar colour with recovered highlights. For landscapes and nature.".to_string(),
             ),
         },
         StyleProfile {
             id: "builtin-night-neon".to_string(),
             name: "Night — Neon & Moody".to_string(),
-            detect_tags: [
+            detect_tags: tag_list(&[
                 "night",
-                "neon",
                 "night sky",
-                "stars",
                 "city",
                 "cityscape",
                 "skyline",
+                "urban",
+                "street",
+                "neon",
                 "long exposure",
                 "light painting",
                 "moon",
-                "urban",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+                "stars",
+            ]),
             subject: None,
             adjustments: json!({
-                "exposure": -2.0,
-                "contrast": 12.0,
-                "highlights": -14.0,
-                "shadows": 6.0,
-                "blacks": -14.0,
+                "contrast": 14.0,
+                "highlights": -20.0,
+                "shadows": 8.0,
+                "whites": 2.0,
+                "blacks": -16.0,
                 "clarity": 8.0,
-                "dehaze": 6.0,
-                "vibrance": 12.0,
+                "dehaze": 8.0,
+                "vibrance": 16.0,
                 "saturation": -2.0,
                 "temperature": -6.0,
-                "tint": 4.0,
-                "hsl": full_hsl([8.0, 4.0, -4.0, -6.0, 4.0, 14.0, 10.0, 14.0]),
-                "colorGrading": color_grading(215.0, 20.0, 300.0, 12.0),
-                "vignetteAmount": -16.0,
-                "grainAmount": 8.0
+                "tint": 6.0,
+                "hsl": hsl_look([
+                    (0.0, 10.0, 0.0),
+                    (-2.0, -6.0, 0.0),
+                    (0.0, -16.0, -4.0),
+                    (0.0, -20.0, -6.0),
+                    (-8.0, 16.0, 0.0),
+                    (-10.0, 20.0, -8.0),
+                    (0.0, 20.0, 0.0),
+                    (0.0, 24.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (220.0, 24.0, 0.0),
+                    (270.0, 6.0, 0.0),
+                    (300.0, 18.0, 0.0),
+                    0.0,
+                    55.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 0.0), (32.0, 22.0), (128.0, 134.0), (208.0, 220.0), (255.0, 255.0)],
+                    &[],
+                    &[],
+                    &[(0.0, 10.0), (128.0, 130.0), (255.0, 255.0)],
+                ),
+                "glowAmount": 8.0,
+                "halationAmount": 8.0,
+                "vignetteAmount": -20.0,
+                "grainAmount": 8.0,
             }),
-            lut: None,
+            lut: film_lut(LUT_VISION_500T, 50.0),
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "Moody night look with cool shadows, magenta highlights and neon pop.".to_string(),
+                "Moody night-city look with teal shadows, magenta neon and halation around bright lights.".to_string(),
+            ),
+        },
+        StyleProfile {
+            id: "builtin-cinematic".to_string(),
+            name: "Cinematic — Teal & Orange".to_string(),
+            detect_tags: tag_list(&[
+                "city",
+                "cityscape",
+                "skyline",
+                "urban",
+                "street",
+                "night",
+                "car",
+                "motorcycle",
+                "architecture",
+                "neon",
+                "reflection",
+                "long exposure",
+            ]),
+            subject: None,
+            adjustments: json!({
+                "contrast": 12.0,
+                "highlights": -20.0,
+                "shadows": 6.0,
+                "whites": 2.0,
+                "blacks": -10.0,
+                "clarity": 6.0,
+                "dehaze": 6.0,
+                "vibrance": 10.0,
+                "saturation": -4.0,
+                "hsl": hsl_look([
+                    (0.0, 8.0, 2.0),
+                    (0.0, 10.0, 4.0),
+                    (0.0, -10.0, 0.0),
+                    (0.0, -20.0, -4.0),
+                    (-8.0, 12.0, 0.0),
+                    (-10.0, 16.0, -6.0),
+                    (0.0, 6.0, 0.0),
+                    (0.0, 6.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (205.0, 22.0, 0.0),
+                    (0.0, 0.0, 0.0),
+                    (35.0, 14.0, 0.0),
+                    0.0,
+                    55.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 0.0), (32.0, 26.0), (128.0, 134.0), (208.0, 220.0), (255.0, 255.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
+                "vignetteAmount": -18.0,
+                "grainAmount": 4.0,
+            }),
+            lut: film_lut(LUT_VISION_250D, 45.0),
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "Classic teal-and-orange cinema grade with warm skin and cool shadows. For urban, night and car photography.".to_string(),
             ),
         },
         StyleProfile {
             id: "builtin-sports-crisp".to_string(),
             name: "Sports — Crisp Action".to_string(),
-            detect_tags: [
+            detect_tags: tag_list(&[
                 "sports",
                 "running",
+                "jogging",
                 "cycling",
                 "swimming",
                 "surfing",
                 "skiing",
                 "snowboarding",
                 "climbing",
-                "hiking",
                 "skating",
                 "stadium",
                 "arena",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+                "motion blur",
+                "activity",
+            ]),
             subject: None,
             adjustments: json!({
-                "exposure": 2.0,
                 "contrast": 12.0,
-                "highlights": -10.0,
+                "highlights": -18.0,
                 "shadows": 12.0,
                 "whites": 4.0,
                 "blacks": -8.0,
-                "clarity": 14.0,
+                "clarity": 12.0,
+                "structure": 12.0,
                 "dehaze": 6.0,
-                "vibrance": 6.0,
-                "sharpness": 12.0,
+                "vibrance": 10.0,
+                "sharpness": 14.0,
+                "hsl": hsl_look([
+                    (0.0, 6.0, 0.0),
+                    (0.0, 4.0, 0.0),
+                    (0.0, 4.0, 0.0),
+                    (0.0, 4.0, 0.0),
+                    (0.0, 4.0, 0.0),
+                    (0.0, 8.0, 0.0),
+                    (0.0, 4.0, 0.0),
+                    (0.0, 4.0, 0.0),
+                ]),
+                "curves": curves(
+                    &[(0.0, 0.0), (40.0, 34.0), (128.0, 134.0), (208.0, 216.0), (255.0, 255.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
                 "vignetteAmount": -6.0,
-                "grainAmount": 4.0
             }),
-            lut: None,
+            lut: film_lut(LUT_EKTAR_100, 25.0),
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "High-clarity, sharp look that separates athletes from the background.".to_string(),
+                "Clean, crisp action look with strong micro-contrast and colour that stays natural. For field, track and arena sports.".to_string(),
             ),
         },
         StyleProfile {
             id: "builtin-wildlife-detail".to_string(),
             name: "Wildlife — Detail & Color".to_string(),
-            detect_tags: [
-                "wildlife", "animal", "bird", "eagle", "owl", "lion", "tiger", "bear", "deer",
-                "fox", "squirrel", "rabbit",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+            detect_tags: tag_list(&[
+                "wildlife",
+                "animal",
+                "bird",
+                "eagle",
+                "owl",
+                "lion",
+                "tiger",
+                "bear",
+                "deer",
+                "fox",
+                "horse",
+                "close-up",
+                "telephoto",
+            ]),
             subject: None,
             adjustments: json!({
                 "contrast": 8.0,
-                "highlights": -8.0,
-                "shadows": 12.0,
+                "highlights": -22.0,
+                "shadows": 14.0,
+                "whites": 4.0,
                 "blacks": -6.0,
-                "clarity": 14.0,
+                "clarity": 12.0,
+                "structure": 14.0,
                 "dehaze": 6.0,
-                "vibrance": 10.0,
-                "saturation": 4.0,
-                "sharpness": 14.0,
-                "vignetteAmount": -8.0
+                "vibrance": 12.0,
+                "saturation": 2.0,
+                "sharpness": 16.0,
+                "hsl": hsl_look([
+                    (0.0, 4.0, 0.0),
+                    (0.0, 6.0, 2.0),
+                    (0.0, 4.0, 0.0),
+                    (-2.0, 8.0, 0.0),
+                    (0.0, 6.0, 0.0),
+                    (0.0, 6.0, 0.0),
+                    (0.0, 0.0, 0.0),
+                    (0.0, 0.0, 0.0),
+                ]),
+                "curves": curves(
+                    &[(0.0, 0.0), (36.0, 32.0), (128.0, 132.0), (208.0, 218.0), (255.0, 255.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
+                "vignetteAmount": -8.0,
             }),
-            lut: None,
+            lut: film_lut(LUT_EKTAR_100, 20.0),
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "Rich fur and feather detail with saturated, natural colours.".to_string(),
+                "Feather and fur detail with recovered highlights and natural colour. For birds and wildlife.".to_string(),
             ),
         },
         StyleProfile {
             id: "builtin-street-mono".to_string(),
             name: "Street — High-Contrast B&W".to_string(),
-            detect_tags: [
+            detect_tags: tag_list(&[
                 "street",
                 "urban",
                 "city",
-                "black and white",
-                "monochrome",
                 "architecture",
                 "alley",
                 "sidewalk",
-                "minimalist",
-                "pattern",
-                "lines",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+                "monochrome",
+                "black and white",
+                "silhouette",
+                "low-key",
+                "candid",
+                "person",
+            ]),
             subject: None,
             adjustments: json!({
-                "contrast": 18.0,
-                "highlights": -6.0,
-                "shadows": 14.0,
-                "whites": 8.0,
-                "blacks": -16.0,
-                "clarity": 16.0,
-                "structure": 10.0,
                 "saturation": -100.0,
-                "vignetteAmount": -14.0,
-                "grainAmount": 12.0
+                "contrast": 22.0,
+                "highlights": -24.0,
+                "shadows": 4.0,
+                "whites": 10.0,
+                "blacks": -20.0,
+                "clarity": 14.0,
+                "structure": 10.0,
+                "curves": curves(
+                    &[(0.0, 0.0), (32.0, 24.0), (128.0, 140.0), (224.0, 234.0), (255.0, 255.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
+                "vignetteAmount": -18.0,
+                "grainAmount": 12.0,
             }),
             lut: None,
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "Gritty black-and-white street look with deep blacks and visible grain."
-                    .to_string(),
+                "Punchy street black and white with deep blacks, bright highlights and visible grain.".to_string(),
             ),
         },
         StyleProfile {
             id: "builtin-food-warm".to_string(),
             name: "Food — Warm & Appetizing".to_string(),
-            detect_tags: [
-                "food", "meal", "dish", "pizza", "pasta", "sushi", "burger", "cake", "coffee",
-                "tea", "wine", "beer", "cocktail", "bread",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+            detect_tags: tag_list(&[
+                "food",
+                "meal",
+                "dish",
+                "pizza",
+                "pasta",
+                "sushi",
+                "burger",
+                "cake",
+                "coffee",
+                "drink",
+                "wine",
+                "still life",
+                "close-up",
+            ]),
             subject: None,
             adjustments: json!({
-                "exposure": 2.0,
                 "contrast": 6.0,
-                "highlights": -8.0,
+                "highlights": -14.0,
                 "shadows": 10.0,
                 "whites": 4.0,
-                "clarity": 6.0,
-                "vibrance": 10.0,
-                "saturation": 4.0,
-                "temperature": 8.0,
+                "blacks": -4.0,
+                "clarity": 8.0,
+                "structure": 4.0,
+                "vibrance": 12.0,
+                "saturation": 2.0,
+                "temperature": 6.0,
                 "tint": 2.0,
-                "hsl": full_hsl([4.0, 8.0, 6.0, -4.0, -4.0, -6.0, 0.0, 0.0]),
-                "colorGrading": color_grading(30.0, 8.0, 45.0, 10.0),
-                "sharpness": 6.0,
-                "vignetteAmount": -6.0
+                "hsl": hsl_look([
+                    (0.0, 8.0, 0.0),
+                    (2.0, 10.0, 4.0),
+                    (0.0, 6.0, 4.0),
+                    (-2.0, 4.0, 0.0),
+                    (0.0, 0.0, 0.0),
+                    (0.0, -8.0, 0.0),
+                    (0.0, 0.0, 0.0),
+                    (0.0, 0.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (25.0, 8.0, 0.0),
+                    (35.0, 4.0, 0.0),
+                    (45.0, 8.0, 0.0),
+                    8.0,
+                    50.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 4.0), (64.0, 72.0), (160.0, 172.0), (255.0, 250.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
+                "vignetteAmount": -10.0,
+                "grainAmount": 2.0,
             }),
-            lut: None,
+            lut: film_lut(LUT_GOLD_200, 35.0),
             intensity: 100.0,
             built_in: true,
             description: Some(
-                "Warm, appetising look that makes food and drinks look freshly served.".to_string(),
+                "Warm, appetising Kodak Gold look with richer reds and oranges and a soft vignette.".to_string(),
             ),
         },
     ]
 }
-
-// ---------------------------------------------------------------------------
-// Persistence
-// ---------------------------------------------------------------------------
 
 fn profiles_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     let dir = app_handle
@@ -683,8 +1205,40 @@ fn save_user_style_profiles(
     fs::write(path, json_string).map_err(|e| e.to_string())
 }
 
+/// Fills in the on-disk path of every bundled film LUT a built-in profile
+/// references. Paths depend on the installation directory, so they cannot be
+/// hard-coded; if the resource is missing (e.g. a stripped build) the path is
+/// left empty and the look is applied without the LUT instead of breaking.
+fn resolve_builtin_lut_paths(app_handle: &AppHandle, profiles: &mut [StyleProfile]) {
+    let Some(dir) = crate::lut_processing::film_luts_dir(app_handle) else {
+        log::warn!(
+            "Built-in film LUT directory is unavailable; style profiles will run without LUTs"
+        );
+        return;
+    };
+    let entries = crate::lut_processing::list_luts_in_dir(&dir, true).unwrap_or_default();
+
+    for profile in profiles {
+        let Some(lut) = profile.lut.as_mut() else {
+            continue;
+        };
+        if !lut.path.is_empty() {
+            continue;
+        }
+        match entries.iter().find(|entry| entry.name == lut.name) {
+            Some(entry) => lut.path = entry.path.clone(),
+            None => log::warn!(
+                "Built-in LUT '{}' for style profile '{}' was not found",
+                lut.name,
+                profile.id
+            ),
+        }
+    }
+}
+
 fn all_style_profiles(app_handle: &AppHandle) -> Vec<StyleProfile> {
     let mut profiles = builtin_style_profiles();
+    resolve_builtin_lut_paths(app_handle, &mut profiles);
     profiles.extend(load_user_style_profiles(app_handle));
     profiles
 }
@@ -763,6 +1317,189 @@ fn scale_curves(group: &mut Value, fraction: f64) {
     }
 }
 
+/// Upper/lower bounds for the look scalars. This is a safety net for learned
+/// and user-authored profiles: a bad value (a former built-in had `exposure:
+/// 6.0`, i.e. +6 EV) must never blow up an otherwise good photo.
+const SCALAR_LOOK_RANGES: &[(&str, f64, f64)] = &[
+    ("exposure", -2.0, 2.0),
+    ("brightness", -100.0, 100.0),
+    ("contrast", -100.0, 100.0),
+    ("highlights", -100.0, 100.0),
+    ("shadows", -100.0, 100.0),
+    ("whites", -100.0, 100.0),
+    ("blacks", -100.0, 100.0),
+    ("clarity", -100.0, 100.0),
+    ("structure", -100.0, 100.0),
+    ("dehaze", -100.0, 100.0),
+    ("vibrance", -100.0, 100.0),
+    ("saturation", -100.0, 100.0),
+    ("sharpness", 0.0, 150.0),
+    ("grainAmount", 0.0, 100.0),
+    ("vignetteAmount", -100.0, 100.0),
+    ("temperature", -100.0, 100.0),
+    ("tint", -100.0, 100.0),
+    ("hue", -180.0, 180.0),
+    ("glowAmount", 0.0, 100.0),
+    ("halationAmount", 0.0, 100.0),
+    ("flareAmount", 0.0, 100.0),
+    ("colorNoiseReduction", 0.0, 100.0),
+    ("lumaNoiseReduction", 0.0, 100.0),
+];
+
+fn clamp_number(value: &mut Value, min: f64, max: f64) {
+    if let Some(number) = value.as_f64() {
+        *value = json!(number.clamp(min, max));
+    }
+}
+
+/// Clamps every look value to the range the editor UI allows.
+fn clamp_look_adjustments(adjustments: &mut Value) {
+    let Some(obj) = adjustments.as_object_mut() else {
+        return;
+    };
+
+    for (key, min, max) in SCALAR_LOOK_RANGES {
+        if let Some(value) = obj.get_mut(*key) {
+            clamp_number(value, *min, *max);
+        }
+    }
+
+    if let Some(hsl) = obj.get_mut("hsl").and_then(Value::as_object_mut) {
+        for leaf in hsl.values_mut() {
+            if let Some(leaf_obj) = leaf.as_object_mut() {
+                for value in leaf_obj.values_mut() {
+                    clamp_number(value, -100.0, 100.0);
+                }
+            }
+        }
+    }
+
+    if let Some(grading) = obj.get_mut("colorGrading").and_then(Value::as_object_mut) {
+        for (key, value) in grading.iter_mut() {
+            match key.as_str() {
+                "balance" => clamp_number(value, -100.0, 100.0),
+                "blending" => clamp_number(value, 0.0, 100.0),
+                _ => {
+                    if let Some(leaf_obj) = value.as_object_mut() {
+                        for (leaf_key, leaf) in leaf_obj.iter_mut() {
+                            match leaf_key.as_str() {
+                                // Hue is an angle; wrap rather than clamp so a
+                                // slightly out-of-range learned value still works.
+                                "hue" => {
+                                    if let Some(number) = leaf.as_f64() {
+                                        *leaf = json!(number.rem_euclid(360.0));
+                                    }
+                                }
+                                "saturation" => clamp_number(leaf, 0.0, 100.0),
+                                _ => clamp_number(leaf, -100.0, 100.0),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for curve_key in CURVE_GROUPS {
+        let Some(group) = obj.get_mut(*curve_key).and_then(Value::as_object_mut) else {
+            continue;
+        };
+        for channel in CURVE_CHANNELS {
+            let Some(points) = group.get_mut(*channel).and_then(Value::as_array_mut) else {
+                continue;
+            };
+            for point in points.iter_mut() {
+                if let Some(point_obj) = point.as_object_mut() {
+                    if let Some(x) = point_obj.get_mut("x") {
+                        clamp_number(x, 0.0, 255.0);
+                    }
+                    if let Some(y) = point_obj.get_mut("y") {
+                        clamp_number(y, 0.0, 255.0);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Force-enables the editor tools a look relies on. A sidecar can carry
+/// `activeTools: { "curves": false, ... }` from earlier edits; without this a
+/// perfectly good style would be written but silently ignored by the renderer.
+fn enable_tools_for_adjustments(adjustments: &mut Value) {
+    let Some(obj) = adjustments.as_object_mut() else {
+        return;
+    };
+
+    const BASIC_KEYS: &[&str] = &[
+        "exposure",
+        "brightness",
+        "contrast",
+        "highlights",
+        "shadows",
+        "whites",
+        "blacks",
+        "temperature",
+        "tint",
+    ];
+
+    let mut tools: Vec<&str> = Vec::new();
+    if BASIC_KEYS.iter().any(|key| obj.contains_key(*key)) {
+        tools.push("basic");
+        tools.push("whiteBalance");
+    }
+    if obj.contains_key("vibrance") || obj.contains_key("saturation") {
+        tools.push("colorPresence");
+    }
+    if obj.contains_key("hue") {
+        tools.push("hue");
+    }
+    if obj.contains_key("curves") {
+        tools.push("curves");
+    }
+    if obj.contains_key("hsl") {
+        tools.push("colorMixer");
+    }
+    if obj.contains_key("colorGrading") {
+        tools.push("colorGrading");
+    }
+    if obj.contains_key("clarity") || obj.contains_key("structure") || obj.contains_key("dehaze") {
+        tools.push("presence");
+    }
+    if obj.contains_key("sharpness") {
+        tools.push("sharpening");
+    }
+    if obj.contains_key("grainAmount")
+        || obj.contains_key("grainSize")
+        || obj.contains_key("grainRoughness")
+    {
+        tools.push("grain");
+    }
+    if obj.contains_key("vignetteAmount")
+        || obj.contains_key("vignetteFeather")
+        || obj.contains_key("vignetteMidpoint")
+    {
+        tools.push("vignette");
+    }
+    if obj.contains_key("glowAmount")
+        || obj.contains_key("halationAmount")
+        || obj.contains_key("flareAmount")
+    {
+        tools.push("creative");
+    }
+    if obj.contains_key("lutPath") {
+        tools.push("lut");
+    }
+
+    let active = obj
+        .entry("activeTools".to_string())
+        .or_insert_with(|| json!({}));
+    if let Some(active_obj) = active.as_object_mut() {
+        for tool in tools {
+            active_obj.insert(tool.to_string(), json!(true));
+        }
+    }
+}
+
 /// Builds the final adjustments object for applying `profile` at `intensity`
 /// (0..100), including any LUT reference.
 pub fn profile_to_adjustments(profile: &StyleProfile, intensity: Option<f64>) -> Value {
@@ -772,18 +1509,33 @@ pub fn profile_to_adjustments(profile: &StyleProfile, intensity: Option<f64>) ->
     }
 
     let intensity = intensity.unwrap_or(profile.intensity).clamp(0.0, 100.0);
+    let fraction = intensity / 100.0;
     if intensity < 100.0 {
-        scale_look_adjustments(&mut adjustments, intensity / 100.0);
+        scale_look_adjustments(&mut adjustments, fraction);
+    }
+
+    // Keep the point-curve backup in sync so switching the Curves tool to
+    // parametric mode and back does not silently drop the look's tone curve.
+    if let Some(curves) = adjustments.get("curves").cloned()
+        && let Some(obj) = adjustments.as_object_mut()
+    {
+        obj.entry("pointCurves".to_string()).or_insert(curves);
     }
 
     if let Some(lut) = &profile.lut {
-        if let Some(obj) = adjustments.as_object_mut() {
+        // An unresolved built-in LUT has an empty path. Do not point the render
+        // pipeline at it: the look should simply fall back to the grading.
+        if !lut.path.trim().is_empty()
+            && let Some(obj) = adjustments.as_object_mut()
+        {
             obj.insert("lutPath".to_string(), json!(lut.path));
             obj.insert("lutName".to_string(), json!(lut.name));
             obj.insert("lutIsSceneReferred".to_string(), json!(lut.is_built_in));
+            // Intensity also controls the LUT blend, otherwise a 0% look would
+            // still be coloured by the film emulation.
             obj.insert(
                 "lutIntensity".to_string(),
-                json!(lut.intensity.clamp(0.0, 100.0)),
+                json!(lut.intensity.clamp(0.0, 100.0) * fraction),
             );
             let active = obj
                 .entry("activeTools".to_string())
@@ -794,6 +1546,8 @@ pub fn profile_to_adjustments(profile: &StyleProfile, intensity: Option<f64>) ->
         }
     }
 
+    clamp_look_adjustments(&mut adjustments);
+    enable_tools_for_adjustments(&mut adjustments);
     adjustments
 }
 
@@ -817,9 +1571,57 @@ pub fn artist_tag(artist: &str) -> String {
     format!("user:artist:{}", slug)
 }
 
-/// Fraction of a profile's `detect_tags` present in the image tags (0..1),
-/// together with the tags that matched. A profile without `detect_tags` never
-/// matches automatically (score 0) and is only used as an explicit fallback.
+/// Tags that appear on so many event photos that they say little about *which*
+/// look fits. They still count, but at half weight, so specific tags (an
+/// instrument, a genre, "mosh pit", "neon", ...) decide between variants.
+const GENERIC_TAGS: &[&str] = &[
+    "concert",
+    "live music",
+    "live concert",
+    "music",
+    "festival",
+    "stage",
+    "stage lighting",
+    "stage lights",
+    "spotlight",
+    "musician",
+    "band",
+    "performer",
+    "singer",
+    "vocalist",
+    "audience",
+    "crowd",
+    "festival crowd",
+    "person",
+    "people",
+    "portrait",
+    "night",
+    "dark",
+    "neon",
+    "colorful",
+    "event",
+    "celebration",
+    "party",
+    "dancing",
+    "activity",
+];
+
+fn tag_weight(tag: &str) -> f64 {
+    if GENERIC_TAGS.contains(&tag) {
+        0.5
+    } else {
+        1.0
+    }
+}
+
+/// Weighted fraction of a profile's `detect_tags` present in the image tags
+/// (0..1), together with the tags that matched. A profile without `detect_tags`
+/// never matches automatically (score 0) and is only used as an explicit
+/// fallback.
+///
+/// Generic event tags (see [`GENERIC_TAGS`]) count half so that, for example, a
+/// photo tagged "concert, saxophone, singer" prefers the warm/acoustic look over
+/// the metal look instead of tying on "concert" and "singer".
 ///
 /// If the profile has a `subject` and the image carries that artist tag, the
 /// match is a hard 1.0 — this is what makes "this is the Iron Maiden event"
@@ -849,14 +1651,24 @@ fn match_score(image_tags: &[String], profile: &StyleProfile) -> (f64, Vec<Strin
     }
 
     if matched.is_empty() {
-        (0.0, Vec::new())
-    } else {
-        // Bounded denominator: a broad, many-tag profile should not be punished
-        // for not matching every tag. One match on a large profile still counts.
-        let denom = profile.detect_tags.len().clamp(1, 6) as f64;
-        let score = (matched.len() as f64 / denom).min(1.0);
-        (score, matched)
+        return (0.0, Vec::new());
     }
+
+    let specific_total = profile
+        .detect_tags
+        .iter()
+        .filter(|tag| tag_weight(&normalize_tag(tag)) >= 1.0)
+        .count();
+    let generic_total = profile.detect_tags.len().saturating_sub(specific_total);
+
+    // Bounded denominator: a broad, many-tag profile should not be punished for
+    // every tag it declares, while a narrow profile stays easy to match.
+    let denom = (specific_total as f64 + generic_total as f64 * 0.5).clamp(1.0, 4.0);
+    let matched_weight: f64 = matched
+        .iter()
+        .map(|tag| tag_weight(&normalize_tag(tag)))
+        .sum();
+    ((matched_weight / denom).min(1.0), matched)
 }
 
 fn tags_for_path(path: &str) -> Vec<String> {
@@ -968,6 +1780,11 @@ fn collect_look_stats(adjustments: &Value, stats: &mut LookStats) {
     };
 
     for key in SCALAR_LOOK_KEYS {
+        // Exposure is per-image (the renderer already applies a baseline
+        // exposure); averaging it across a set would bake in a random EV bump.
+        if *key == "exposure" {
+            continue;
+        }
         if let Some(value) = obj.get(*key).and_then(Value::as_f64) {
             stats.add_scalar(key, value);
         }
@@ -1344,6 +2161,65 @@ pub async fn apply_style_profile_to_paths(
     apply_adjustments_to_paths(paths, adjustments, app_handle).await
 }
 
+/// Small, per-image corrections derived from content/lighting tags, so the same
+/// profile does not treat a low-key silhouette and a bright daylight frame
+/// identically.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum ToneTweak {
+    Neutral,
+    LiftShadows,
+    TameHighlights,
+    Backlit,
+}
+
+fn tone_tweak_for_tags(tags: &[String]) -> ToneTweak {
+    let has = |needle: &str| tags.iter().any(|tag| normalize_tag(tag) == needle);
+    if has("low-key") || has("dark") || has("night") {
+        ToneTweak::LiftShadows
+    } else if has("backlighting") || has("silhouette") {
+        ToneTweak::Backlit
+    } else if has("high-key") || has("bright") {
+        ToneTweak::TameHighlights
+    } else {
+        ToneTweak::Neutral
+    }
+}
+
+fn tone_tweak_adjustments(tweak: ToneTweak) -> Value {
+    match tweak {
+        ToneTweak::Neutral => json!({}),
+        ToneTweak::LiftShadows => json!({
+            "exposure": 0.15,
+            "shadows": 6.0,
+            "blacks": 2.0,
+        }),
+        ToneTweak::TameHighlights => json!({
+            "exposure": -0.1,
+            "highlights": -6.0,
+            "whites": -3.0,
+        }),
+        ToneTweak::Backlit => json!({
+            "exposure": 0.1,
+            "shadows": 10.0,
+            "highlights": -6.0,
+        }),
+    }
+}
+
+/// Adds the numeric top-level values of `overlay` to `base`. Adjustments are
+/// deltas applied to the photo, so a profile and a tone tweak stack additively.
+fn merge_adjustments_additive(base: &mut Value, overlay: &Value) {
+    let (Some(base_obj), Some(overlay_obj)) = (base.as_object_mut(), overlay.as_object()) else {
+        return;
+    };
+    for (key, overlay_value) in overlay_obj {
+        if let Some(number) = overlay_value.as_f64() {
+            let current = base_obj.get(key).and_then(Value::as_f64).unwrap_or(0.0);
+            base_obj.insert(key.clone(), json!(current + number));
+        }
+    }
+}
+
 /// The fully automatic pass: for every image, pick the best matching profile
 /// from its content tags and apply it. Images below `min_score` fall back to
 /// `fallback_profile_id` when provided, otherwise they are skipped.
@@ -1364,14 +2240,20 @@ pub async fn auto_style_paths_with_ai(
 
     // Sequential on purpose: this only reads sidecars and we must not occupy the
     // global rayon pool with work that can be starved by (or starve) the GPU jobs.
-    let mut decisions: Vec<(String, Option<String>, String)> = Vec::with_capacity(paths.len());
+    let mut decisions: Vec<(String, Option<String>, String, ToneTweak)> =
+        Vec::with_capacity(paths.len());
     for path in &paths {
         let tags = tags_for_path(path);
-        if let Some((_, _, profile)) = best_profile_for_tags(&tags, &profiles, min_score) {
-            decisions.push((path.clone(), Some(profile.id.clone()), profile.name.clone()));
-        } else {
-            decisions.push((path.clone(), None, String::new()));
-        }
+        let (profile_id, profile_name) = match best_profile_for_tags(&tags, &profiles, min_score) {
+            Some((_, _, profile)) => (Some(profile.id.clone()), profile.name.clone()),
+            None => (None, String::new()),
+        };
+        decisions.push((
+            path.clone(),
+            profile_id,
+            profile_name,
+            tone_tweak_for_tags(&tags),
+        ));
     }
 
     log::info!(
@@ -1384,12 +2266,12 @@ pub async fn auto_style_paths_with_ai(
         .as_ref()
         .and_then(|id| profiles.iter().find(|p| p.id == *id));
 
-    let mut groups: HashMap<String, Vec<String>> = HashMap::new();
+    let mut groups: HashMap<(String, ToneTweak), Vec<String>> = HashMap::new();
     let mut names: HashMap<String, String> = HashMap::new();
     let mut counts: HashMap<String, usize> = HashMap::new();
     let mut skipped: Vec<String> = Vec::new();
 
-    for (path, profile_id, profile_name) in decisions {
+    for (path, profile_id, profile_name, tweak) in decisions {
         let chosen = profile_id.or_else(|| fallback.map(|fb| fb.id.clone()));
 
         match chosen {
@@ -1405,22 +2287,25 @@ pub async fn auto_style_paths_with_ai(
                 };
                 names.entry(id.clone()).or_insert(display_name);
                 *counts.entry(id.clone()).or_insert(0) += 1;
-                groups.entry(id).or_default().push(path);
+                groups.entry((id, tweak)).or_default().push(path);
             }
             None => skipped.push(path),
         }
     }
 
-    for (profile_id, group_paths) in groups {
+    for ((profile_id, tweak), group_paths) in groups {
         let Some(profile) = profiles.iter().find(|p| p.id == profile_id) else {
             continue;
         };
+        let mut adjustments = profile_to_adjustments(profile, intensity);
+        merge_adjustments_additive(&mut adjustments, &tone_tweak_adjustments(tweak));
+        clamp_look_adjustments(&mut adjustments);
         log::info!(
-            "AI Style: auto-applying '{}' to {} images",
+            "AI Style: auto-applying '{}' to {} images ({:?})",
             profile.name,
-            group_paths.len()
+            group_paths.len(),
+            tweak
         );
-        let adjustments = profile_to_adjustments(profile, intensity);
         apply_adjustments_to_paths(group_paths, adjustments, app_handle.clone()).await?;
     }
 
@@ -1480,11 +2365,138 @@ mod tests {
             "crowd".to_string(),
         ];
         let (score, matched) = match_score(&tags, &profile);
-        assert!((score - 2.0 / 3.0).abs() < 1e-9);
+        // Two matches, but both are generic ("concert", "stage") so they count
+        // half; the only specific tag ("guitarist") did not match.
+        // denom = 1 specific + 2 generic * 0.5 = 2.0, weight = 0.5 + 0.5 = 1.0
+        assert!((score - 0.5).abs() < 1e-9);
         assert_eq!(matched.len(), 2);
 
         let no_tags: Vec<String> = vec![];
         assert_eq!(match_score(&no_tags, &profile).0, 0.0);
+    }
+
+    fn profile_with_tags(id: &str, tags: &[&str]) -> StyleProfile {
+        StyleProfile {
+            id: id.into(),
+            name: id.into(),
+            detect_tags: tags.iter().map(|tag| (*tag).to_string()).collect(),
+            subject: None,
+            adjustments: json!({}),
+            lut: None,
+            intensity: 100.0,
+            built_in: true,
+            description: None,
+        }
+    }
+
+    #[test]
+    fn specific_tags_pick_the_right_variant() {
+        let metal = profile_with_tags(
+            "metal",
+            &["guitarist", "metal concert", "concert", "stage", "musician"],
+        );
+        let warm = profile_with_tags(
+            "warm",
+            &[
+                "saxophone",
+                "acoustic concert",
+                "concert",
+                "stage",
+                "musician",
+            ],
+        );
+
+        // A concert photo with a saxophone should not be treated as a metal show.
+        let tags = vec![
+            "concert".to_string(),
+            "saxophone".to_string(),
+            "singer".to_string(),
+        ];
+        let (metal_score, _) = match_score(&tags, &metal);
+        let (warm_score, _) = match_score(&tags, &warm);
+        assert!(warm_score > metal_score, "{warm_score} <= {metal_score}");
+
+        // ...while a guitarist photo prefers the metal look.
+        let tags = vec!["concert".to_string(), "guitarist".to_string()];
+        let (metal_score, _) = match_score(&tags, &metal);
+        let (warm_score, _) = match_score(&tags, &warm);
+        assert!(metal_score > warm_score, "{metal_score} <= {warm_score}");
+    }
+
+    #[test]
+    fn dangerous_exposure_is_clamped() {
+        let mut profile = profile_with_tags("p", &[]);
+        profile.adjustments = json!({ "exposure": 6.0, "contrast": 400.0 });
+
+        let adjustments = profile_to_adjustments(&profile, None);
+        assert_eq!(adjustments["exposure"], json!(2.0));
+        assert_eq!(adjustments["contrast"], json!(100.0));
+    }
+
+    #[test]
+    fn unresolved_lut_is_ignored() {
+        let mut profile = profile_with_tags("p", &[]);
+        profile.lut = Some(StyleProfileLut {
+            name: "missing".into(),
+            path: String::new(),
+            is_built_in: true,
+            intensity: 40.0,
+        });
+
+        let adjustments = profile_to_adjustments(&profile, None);
+        assert!(adjustments.get("lutPath").is_none());
+    }
+
+    #[test]
+    fn intensity_scales_lut_blend() {
+        let mut profile = profile_with_tags("p", &[]);
+        profile.lut = Some(StyleProfileLut {
+            name: "test".into(),
+            path: "/tmp/test.cube".into(),
+            is_built_in: true,
+            intensity: 60.0,
+        });
+
+        let adjustments = profile_to_adjustments(&profile, Some(50.0));
+        assert_eq!(adjustments["lutIntensity"], json!(30.0));
+
+        let adjustments = profile_to_adjustments(&profile, Some(0.0));
+        assert_eq!(adjustments["lutIntensity"], json!(0.0));
+    }
+
+    #[test]
+    fn builtin_profiles_are_sane_and_distinct() {
+        let profiles = builtin_style_profiles();
+        assert!(profiles.len() >= 14);
+
+        let mut ids = std::collections::HashSet::new();
+        for profile in &profiles {
+            assert!(
+                ids.insert(profile.id.clone()),
+                "duplicate id {}",
+                profile.id
+            );
+            assert!(
+                !profile.detect_tags.is_empty(),
+                "{} has no tags",
+                profile.id
+            );
+
+            let adjustments = profile_to_adjustments(profile, None);
+            let exposure = adjustments["exposure"].as_f64().unwrap_or(0.0);
+            assert!(
+                exposure.abs() <= 0.5,
+                "{} bakes in {exposure} EV",
+                profile.id
+            );
+
+            // Every look must do more than nudge one slider: a LUT or a real
+            // grading stack (HSL/curves/colour grading).
+            let has_grading = adjustments.get("hsl").is_some()
+                || adjustments.get("curves").is_some()
+                || adjustments.get("colorGrading").is_some();
+            assert!(has_grading, "{} has no grading", profile.id);
+        }
     }
 
     #[test]

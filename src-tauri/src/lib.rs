@@ -1946,6 +1946,12 @@ pub fn run() {
 
             let app_handle = app.handle().clone();
 
+            if let Some(dir) = crate::lut_processing::film_luts_dir(&app_handle) {
+                // Lets `parse_lut_file` recover bundled LUTs whose stored
+                // absolute path went stale (e.g. a new AppImage mount point).
+                crate::lut_processing::set_builtin_lut_dir(dir);
+            }
+
             if let Ok(cache_dir) = app_handle.path().app_cache_dir() {
                 crate::exif_processing::initialize_cache_dir(cache_dir);
             }

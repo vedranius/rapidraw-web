@@ -2688,6 +2688,21 @@ pub async fn apply_adjustments_to_paths(
                 (new_adjustments.as_object_mut(), adjustments.as_object())
             {
                 for (k, v) in pasted_map {
+                    // `activeTools` is a set of per-tool switches: merge it so a
+                    // pasted/applied look only enables the tools it needs and
+                    // leaves the user's other switches (e.g. a disabled mask or
+                    // manual geometry) untouched.
+                    if k == "activeTools"
+                        && let (Some(existing), Some(pasted)) = (
+                            new_map.get_mut(k).and_then(Value::as_object_mut),
+                            v.as_object(),
+                        )
+                    {
+                        for (tool, enabled) in pasted {
+                            existing.insert(tool.clone(), enabled.clone());
+                        }
+                        continue;
+                    }
                     new_map.insert(k.clone(), v.clone());
                 }
             }
