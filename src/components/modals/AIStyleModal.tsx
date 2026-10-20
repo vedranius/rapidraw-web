@@ -367,9 +367,9 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
               const saved = savedCandidates.includes(candidate.id);
               return (
                 <div key={candidate.id} className="rounded-lg border border-border-color bg-bg-primary overflow-hidden">
-                  <div className="aspect-[3/2] bg-black/20">
+                  <div className="aspect-[3/2] bg-black/30">
                     {preview ? (
-                      <img src={preview} alt={candidate.name} className="w-full h-full object-cover" />
+                      <img src={preview} alt={candidate.name} className="w-full h-full object-contain" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center px-3 text-center text-xs text-text-secondary">
                         {previewFailed

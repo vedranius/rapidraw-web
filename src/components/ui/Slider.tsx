@@ -126,11 +126,17 @@ const Slider = ({
   );
 
   const onChangeRef = useRef(onChange);
+  // `onPointerUp` frequently commits the value that `onChange` has been
+  // streaming during the drag. The pointer-up listener lives in an effect that
+  // does not re-run on every parent render, so calling the prop directly would
+  // use the closure from drag start and could revert the last movement.
+  const onPointerUpRef = useRef(onPointerUp);
   const snapToStepRef = useRef(snapToStep);
   const rangeRef = useRef({ min: minPosition, max: maxPosition });
   const scaleRef = useRef(scale);
 
   onChangeRef.current = onChange;
+  onPointerUpRef.current = onPointerUp;
   snapToStepRef.current = snapToStep;
   rangeRef.current = { min: minPosition, max: maxPosition };
   scaleRef.current = scale;
@@ -259,7 +265,7 @@ const Slider = ({
       pendingTouchRef.current = null;
       suppressTouchChangeRef.current = false;
       if (isDragging) {
-        onPointerUp?.();
+        onPointerUpRef.current?.();
       }
       setIsDragging(false);
     };
@@ -350,7 +356,7 @@ const Slider = ({
       },
     };
     onChange(syntheticEvent);
-    onPointerUp?.();
+    onPointerUpRef.current?.();
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -511,7 +517,7 @@ const Slider = ({
     };
     onChange(syntheticEvent);
     setIsEditing(false);
-    onPointerUp?.();
+    onPointerUpRef.current?.();
   };
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
