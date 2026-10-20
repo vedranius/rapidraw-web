@@ -240,10 +240,7 @@ fn detect_subject(text: &str) -> Option<&'static str> {
         return Some("landscape");
     }
 
-    if has(
-        text,
-        &["food", "restaurant", "dish", "meal", "hrana", "jelo"],
-    ) {
+    if has(text, &["food", "restaurant", "meal", "hrana", "jelo"]) || has_word(text, &["dish"]) {
         return Some("food");
     }
 
@@ -564,7 +561,14 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
     if has(
         text,
         &[
-            "vintage", "retro", "analog", "analogue", "faded", "starinsk",
+            "vintage",
+            "retro",
+            "analog",
+            "analogue",
+            "faded",
+            "polaroid",
+            "disposable",
+            "starinsk",
         ],
     ) {
         intent.temperature += 6.0;
@@ -820,10 +824,22 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
     }
     if has(
         text,
-        &["sharp", "crisp detail", "detailed", "oštro", "detaljno"],
+        &[
+            "sharp",
+            "crisp detail",
+            "detailed",
+            "clarity",
+            "microcontrast",
+            "oštro",
+            "detaljno",
+        ],
     ) {
         intent.sharpness += 12.0;
         intent.clarity += 8.0;
+    }
+    if has(text, &["dehaze", "remove haze", "ukloni maglu"]) {
+        intent.dehaze += 12.0;
+        intent.contrast += 3.0;
     }
     if has(text, &["soft skin", "skin tones", "skin", "koža"]) || has_word(text, &["ten"]) {
         intent.hsl(1, 2.0, -4.0, 6.0);
@@ -1125,7 +1141,7 @@ fn summary_from_adjustments(
     }
 
     if traits.is_empty() {
-        "clean, natural colour".to_string()
+        "clean, natural color".to_string()
     } else {
         traits.join(", ")
     }
@@ -1487,6 +1503,23 @@ mod tests {
 
         let too_long = "a".repeat(601);
         assert!(generate_candidates(&too_long).is_err());
+    }
+
+    #[test]
+    fn reddish_is_not_a_food_prompt() {
+        let profile = named("reddish tones", Variant::Balanced);
+        assert!(!profile.name.contains("Food"), "{}", profile.name);
+        assert!(profile.lut.is_none(), "no food LUT should be selected");
+    }
+
+    #[test]
+    fn clarity_and_dehaze_prompts_are_understood() {
+        let clarity = named("clarity and detail", Variant::Balanced);
+        assert!(number(&clarity, "clarity") > 0.0);
+        assert!(number(&clarity, "sharpness") > 0.0);
+
+        let dehaze = named("dehaze landscape", Variant::Balanced);
+        assert!(number(&dehaze, "dehaze") > 0.0);
     }
 
     #[test]

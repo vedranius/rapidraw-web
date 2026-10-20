@@ -42,6 +42,7 @@ const PROMPT_EXAMPLES = [
   'warm airy wedding, Portra 400',
   'cinematic neon night portrait',
   'black and white street portrait',
+  'mračni koncert, tirkizno i narančasto',
 ];
 
 function TagChip({ label }: { label: string }) {
@@ -83,6 +84,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   const [editingCandidate, setEditingCandidate] = useState<string | null>(null);
   const [savedCandidates, setSavedCandidates] = useState<string[]>([]);
   const previewRequest = useRef(0);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
 
   // Blob URLs live as long as the candidate card; revoke the previous batch
   // whenever a new set of previews replaces it (and on unmount).
@@ -333,6 +335,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       </Text>
 
       <textarea
+        ref={promptRef}
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
         placeholder={t('modals.aiStyle.promptPlaceholder')}
@@ -347,7 +350,10 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
           <button
             key={example}
             type="button"
-            onClick={() => setPrompt(example)}
+            onClick={() => {
+              setPrompt(example);
+              promptRef.current?.focus();
+            }}
             className="rounded-full border border-border-color bg-bg-primary px-3 py-1 text-xs text-text-secondary transition-colors hover:border-accent hover:text-text-primary"
           >
             {example}
