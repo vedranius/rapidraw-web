@@ -492,7 +492,7 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
     if has(
         text,
         &[
-            "subtle", "slight", "gentle", "barely", "suptilno", "blago", "nježno",
+            "subtle", "slight", "gentle", "barely", "suptiln", "blag", "nježn",
         ],
     ) {
         intent.strength = 0.62;
@@ -502,7 +502,7 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
             "extreme",
             "very strong",
             "over the top",
-            "ekstremno",
+            "ekstremn",
             "jako izraženo",
         ],
     ) {
@@ -515,15 +515,17 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
             "intense",
             "bold",
             "dramatic",
-            "izraženo",
-            "dramatično",
+            "izražen",
+            "dramatičn",
         ],
     ) {
         intent.strength = 1.32;
     }
 
     // --- Colour stories ---------------------------------------------------
-    if (has(text, &["teal"]) && has(text, &["orange"])) || has(text, &["tirkizno", "narančasto"]) {
+    if (has(text, &["teal"]) && has(text, &["orange"]))
+        || (has(text, &["tirkiz"]) && has(text, &["narančast"]))
+    {
         intent.shadow_grade(200.0, 22.0);
         intent.highlight_grade(35.0, 24.0);
         intent.temperature += 5.0;
@@ -567,8 +569,8 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
             "lowkey",
             "dramatic",
             "mračn",
-            "tamno",
-            "dramatično",
+            "tamn",
+            "dramatičn",
         ],
     ) {
         intent.brightness -= 7.0;
@@ -590,8 +592,8 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
             "high key",
             "high-key",
             "light and airy",
-            "svijetlo",
-            "prozračno",
+            "svijetl",
+            "prozračn",
         ],
     ) {
         intent.brightness += 7.0;
@@ -606,13 +608,7 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
     if has(
         text,
         &[
-            "vintage",
-            "retro",
-            "analog",
-            "analogue",
-            "faded",
-            "starinski",
-            "analogni",
+            "vintage", "retro", "analog", "analogue", "faded", "starinsk",
         ],
     ) {
         intent.temperature += 6.0;
@@ -626,7 +622,7 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
         intent.label("Vintage Film");
     }
 
-    if has(text, &["modern", "clean", "crisp", "moderan", "čisto"]) {
+    if has(text, &["modern", "clean", "crisp", "moder", "čist"]) {
         intent.contrast += 9.0;
         intent.clarity += 8.0;
         intent.sharpness += 5.0;
@@ -634,7 +630,7 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
         intent.label("Modern");
     }
 
-    if has(text, &["natural", "prirodno"]) {
+    if has(text, &["natural", "prirodn"]) {
         intent.contrast += 3.0;
         intent.vibrance += 3.0;
         intent.clarity += 2.0;
@@ -650,9 +646,9 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
             "vibrant",
             "high contrast",
             "contrasty",
-            "živopisno",
-            "kontrastno",
-            "vibrantno",
+            "živopisn",
+            "kontrastn",
+            "vibrantn",
         ],
     ) {
         intent.contrast += 19.0;
@@ -675,10 +671,10 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
             "pastel",
             "hazy",
             "ethereal",
-            "mekano",
-            "sanjivo",
-            "pastelno",
-            "snoliko",
+            "mekan",
+            "sanjiv",
+            "pastel",
+            "snolik",
         ],
     ) {
         intent.contrast -= 9.0;
@@ -765,7 +761,7 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
             "sunrise",
             "sun-kissed",
             "sunkissed",
-            "zlatni sat",
+            "zlatn",
             "zalazak",
             "izlazak",
         ],
@@ -779,10 +775,7 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
         intent.lut_intensity = 38.0;
     }
 
-    if has(
-        text,
-        &["warm", "toasty", "cozy", "toplo", "toplina", "topli"],
-    ) {
+    if has(text, &["warm", "toasty", "cozy", "topl"]) {
         intent.temperature += 8.0;
         intent.highlight_grade(38.0, 12.0);
         intent.saturation += 2.0;
@@ -797,8 +790,8 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
             "blue hour",
             "icy",
             "winter",
-            "hladno",
-            "plavkasto",
+            "hladn",
+            "plavkast",
             "zima",
         ],
     ) {
@@ -810,7 +803,9 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
 
     if has(
         text,
-        &["green", "forest", "earthy", "zeleno", "šuma", "zemljano"],
+        &[
+            "green", "forest", "earthy", "zelen", "šuma", "zemljan", "smeđ",
+        ],
     ) {
         intent.hsl(3, 6.0, 14.0, -4.0);
         intent.temperature += 1.0;
@@ -819,13 +814,13 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
         intent.lut_intensity = intent.lut_intensity.max(25.0);
     }
 
-    if has(text, &["crimson", "crveno", "crvena"]) || has_word(text, &["red"]) {
+    if has(text, &["crimson", "crven"]) || has_word(text, &["red"]) {
         intent.hsl(0, 2.0, 16.0, -2.0);
         intent.highlight_grade(0.0, 10.0);
         intent.label("Red");
     }
 
-    if has(text, &["ljubičasto", "purpurno"]) || has_word(text, &["purple", "violet", "magenta"]) {
+    if has(text, &["ljubičast", "purpurn"]) || has_word(text, &["purple", "violet", "magenta"]) {
         intent.hsl(6, 0.0, 16.0, -2.0);
         intent.hsl(7, 0.0, 12.0, 0.0);
         intent.mid_grade(310.0, 12.0);
@@ -838,8 +833,8 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
             "desaturated",
             "muted",
             "subdued",
-            "prigušeno",
-            "blijedo",
+            "prigušen",
+            "blijed",
             "bez boje",
         ],
     ) {
@@ -849,7 +844,7 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
     }
 
     // --- Physical / finishing cues ---------------------------------------
-    if has(text, &["grain", "grainy", "filmic grain", "zrnato", "zrno"]) {
+    if has(text, &["grain", "grainy", "filmic grain", "zrnat", "zrno"]) {
         intent.grain += 18.0;
         intent.label("Grain");
     }
@@ -1359,6 +1354,21 @@ mod tests {
     fn natural_portrait_stays_gentle() {
         let profile = named("natural portrait", Variant::Balanced);
         assert!(number(&profile, "contrast") <= 8.0);
+    }
+
+    #[test]
+    fn croatian_colour_stems_need_both_colours_for_teal_and_orange() {
+        let orange_only = named("narančasti tonovi", Variant::Balanced);
+        assert!(!orange_only.name.contains("Teal & Orange"));
+
+        let warm = named("topli portret", Variant::Balanced);
+        assert!(number(&warm, "temperature") > 3.0);
+
+        let cool = named("hladni portret", Variant::Balanced);
+        assert!(number(&cool, "temperature") < 3.0);
+
+        let teal_orange = named("tirkizno i narančasto", Variant::Balanced);
+        assert!(teal_orange.name.contains("Teal & Orange"));
     }
 
     #[test]
