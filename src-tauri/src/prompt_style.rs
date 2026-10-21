@@ -961,7 +961,12 @@ fn build_adjustments(intent: &LookIntent, variant: Variant) -> Value {
     let contrast_intent = intent.contrast.clamp(-20.0, 26.0);
     let blacks_intent = intent.blacks.clamp(-18.0, 20.0);
     let mut adjustments = json!({
-        "brightness": round(clamp(scale(intent.brightness), -60.0, 60.0)),
+        // Brightness is a -5..+5 stop control in the editor (the contrast,
+        // saturation and colour tools use their own -100..100 scales). The
+        // mood cues above use the same numeric scale as the other tools, so a
+        // "moody" intent of -7 must become about -0.7 stops here. Writing -7
+        // straight through used to crush the render almost to black.
+        "brightness": round(clamp(scale(intent.brightness) / 10.0, -5.0, 5.0)),
         // The subject and mood blocks stack additively, so a prompt such as
         // "moody teal and orange concert" can otherwise land at +40 contrast
         // and -30 blacks, which can crush a bright linear RAW preview. The
@@ -1372,6 +1377,31 @@ mod tests {
         assert!(profile.name.starts_with("Black & White"));
         assert_eq!(number(&profile, "vibrance"), 0.0);
         assert_eq!(number(&profile, "halationAmount"), 0.0);
+    }
+
+    #[test]
+    fn brightness_uses_the_editor_stop_range() {
+        // The editor's Brightness slider runs from -5 to +5 stops. Mood cues
+        // are expressed on the wider -100..100 scale used by contrast, so they
+        // must be converted rather than written straight into the profile.
+        for prompt in [
+            "moody dark concert",
+            "bright airy portrait",
+            "moody neon night portrait",
+            "bright high key wedding",
+        ] {
+            for profile in generate_candidates(prompt).unwrap() {
+                let brightness = number(&profile, "brightness");
+                assert!(
+                    (-5.0..=5.0).contains(&brightness),
+                    "{prompt}: brightness {brightness} is outside the editor range"
+                );
+                assert!(
+                    brightness.abs() <= 1.0,
+                    "{prompt}: mood brightness {brightness} is too extreme"
+                );
+            }
+        }
     }
 
     #[test]

@@ -1591,6 +1591,16 @@ async fn generate_preview_for_path(
     .map_err(|e| format!("Task execution failed: {}", e))?
 }
 
+/// One JPEG of the untouched base plus one JPEG per style candidate.
+/// Returning both in a single command lets the modal offer a before/after
+/// comparison without decoding the RAW a second time.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StylePreviewBatch {
+    base: Vec<u8>,
+    looks: Vec<Vec<u8>>,
+}
+
 /// Renders a small preview of every style candidate on one photo, so the
 /// prompt-driven look picker can show real pixels instead of a colour swatch.
 /// The photo is decoded once; each candidate only adds a GPU pass.
@@ -1600,12 +1610,8 @@ async fn preview_style_profiles(
     profiles: Vec<crate::style_profile::StyleProfile>,
     intensity: Option<f64>,
     app_handle: tauri::AppHandle,
-) -> Result<Vec<Vec<u8>>, String> {
+) -> Result<StylePreviewBatch, String> {
     tokio::task::spawn_blocking(move || {
-        if profiles.is_empty() {
-            return Ok(Vec::new());
-        }
-
         let state = app_handle.state::<AppState>();
         let context = get_or_init_gpu_context(&state, &app_handle)?;
         let (source_path, sidecar_path) = parse_virtual_path(&path);
@@ -1615,8 +1621,12 @@ async fn preview_style_profiles(
         let as_shot = crate::as_shot::as_shot(&source_path_str);
 
         let sidecar = crate::exif_processing::load_sidecar(&sidecar_path);
-        let base_adjustments = if sidecar.adjustments.is_null() {
-            serde_json::json!({})
+        let sidecar_is_unedited = sidecar.adjustments.is_null();
+        let base_adjustments = if sidecar_is_unedited {
+            // Use the same defaults the editor would use, including
+            // `baselineExposure`, so the "before" frame is not darker than the
+            // frame the look previews are built on.
+            crate::image_processing::default_adjustments()
         } else {
             sidecar.adjustments
         };
@@ -1635,15 +1645,70 @@ async fn preview_style_profiles(
         .map_err(|e| e.to_string())?;
         let (transformed, _) =
             apply_all_transformations(Cow::Borrowed(&base_image), &base_adjustments);
-        let preview_image = if transformed.width().max(transformed.height()) > 900 {
-            transformed.thumbnail(900, 900)
+        let preview_image = crate::image_loader::downscale_for_analysis(&transformed, 900);
+
+        // Unedited RAWs are usually much darker than the camera preview. Give
+        // the looks the same auto tonal baseline the apply command will write.
+        let auto_baseline = if sidecar_is_unedited && is_raw {
+            Some(crate::style_profile::auto_baseline_for_image(
+                &preview_image,
+                is_raw,
+                &base_adjustments,
+                as_shot,
+                &settings,
+            ))
         } else {
-            transformed.into_owned()
+            None
         };
 
         // Masks are irrelevant for judging a colour treatment and cost time;
         // crop/rotation are already baked in above.
         let mask_bitmaps: Vec<ImageBuffer<Luma<u8>, Vec<u8>>> = Vec::new();
+
+        let render_base =
+            |js_adjustments: &serde_json::Value, job_id: &str| -> Result<Vec<u8>, String> {
+                let render = resolve_render_options(&settings, is_raw);
+                let mut all_adjustments =
+                    get_all_adjustments_from_json(js_adjustments, is_raw, as_shot, render);
+                all_adjustments.global.show_clipping = 0;
+
+                let lut = js_adjustments["lutPath"]
+                    .as_str()
+                    .filter(|lut_path| !lut_path.trim().is_empty())
+                    .and_then(|lut_path| lut_processing::get_or_load_lut(&state, lut_path).ok());
+                let unique_hash = calculate_full_job_hash(
+                    // v2: thumbnails of float RAW images used to be washed out to
+                    // mid-grey, so old cached jobs must not be reused.
+                    job_id,
+                    js_adjustments,
+                );
+
+                let processed = process_and_get_dynamic_image(
+                    &context,
+                    &state,
+                    &preview_image,
+                    unique_hash,
+                    RenderRequest {
+                        adjustments: all_adjustments,
+                        mask_bitmaps: &mask_bitmaps,
+                        lut,
+                        roi: None,
+                    },
+                    "preview_style_profiles",
+                )?;
+
+                let (width, height) = processed.dimensions();
+                let rgb_pixels = processed.to_rgb8().into_vec();
+                Encoder::new(Preset::BaselineFastest)
+                    .quality(84)
+                    .encode_rgb(&rgb_pixels, width, height)
+                    .map_err(|e| format!("Failed to encode preview: {e}"))
+            };
+
+        let base = render_base(
+            &base_adjustments,
+            &format!("{source_path_str}::style-preview-base-v2"),
+        )?;
         let mut previews = Vec::with_capacity(profiles.len());
 
         for profile in profiles {
@@ -1651,46 +1716,20 @@ async fn preview_style_profiles(
                 &path,
                 &profile,
                 intensity,
+                auto_baseline.as_ref(),
                 &app_handle,
             );
-            let render = resolve_render_options(&settings, is_raw);
-            let mut all_adjustments =
-                get_all_adjustments_from_json(&js_adjustments, is_raw, as_shot, render);
-            all_adjustments.global.show_clipping = 0;
-
-            let lut = js_adjustments["lutPath"]
-                .as_str()
-                .filter(|lut_path| !lut_path.trim().is_empty())
-                .and_then(|lut_path| lut_processing::get_or_load_lut(&state, lut_path).ok());
-            let unique_hash = calculate_full_job_hash(
-                &format!("{source_path_str}::style-preview::{}", profile.id),
+            let encoded = render_base(
                 &js_adjustments,
-            );
-
-            let processed = process_and_get_dynamic_image(
-                &context,
-                &state,
-                &preview_image,
-                unique_hash,
-                RenderRequest {
-                    adjustments: all_adjustments,
-                    mask_bitmaps: &mask_bitmaps,
-                    lut,
-                    roi: None,
-                },
-                "preview_style_profiles",
+                &format!("{source_path_str}::style-preview-v2::{}", profile.id),
             )?;
-
-            let (width, height) = processed.dimensions();
-            let rgb_pixels = processed.to_rgb8().into_vec();
-            let encoded = Encoder::new(Preset::BaselineFastest)
-                .quality(84)
-                .encode_rgb(&rgb_pixels, width, height)
-                .map_err(|e| format!("Failed to encode preview: {e}"))?;
             previews.push(encoded);
         }
 
-        Ok(previews)
+        Ok(StylePreviewBatch {
+            base,
+            looks: previews,
+        })
     })
     .await
     .map_err(|e| format!("Preview task failed: {e}"))?
@@ -2522,6 +2561,7 @@ pub fn run() {
             file_management::save_community_preset,
             file_management::clear_all_sidecars,
             file_management::clear_thumbnail_cache,
+            file_management::regenerate_thumbnails,
             file_management::set_color_label_for_paths,
             file_management::set_rating_for_paths,
             file_management::set_flag_for_paths,
@@ -2545,6 +2585,8 @@ pub fn run() {
             style_profile::match_style_profiles_for_paths,
             style_profile::apply_style_profile_to_paths,
             style_profile::apply_custom_style_profile,
+            style_profile::snapshot_sidecars,
+            style_profile::restore_sidecars,
             prompt_style::generate_style_candidates,
             preview_style_profiles,
             style_profile::auto_style_paths_with_ai,

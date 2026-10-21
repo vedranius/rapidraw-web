@@ -39,8 +39,10 @@ Radi u postojećem **Cull** dijalogu (desni klik na selekciju → _Cull_).
 - **Boja** se mjeri kroz zasićenost i _colourfulness_ (Hasler–Süsstrunk), pa
   sivi/blijedi kadar dobije malo nižu ocjenu od kadra koji stvarno nosi boju.
 - **Šum**: ISO ≥ 1600/3200/6400/12800 daje mali penal (0.05–0.18), jer visoki
-  ISO jede detalj. U dijalogu se ispod `AI` ocjene prikazuje `E` (exposure
-  quality), `C` (color quality) i ISO, da je odluka provjerljiva.
+  ISO jede detalj. U dijalogu se ispod `AI` ocjene prikazuje `Q` (quality),
+  `S` (semantic/content), `E` (exposure quality), `C` (color quality) i ISO;
+  hover na taj redak otvara puni raspis (sharpness, centering, exposure, colour,
+  quality, content), da je odluka provjerljiva.
 - Semantička ocjena vrednuje i **kompoziciju i svjetlo**: tagovi kao
   `rule of thirds`, `leading lines`, `framing`, `symmetry`, `reflection`,
   `depth of field`, `golden hour`, `soft light` daju mali pozitivan doprinos, pa
@@ -48,6 +50,10 @@ Radi u postojećem **Cull** dijalogu (desni klik na selekciju → _Cull_).
 - Rezultat je `aiScore`. **Najbolja fotka iz bursta bira se po `aiScore`**, ne
   samo po oštrini, a grupe su sortirane najbolje-prve.
 - Ako slika nema tagova, `aiScore` se svodi na klasičnu kvalitetu (bez izobličenja).
+- **Style keepers**: gumb u podnožju dijaloga primijeni odabranu akciju na
+  odbačene (reject / rating / delete) i zatim otvori **AI Style** samo s
+  preživjelima. Time je cijeli tok „pregledaj burst → zadrži najbolje →
+  primijeni adaptirani look" jedan klik, bez ručnog ponovnog selektiranja.
 
 Implementacija: `src-tauri/src/culling.rs`; UI: `src/components/modals/CullingModal.tsx`.
 
@@ -100,7 +106,26 @@ Tako koncert sa saksofonom završi na _Warm Stage_, a ne na _Dark & Punchy_.
 Odabereš profil, podesiš **Intensity** (0–100 %) i klikneš _Apply to N images_.
 Primjena ide kroz postojeći `apply_adjustments_to_paths` (merge u `.rrdata` +
 osvježavanje thumbnaila). Intenzitet skalira „look" vrijednosti, a krivulje
-blenda prema identiteti.
+blenda prema identiteti. Na **0 %** se ne piše nijedan ključ — fotografija ostaje
+točno kakva je bila (inače bi nulirani tonalni ključevi pregazili postojeći
+sidecar).
+
+Iznad popisa stilova je **živi preview odabranog profila** na prvoj odabranoj
+fotografiji (isti GPU render + per-image adaptacija kao kod primjene). Gumb
+**Before** držiš da vidiš bazu bez looka; preview se ponovno renderira kad
+odabereš drugi profil ili promijeniš Intensity. Tako ugrađeni i naučeni stil
+možeš prosuditi prije nego što ga primijeniš na cijelu selekciju.
+
+Nakon primjene toast sadrži **Undo**: sidecari se prije pisanja snime u memoriju
+(`snapshot_sidecars`), a Undo ih vraća (`restore_sidecars`) — uključujući brisanje
+sidecara koji prije primjene nije postojao. Radi za Profile, Describe i
+Auto-apply, pa možeš slobodno isprobavati lookove. Batch apply sada **čeka** da
+se svi sidecari doista upišu i da se thumbnaili ponovno iscrtaju prije nego što
+prikaže toast, pa Undo ne može biti pregazen ni upisom ni zaostalim renderom
+koji je još čitao look. Undo zatim ponovno generira thumbnaile vraćenih slika,
+tako da knjižnica odmah pokaže staro stanje umjesto zadnjeg looka. Na **0 %**
+intenziteta Apply uopće ne zapisuje ništa (frontend prikaže poruku „Intensity is
+0 — nothing to apply.").
 
 ### Matches
 
@@ -109,6 +134,16 @@ Prikazuje koja je fotografija automatski prepoznata i **kojem** stilu pripada
 **Auto-apply AI** koji svakoj slici primijeni najbolje podudaran stil.
 Ako uključiš _„Use selected profile for unmatched images"_, slike bez
 podudaranja dobiju odabrani profil kao fallback.
+
+Kad se modal otvori **s odabranim fotografijama**, prvo se prikaže ova kartica
+(bez selekcije otvara se _Profiles_), jer je to najbrži put: vidiš što je AI
+prepoznao i možeš odmah primijeniti. Iz culling dijaloga (gumb **Style keepers**)
+isti tok dobiva samo preživjele fotografije, pa nema ručnog ponovnog selektiranja.
+
+**Auto-apply** ide kroz isti `build_look_overlay` kao pojedinačna primjena, pa
+neuređene fotografije dobiju auto baseline i kompenzaciju, a uređene zadržavaju
+svoj razvoj. (Prije ovoga auto-pass je zaobilazio baseline i neuređene slike su
+ostajale pre tamne.)
 
 ### Learn
 
@@ -132,6 +167,12 @@ _„mračni koncert, tirkizno i narančasto, zrnato"_ i klikneš **Generate 4 lo
 Ispod polja su i **primjeri** (uključujući hrvatski); klik ih upiše u polje pa
 možeš odmah doraditi opis.
 
+Tu je i **Quick ingredients** ploča: čipovi za subjekt, mood, svjetlo i filmski
+stock jednim klikom dodaju točan engleski izraz koji interpreter razumije, a
+drugi klik ga uklanja. **Surprise me** odabere jednu od kuriranih, međusobno
+usklađenih kombinacija i odmah generira četiri varijante. Zadnjih šest opisa
+pamti se lokalno (**Recent prompts**), pa se možeš vraćati na njih.
+
 Generator je **lokalan i determinističan** (nema poziva na LLM): prepoznaje
 engleski i hrvatski vokabular za subjekt (concert, wedding, portrait, landscape,
 food, street, night, festival, sports, wildlife, architecture, product, car),
@@ -144,17 +185,41 @@ finiš (grain, vignette, halation/glow, clarity/detail, dehaze) i modifikatore
 
 Dobiješ četiri varijante istog intenta — **Balanced**, **Soft**, **Bold**,
 **Film** — koje se razlikuju u kontrastu, clarityju, grain/fadeu i jačini LUT-a.
-Svaka kartica ima **pravi GPU preview** na prvoj odabranoj fotografiji (900 px,
-isti adjustmenti + per-image adaptacija koje će se primijeniti), pa ne moraš
-pogađati kako će izgledati.
+**Balanced** nosi oznaku **Recommended** jer je najsigurniji izbor za prosječnu
+fotografiju; ostale varijante su svjesno izraženije. Svaka kartica ima **pravi
+GPU preview** na prvoj odabranoj fotografiji (900 px, isti adjustmenti +
+per-image adaptacija koje će se primijeniti), pa ne moraš pogađati kako će
+izgledati. Kad se generiraju, modal sam skrola do kartica.
 
-- **Apply** primjenjuje look na cijelu selekciju bez spremanja u biblioteku.
+Iznad svakog previewa je gumb **Before**: dok ga držiš, vidiš istu fotografiju
+**bez** looka (s tvojim postojećim sidecarom), a na gumbu piše **After**. Time
+možeš uživo usporediti boju i tonalitet prije primjene. Baza i četiri looka
+renderiraju se u **jednom** pozivu (`preview_style_profiles` sada vraća
+`{ base, looks }`), pa se RAW dekodira samo jednom.
+
+> **Napomena o previewu:** RAW baza je linearni `Rgb32F`. `DynamicImage::thumbnail`
+> iz `image` cratea nije namijenjen float slikama — njegov rounding dodatak doda
+> ~0.5 svakom kanalu i preview ispadne bijel. Zato se sve float slike
+> downscaleaju kroz `downscale_for_analysis` (`resize_exact`), a integer slike
+> zadržavaju brzi box filter. Isti helper koristi i culling, pa su i perceptual
+> hash i oštrina računati na ispravnoj slici.
+
+> **Napomena o brightnessu:** klizač **Brightness** u editoru radi u rasponu
+> **−5…+5** (stopovi), dok contrast, saturation i boje koriste −100…100.
+> Generator je nekoć pisao mood vrijednost (−7) izravno u profil, što je render
+> skoro potpuno zacrnilo. Sada se intent dijeli s 10 (npr. −7 → −0.7), a
+> `clamp_look_adjustments` ne dopušta da bilo koji profil (uključujući naučene
+> i korisničke) izađe iz −5…+5.
+
+- **Apply** primjenjuje look na cijelu selekciju bez spremanja u biblioteku;
+  toast nudi **Undo** (snapshot prije pisanja).
 - **Save** ga sprema u _Profiles_ (isti `id`, ponovni save ažurira postojeći).
 - **Edit** otvara 8 klizača (contrast, brightness, saturation, temperature,
   highlights, shadows, grain, vignette); rasponi prate generator pa se Bold
-  kontrast i crno-bijela zasićenost otvaraju na točnoj poziciji. Preview se
-  osvježi kad pustiš klizač, a kartica izgubi kvačicu „spremljeno" jer se
-  spremljena kopija više ne podudara.
+  kontrast i crno-bijela zasićenost otvaraju na točnoj poziciji. Brightness
+  klizač je −5…+5 s korakom 0.1, isto kao u editoru. Preview se osvježi kad
+  pustiš klizač, a kartica izgubi kvačicu „spremljeno" jer se spremljena kopija
+  više ne podudara.
 - **Intensity** skalira cijeli look prije primjene.
 
 Ako opis nema prepoznatih pojmova, generator ipak vrati blagi _Natural_ look
@@ -197,6 +262,29 @@ Rezultat: ista „Iron Maiden" ili filmska receptura izgleda različito na
 nedovoljno eksponiranoj, preeksponiranoj i već zasićenoj fotografiji — što je i
 bio cilj. Analiza se kešira po putanji + mtime; ako thumbnail još ne postoji,
 look se primijeni s tvorničkim vrijednostima.
+
+**Auto baseline za neuređene fotografije.** RAW render bez sidecara često je
+1–2 EV tamniji od kamera JPEG-a koji vidiš u biblioteci, pa bi sam look ispao
+poddimenzioniran. Zato se za fotografije **bez ijednog sidecar adjustmenta**
+(ne i za one koje samo imaju tagove/flag) prije looka izračuna auto tonal
+baseline na istom linearnom 900 px renderu koji ide u GPU: `perform_auto_analysis`
+vrati exposure/shadows/highlights/whites/blacks, a uzima se 70 % exposurea i
+shadow lifta te 50 % whites/blacks (contrast, clarity i vibrance ostaju looku).
+Baseline se dodaje **aditivno** na look i uključuje `activeTools.basic`. Isti
+`build_look_overlay()` koristi preview i batch apply, pa ono što vidiš u
+karticama je točno ono što se upiše u sidecar.
+
+Sam baseline nije dovoljan za agresivne „moody" lookove: negativan brightness,
+kontrast i zdrobljene crne na tamnom RAW-u pojedu lift. Zato se uz baseline radi
+i **kompenzacija looka** (samo za neuređene fotografije): negativan brightness
+vraća se s ~1.3× + 0.35 EV, a negativne sjene/crne s ~0.8× / 0.3×. Boja, LUT,
+kontrast, vinjeta i grain ostaju netaknuti, pa look i dalje nosi mood. Za DSCF5001
+baseline je exposure +0.55 EV / shadows +26, a finalni „moody teal & orange"
+Balanced sidecar ima exposure **1.81**, shadows **30.2**, brightness **−0.7**,
+K-Vision 500T 46 % — subjekt je jasno osvijetljen, pozornica ostaje mračna.
+Uređene fotografije (DSCF1131 s exposure 0.6) ne dobivaju baseline ni
+kompenzaciju da se ne bi dvaput posvijetlile; one zadržavaju svoj postojeći
+razvoj, a look samo mijenja grading.
 
 **Kalibracija na stvarnim fotkama.** Rasponi nisu izmišljeni: uspoređeno je 72
 izvezenih (uređenih) koncertnih fotografija s njihovim izvornim previewima.
@@ -286,3 +374,8 @@ Korisnički profili se spremaju u `<app data>/style_profiles/style_profiles.json
 - **OCR logotipa** + baza bendova za automatski prijedlog imena benda.
 - **Detekcija lica/očiju** za precizniji culling portreta.
 - Automatska obrada već pri **importu** (postavka „auto-edit on import").
+- **Progress bar** za auto-pass/apply na velikim selekcijama (trenutno spinner).
+- **Undo i za culling apply** (AI Style undo već postoji; culling flags se za sada
+  vraćaju ručno).
+- **Brži baseline** (keširanje izmjerenog auto baselinea po putanji + mtime) da
+  auto-pass na stotinama neuređenih RAW-ova ne dekodira svaki dvaput.

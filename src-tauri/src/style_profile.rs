@@ -1338,7 +1338,9 @@ fn scale_curves(group: &mut Value, fraction: f64) {
 /// 6.0`, i.e. +6 EV) must never blow up an otherwise good photo.
 const SCALAR_LOOK_RANGES: &[(&str, f64, f64)] = &[
     ("exposure", -2.0, 2.0),
-    ("brightness", -100.0, 100.0),
+    // The Brightness slider is a -5..+5 stop control; the other tonal tools
+    // use -100..100. Letting a profile carry -7 here blacks out the render.
+    ("brightness", -5.0, 5.0),
     ("contrast", -100.0, 100.0),
     ("highlights", -100.0, 100.0),
     ("shadows", -100.0, 100.0),
@@ -2274,16 +2276,23 @@ pub(crate) async fn apply_profile_object_to_paths(
         let mut entries = Vec::with_capacity(paths.len());
         for path in paths {
             let tags = tags_for_path(&path);
-            let mut adjustments = profile_to_adjustments(&task_profile, Some(intensity));
-            merge_adjustments_additive(
-                &mut adjustments,
-                &tone_tweak_adjustments(tone_tweak_for_tags(&tags)),
-            );
-            if let Some(stats) = stats_for_path(&task_handle, &path) {
-                adapt_look_to_photo(&mut adjustments, &task_profile, &stats, &tags);
+            let (_, sidecar_path) = parse_virtual_path(&path);
+            let unedited = crate::exif_processing::load_sidecar(&sidecar_path)
+                .adjustments
+                .is_null();
+            let auto_baseline = if unedited {
+                auto_baseline_for_path(&path, &task_handle)
             } else {
-                clamp_look_adjustments(&mut adjustments);
-            }
+                None
+            };
+            let stats = stats_for_path(&task_handle, &path);
+            let adjustments = build_look_overlay(
+                &task_profile,
+                Some(intensity),
+                &tags,
+                auto_baseline.as_ref(),
+                stats.as_deref(),
+            );
             entries.push((path, adjustments));
         }
         entries
@@ -2294,6 +2303,145 @@ pub(crate) async fn apply_profile_object_to_paths(
     apply_adjustments_to_paths_map(entries, app_handle).await
 }
 
+/// Auto-adjust baseline for an unedited photo.
+///
+/// A look on its own assumes the frame is already developed. An unedited RAW
+/// rendered by the app is often one to two stops darker than the camera JPEG
+/// the library shows, so a moody look would simply look underexposed. This
+/// measures the same linear image the renderer uses and returns only the
+/// tonal part of the auto adjustment (exposure/shadows/highlights/whites/
+/// blacks); contrast, clarity and vibrance stay the look's job.
+pub(crate) fn auto_baseline_for_image(
+    image: &image::DynamicImage,
+    is_raw: bool,
+    base_adjustments: &Value,
+    as_shot: crate::as_shot::AsShot,
+    settings: &crate::app_settings::AppSettings,
+) -> Value {
+    let base_for_exposure = if base_adjustments
+        .as_object()
+        .map_or(true, |object| object.is_empty())
+    {
+        crate::image_processing::default_adjustments()
+    } else {
+        base_adjustments.clone()
+    };
+    let render = crate::image_processing::resolve_render_options(settings, is_raw);
+    let exposure = crate::image_processing::effective_baseline_exposure(
+        &base_for_exposure,
+        as_shot,
+        render.baseline,
+    );
+    let results = crate::image_processing::perform_auto_analysis(image, exposure);
+    // Take most, but not all, of the auto lift: the result should still look
+    // graded rather than like a flat auto-correct.
+    json!({
+        "exposure": (results.exposure * 0.7).clamp(-1.5, 1.5),
+        "highlights": (results.highlights * 0.6).clamp(-100.0, 100.0),
+        "shadows": (results.shadows * 0.7).clamp(-100.0, 100.0),
+        "whites": (results.whites * 0.5).clamp(-100.0, 100.0),
+        "blacks": (results.blacks * 0.5).clamp(-100.0, 100.0),
+    })
+}
+
+/// Decodes an unedited photo at analysis size so `auto_baseline_for_image`
+/// can measure it during a batch apply. Only called for photos without a
+/// sidecar, which is also the only case where the lift is added.
+fn auto_baseline_for_path(path: &str, app_handle: &AppHandle) -> Option<Value> {
+    let (source_path, _) = parse_virtual_path(path);
+    let source_path_str = source_path.to_string_lossy().to_string();
+    let is_raw = crate::formats::is_raw_file(&source_path_str);
+    if !is_raw {
+        return None;
+    }
+    let settings = crate::app_settings::load_settings(app_handle.clone()).ok()?;
+    let as_shot = crate::as_shot::as_shot(&source_path_str);
+    let base = crate::image_processing::default_adjustments();
+    let bytes = fs::read(&source_path)
+        .or_else(|_| crate::file_management::read_file_mapped(&source_path).map(|map| map.to_vec()))
+        .ok()?;
+    let image = crate::image_loader::load_and_composite(
+        &bytes,
+        &source_path_str,
+        &base,
+        false,
+        &settings,
+        None,
+    )
+    .ok()?;
+    let preview = crate::image_loader::downscale_for_analysis(&image, 900);
+    Some(auto_baseline_for_image(
+        &preview, is_raw, &base, as_shot, &settings,
+    ))
+}
+
+fn enable_basic_tool(overlay: &mut Value) {
+    if let Some(object) = overlay.as_object_mut() {
+        let tools = object.entry("activeTools").or_insert_with(|| json!({}));
+        if let Some(tools) = tools.as_object_mut() {
+            tools.insert("basic".to_string(), json!(true));
+        }
+    }
+}
+
+/// Builds the look overlay shared by the preview and the batch apply, so both
+/// paths always produce exactly the same treatment.
+fn build_look_overlay(
+    profile: &StyleProfile,
+    intensity: Option<f64>,
+    tags: &[String],
+    auto_baseline: Option<&Value>,
+    stats: Option<&PhotoStats>,
+) -> Value {
+    let effective_intensity = intensity.unwrap_or(profile.intensity);
+    if effective_intensity <= 0.0 {
+        // 0 % must leave the photo exactly as it is. Otherwise the look's
+        // zeroed tonal keys would still overwrite the user's existing base.
+        return json!({});
+    }
+    let mut overlay = profile_to_adjustments(profile, intensity);
+    if let Some(baseline) = auto_baseline {
+        // Read the look's own darkening before the baseline is merged: a
+        // "moody" look uses negative brightness plus crushed blacks, and on an
+        // unedited RAW that lands almost black even after the auto baseline.
+        // Counter most of the deliberate darkening with exposure/shadows; the
+        // colour grade, LUT, contrast and vignette still carry the mood.
+        let look_brightness = overlay["brightness"].as_f64().unwrap_or(0.0);
+        let look_shadows = overlay["shadows"].as_f64().unwrap_or(0.0);
+        let look_blacks = overlay["blacks"].as_f64().unwrap_or(0.0);
+        // The baseline is part of the treatment: at 0 % intensity the photo
+        // should look untouched, not auto-developed.
+        let strength = effective_intensity.clamp(0.0, 100.0) / 100.0;
+        let mut scaled = baseline.clone();
+        if let Some(object) = scaled.as_object_mut() {
+            for value in object.values_mut() {
+                if let Some(number) = value.as_f64() {
+                    *value = json!(number * strength);
+                }
+            }
+        }
+        merge_adjustments_additive(&mut overlay, &scaled);
+        let compensation = json!({
+            "exposure": ((-look_brightness).max(0.0) * 1.3 + 0.35).clamp(0.0, 2.0),
+            "shadows": ((-look_shadows).max(0.0) * 0.8
+                + (-look_blacks).max(0.0) * 0.3)
+                .clamp(0.0, 30.0),
+        });
+        merge_adjustments_additive(&mut overlay, &compensation);
+        enable_basic_tool(&mut overlay);
+    }
+    merge_adjustments_additive(
+        &mut overlay,
+        &tone_tweak_adjustments(tone_tweak_for_tags(tags)),
+    );
+    if let Some(stats) = stats {
+        adapt_look_to_photo(&mut overlay, profile, stats, tags);
+    } else {
+        clamp_look_adjustments(&mut overlay);
+    }
+    overlay
+}
+
 /// Builds the complete adjustments object a profile would write for `path`,
 /// including the same per-photo adaptation the apply command uses. The preview
 /// renderer feeds this straight into the normal GPU pipeline.
@@ -2301,6 +2449,7 @@ pub(crate) fn preview_adjustments_for_profile(
     path: &str,
     profile: &StyleProfile,
     intensity: Option<f64>,
+    auto_baseline: Option<&Value>,
     app_handle: &AppHandle,
 ) -> Value {
     let (_, sidecar_path) = parse_virtual_path(path);
@@ -2312,16 +2461,8 @@ pub(crate) fn preview_adjustments_for_profile(
     };
 
     let tags = tags_for_path(path);
-    let mut overlay = profile_to_adjustments(profile, intensity);
-    merge_adjustments_additive(
-        &mut overlay,
-        &tone_tweak_adjustments(tone_tweak_for_tags(&tags)),
-    );
-    if let Some(stats) = stats_for_path(app_handle, path) {
-        adapt_look_to_photo(&mut overlay, profile, &stats, &tags);
-    } else {
-        clamp_look_adjustments(&mut overlay);
-    }
+    let stats = stats_for_path(app_handle, path);
+    let overlay = build_look_overlay(profile, intensity, &tags, auto_baseline, stats.as_deref());
 
     crate::file_management::merge_adjustments_value(&mut base, &overlay);
 
@@ -2707,16 +2848,23 @@ pub async fn auto_style_paths_with_ai(
             *counts.entry(profile.id.clone()).or_insert(0) += 1;
 
             let look_intensity = intensity.unwrap_or(profile.intensity).clamp(0.0, 100.0);
-            let mut adjustments = profile_to_adjustments(profile, Some(look_intensity));
-            merge_adjustments_additive(
-                &mut adjustments,
-                &tone_tweak_adjustments(tone_tweak_for_tags(&tags)),
-            );
-            if let Some(stats) = stats_for_path(&task_handle, &path) {
-                adapt_look_to_photo(&mut adjustments, profile, &stats, &tags);
+            let (_, sidecar_path) = crate::file_management::parse_virtual_path(&path);
+            let unedited = crate::exif_processing::load_sidecar(&sidecar_path)
+                .adjustments
+                .is_null();
+            let auto_baseline = if unedited {
+                auto_baseline_for_path(&path, &task_handle)
             } else {
-                clamp_look_adjustments(&mut adjustments);
-            }
+                None
+            };
+            let stats = stats_for_path(&task_handle, &path);
+            let adjustments = build_look_overlay(
+                profile,
+                Some(look_intensity),
+                &tags,
+                auto_baseline.as_ref(),
+                stats.as_deref(),
+            );
             entries.push((path, adjustments));
         }
 
@@ -2754,6 +2902,53 @@ pub async fn auto_style_paths_with_ai(
         skipped,
         by_profile,
     })
+}
+
+/// A copy of one sidecar taken immediately before an AI Style/Cull apply, so a
+/// batch write can be reverted from the "Undo" action in the toast.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarSnapshot {
+    pub sidecar_path: String,
+    /// `None` means the file did not exist before the apply; undo removes it.
+    pub contents: Option<String>,
+}
+
+#[tauri::command]
+pub fn snapshot_sidecars(paths: Vec<String>) -> Vec<SidecarSnapshot> {
+    let mut seen = std::collections::HashSet::new();
+    let mut snapshots = Vec::with_capacity(paths.len());
+    for path in paths {
+        let (_, sidecar_path) = crate::file_management::parse_virtual_path(&path);
+        let sidecar_path = sidecar_path.to_string_lossy().to_string();
+        if !seen.insert(sidecar_path.clone()) {
+            continue;
+        }
+        let contents = fs::read_to_string(&sidecar_path).ok();
+        snapshots.push(SidecarSnapshot {
+            sidecar_path,
+            contents,
+        });
+    }
+    snapshots
+}
+
+#[tauri::command]
+pub fn restore_sidecars(snapshots: Vec<SidecarSnapshot>) -> Result<(), String> {
+    for snapshot in snapshots {
+        let path = PathBuf::from(&snapshot.sidecar_path);
+        match snapshot.contents {
+            Some(contents) => fs::write(&path, contents)
+                .map_err(|error| format!("Could not restore {}: {error}", path.display()))?,
+            None => {
+                if path.exists() {
+                    fs::remove_file(&path)
+                        .map_err(|error| format!("Could not remove {}: {error}", path.display()))?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -2853,6 +3048,16 @@ mod tests {
     }
 
     #[test]
+    fn brightness_is_clamped_to_the_editor_stop_range() {
+        let mut profile = profile_with_tags("p", &[]);
+        profile.adjustments = json!({ "brightness": -7.0 });
+
+        let adjustments = profile_to_adjustments(&profile, None);
+        // -7 stops would black out the photo; the editor's slider stops at -5.
+        assert_eq!(adjustments["brightness"], json!(-5.0));
+    }
+
+    #[test]
     fn unresolved_lut_is_ignored() {
         let mut profile = profile_with_tags("p", &[]);
         profile.lut = Some(StyleProfileLut {
@@ -2900,6 +3105,87 @@ mod tests {
 
         let adjustments = profile_to_adjustments(&profile, Some(0.0));
         assert_eq!(adjustments["lutIntensity"], json!(0.0));
+    }
+
+    #[test]
+    fn zero_intensity_does_not_overwrite_the_current_edit() {
+        let mut profile = profile_with_tags("p", &[]);
+        profile.adjustments = json!({
+            "contrast": 40.0,
+            "shadows": -20.0,
+            "lutPath": "/tmp/look.cube",
+            "lutName": "look",
+            "lutIntensity": 60.0,
+        });
+        let overlay = build_look_overlay(&profile, Some(0.0), &[], None, None);
+        assert!(
+            overlay.as_object().is_some_and(|object| object.is_empty()),
+            "0 % intensity must not write any key: {overlay}"
+        );
+    }
+
+    #[test]
+    fn unedited_dark_photo_compensates_for_a_moody_look() {
+        let mut profile = profile_with_tags("p", &[]);
+        profile.adjustments = json!({
+            "brightness": -0.7,
+            "shadows": -7.0,
+            "blacks": -18.0,
+            "contrast": 26.0,
+        });
+        let baseline = json!({
+            "exposure": 0.55,
+            "shadows": 26.2,
+            "whites": -15.6,
+            "highlights": 0.0,
+            "blacks": 0.0,
+        });
+        let overlay = build_look_overlay(&profile, Some(100.0), &[], Some(&baseline), None);
+        let exposure = overlay["exposure"].as_f64().unwrap();
+        let shadows = overlay["shadows"].as_f64().unwrap();
+        assert!(
+            (exposure - 1.81).abs() < 0.02,
+            "expected the auto baseline plus a stop of compensation, got {exposure}"
+        );
+        assert!(
+            shadows > 29.0,
+            "expected the crushed shadows to be lifted, got {shadows}"
+        );
+    }
+
+    #[test]
+    fn snapshot_and_restore_sidecars_round_trip() {
+        let dir = std::env::temp_dir().join(format!("rr-sidecar-snapshot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let image = dir.join("test.raf");
+        std::fs::write(&image, b"raw").unwrap();
+        let sidecar = crate::exif_processing::get_primary_sidecar_path(&image);
+        std::fs::write(&sidecar, "{\"flag\":\"pick\"}").unwrap();
+
+        let snapshots = snapshot_sidecars(vec![image.to_string_lossy().to_string()]);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(
+            snapshots[0].contents.as_deref(),
+            Some("{\"flag\":\"pick\"}")
+        );
+
+        std::fs::write(&sidecar, "{\"flag\":\"reject\"}").unwrap();
+        restore_sidecars(snapshots).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&sidecar).unwrap(),
+            "{\"flag\":\"pick\"}"
+        );
+
+        // Undoing an apply that created a brand-new sidecar removes it again.
+        std::fs::remove_file(&sidecar).unwrap();
+        let empty = snapshot_sidecars(vec![image.to_string_lossy().to_string()]);
+        assert!(empty[0].contents.is_none());
+        std::fs::write(&sidecar, "{}").unwrap();
+        restore_sidecars(empty).unwrap();
+        assert!(!sidecar.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -4016,5 +4302,39 @@ mod real_edit_targets {
         summarize("export highlight clip", hclip_export);
         summarize("source shadow clip", sclip_source);
         summarize("export shadow clip", sclip_export);
+    }
+
+    #[test]
+    #[ignore]
+    fn real_unedited_photo_gets_an_auto_baseline() {
+        let path = "/tmp/opencode/rrweb-photos/Test Shoot/DSCF5001.RAF";
+        if !std::path::Path::new(path).exists() {
+            return;
+        }
+        let (source_path, _) = crate::file_management::parse_virtual_path(path);
+        let source_path_str = source_path.to_string_lossy().to_string();
+        let bytes = std::fs::read(&source_path).unwrap();
+        let settings = crate::app_settings::AppSettings::default();
+        let base = crate::image_processing::default_adjustments();
+        let image = crate::image_loader::load_and_composite(
+            &bytes,
+            &source_path_str,
+            &base,
+            false,
+            &settings,
+            None,
+        )
+        .unwrap();
+        let preview = crate::image_loader::downscale_for_analysis(&image, 900);
+        let baseline = super::auto_baseline_for_image(
+            &preview,
+            true,
+            &base,
+            crate::as_shot::as_shot(&source_path_str),
+            &settings,
+        );
+        println!("auto baseline for DSCF5001: {baseline}");
+        assert!(baseline["exposure"].as_f64().unwrap() > 0.0);
+        assert!(baseline["shadows"].as_f64().unwrap() > 0.0);
     }
 }

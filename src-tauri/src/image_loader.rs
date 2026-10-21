@@ -68,6 +68,30 @@ fn srgb_to_linear_lut() -> &'static [f32; 256] {
     })
 }
 
+/// Downscales an image for previews or analysis.
+///
+/// `DynamicImage::thumbnail` is an integer-only fast path: for float images its
+/// rounding term adds half the number of averaged pixels to every channel,
+/// which washes the result out to mid-grey (~0.5) and clips highlights. RAW
+/// bases are `Rgb32F`, so using `thumbnail` on them made every AI Style preview
+/// look white. Float images therefore go through the regular convolution
+/// resampler; integer images keep the fast box filter.
+pub fn downscale_for_analysis(image: &DynamicImage, max_dim: u32) -> DynamicImage {
+    let (width, height) = image.dimensions();
+    if width == 0 || height == 0 || width.max(height) <= max_dim {
+        return image.clone();
+    }
+    let scale = max_dim as f32 / width.max(height) as f32;
+    let target_w = ((width as f32 * scale).round() as u32).max(1);
+    let target_h = ((height as f32 * scale).round() as u32).max(1);
+    match image {
+        DynamicImage::ImageRgb32F(_) | DynamicImage::ImageRgba32F(_) => {
+            image.resize_exact(target_w, target_h, imageops::FilterType::Triangle)
+        }
+        _ => image.thumbnail(target_w, target_h),
+    }
+}
+
 pub fn load_and_composite(
     base_image: &[u8],
     path: &str,
@@ -1037,4 +1061,36 @@ pub async fn load_image(
         is_raw,
         as_shot_white_balance: as_shot.white_balance,
     })
+}
+
+#[cfg(test)]
+mod downscale_tests {
+    use super::*;
+    use image::{ImageBuffer, Rgb};
+
+    #[test]
+    fn float_downscale_preserves_dark_values() {
+        // Regression: DynamicImage::thumbnail adds half the pixel count when it
+        // averages float channels, so a dark RAW area (0.02) came out as ~0.52
+        // mid-grey. That is what made every AI Style preview look white.
+        let image =
+            DynamicImage::ImageRgb32F(ImageBuffer::from_pixel(64, 64, Rgb([0.02_f32, 0.02, 0.02])));
+        let small = downscale_for_analysis(&image, 16);
+        let converted = small.to_rgb32f();
+        let pixel = converted.get_pixel(8, 8);
+        assert!(
+            (pixel[0] - 0.02).abs() < 0.002,
+            "expected the dark level to survive downscaling, got {pixel:?}"
+        );
+    }
+
+    #[test]
+    fn float_downscale_keeps_small_images_untouched() {
+        let image =
+            DynamicImage::ImageRgb32F(ImageBuffer::from_pixel(8, 8, Rgb([0.1_f32, 0.2, 0.3])));
+        let same = downscale_for_analysis(&image, 16);
+        assert_eq!(same.dimensions(), (8, 8));
+        let converted = same.to_rgb32f();
+        assert_eq!(*converted.get_pixel(0, 0), Rgb([0.1_f32, 0.2, 0.3]));
+    }
 }

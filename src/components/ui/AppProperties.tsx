@@ -47,6 +47,7 @@ export enum Invokes {
   ClearAiTags = 'clear_ai_tags',
   ClearAllTags = 'clear_all_tags',
   ClearThumbnailCache = 'clear_thumbnail_cache',
+  RegenerateThumbnails = 'regenerate_thumbnails',
   CopyFiles = 'copy_files',
   CreateFolder = 'create_folder',
   CreateVirtualCopy = 'create_virtual_copy',
@@ -58,6 +59,8 @@ export enum Invokes {
   MatchStyleProfilesForPaths = 'match_style_profiles_for_paths',
   ApplyStyleProfileToPaths = 'apply_style_profile_to_paths',
   ApplyCustomStyleProfile = 'apply_custom_style_profile',
+  SnapshotSidecars = 'snapshot_sidecars',
+  RestoreSidecars = 'restore_sidecars',
   GenerateStyleCandidates = 'generate_style_candidates',
   PreviewStyleProfiles = 'preview_style_profiles',
   AutoStylePathsWithAi = 'auto_style_paths_with_ai',
@@ -557,6 +560,11 @@ export interface AutoStyleSummary {
   applied: number;
   skipped: string[];
   byProfile: ProfileUsage[];
+}
+
+export interface SidecarSnapshot {
+  sidecarPath: string;
+  contents: string | null;
 }
 
 interface KeybindHandler {

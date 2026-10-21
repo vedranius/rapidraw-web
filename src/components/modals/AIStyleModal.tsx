@@ -14,9 +14,11 @@ import {
   Pencil,
   Save,
   X,
+  Dices,
+  History,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
-import { AutoStyleSummary, Invokes, StyleMatch, StyleProfile } from '../ui/AppProperties';
+import { AutoStyleSummary, Invokes, SidecarSnapshot, StyleMatch, StyleProfile } from '../ui/AppProperties';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
 import Slider from '../ui/Slider';
@@ -45,6 +47,40 @@ const PROMPT_EXAMPLES = [
   'mračni koncert, tirkizno i narančasto',
 ];
 
+// One-click vocabulary for the local prompt interpreter. Clicking a chip adds
+// the exact English phrase it understands; clicking it again removes it.
+type IngredientLabel = 'ingredientSubject' | 'ingredientMood' | 'ingredientLight' | 'ingredientFilm';
+
+const PROMPT_INGREDIENTS: { labelKey: IngredientLabel; items: string[] }[] = [
+  { labelKey: 'ingredientSubject', items: ['concert', 'portrait', 'wedding', 'street', 'landscape', 'night'] },
+  { labelKey: 'ingredientMood', items: ['moody', 'airy', 'warm', 'cool', 'cinematic', 'vintage'] },
+  { labelKey: 'ingredientLight', items: ['neon', 'golden hour', 'soft highlights', 'backlit', 'low-key', 'high-key'] },
+  {
+    labelKey: 'ingredientFilm',
+    items: ['portra 400', 'fuji 400h', 'ektar 100', 'kodak gold 200', 'tri-x 400', 'cinestill 800t'],
+  },
+];
+
+// Curated, internally coherent starting points. A random word salad often
+// cancels itself out (high-key + low-key, sepia + black and white).
+const SURPRISE_PROMPTS = [
+  'moody concert, neon lights, teal and orange, cinematic',
+  'warm portrait, soft highlights, Portra 400, airy',
+  'golden hour wedding, warm, Fuji 400H, dreamy',
+  'gritty street, black and white, high contrast, Tri-X 400',
+  'night concert, low-key, cool highlights, Cinestill 800T',
+  'vintage landscape, Kodak Gold 200, warm, faded',
+  'dramatic portrait, backlit, warm, film grain',
+  'pastel wedding, airy, soft highlights, Fuji 400H',
+];
+
+const PROMPT_HISTORY_KEY = 'rapidraw.aiStyle.promptHistory';
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const promptHasPhrase = (text: string, phrase: string) =>
+  new RegExp(`(^|[^a-z0-9])${escapeRegExp(phrase)}([^a-z0-9]|$)`, 'i').test(text);
+
 function TagChip({ label }: { label: string }) {
   return (
     <span className="inline-block rounded-full bg-bg-primary px-2 py-0.5 text-[10px] text-text-secondary border border-border-color">
@@ -52,6 +88,8 @@ function TagChip({ label }: { label: string }) {
     </span>
   );
 }
+
+const UNDO_TOAST_ID = 'ai-style-undo';
 
 export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails, onApplied }: AIStyleModalProps) {
   const { t } = useTranslation();
@@ -79,12 +117,33 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   const [prompt, setPrompt] = useState('');
   const [candidates, setCandidates] = useState<StyleProfile[]>([]);
   const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [basePreview, setBasePreview] = useState<string | null>(null);
+  const [compareCandidate, setCompareCandidate] = useState<string | null>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
+  // Preview of a saved profile on the first selected photo, so a built-in or
+  // learned look can be judged before it is applied (the Matches tab only
+  // shows the source thumbnails).
+  const [profilePreview, setProfilePreview] = useState<{ base: string | null; look: string; id: string } | null>(null);
+  const [profilePreviewFailed, setProfilePreviewFailed] = useState(false);
+  const [showProfileBase, setShowProfileBase] = useState(false);
+  const profilePreviewRequest = useRef(0);
   const [generating, setGenerating] = useState(false);
   const [editingCandidate, setEditingCandidate] = useState<string | null>(null);
   const [savedCandidates, setSavedCandidates] = useState<string[]>([]);
+  const [promptHistory, setPromptHistory] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem(PROMPT_HISTORY_KEY);
+      const parsed: unknown = stored ? JSON.parse(stored) : [];
+      return Array.isArray(parsed)
+        ? parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).slice(0, 6)
+        : [];
+    } catch {
+      return [];
+    }
+  });
   const previewRequest = useRef(0);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const candidatesRef = useRef<HTMLDivElement>(null);
 
   // Blob URLs live as long as the candidate card; revoke the previous batch
   // whenever a new set of previews replaces it (and on unmount).
@@ -94,18 +153,38 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     };
   }, [previews]);
 
+  useEffect(() => {
+    return () => {
+      if (basePreview) URL.revokeObjectURL(basePreview);
+    };
+  }, [basePreview]);
+
+  useEffect(() => {
+    if (!profilePreview) return;
+    return () => {
+      URL.revokeObjectURL(profilePreview.look);
+      if (profilePreview.base) URL.revokeObjectURL(profilePreview.base);
+    };
+  }, [profilePreview]);
+
+  // Bring the freshly generated looks into view instead of leaving the user
+  // at the prompt box with the cards hidden below the fold.
+  useEffect(() => {
+    if (candidates.length > 0) {
+      candidatesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [candidates.length]);
+
   const pathCount = targetPaths.length;
   const targetKey = useMemo(() => targetPaths.join('\n'), [targetPaths]);
 
   useEffect(() => {
-    return () => {
-      Object.values(previews).forEach((url) => URL.revokeObjectURL(url));
-    };
-  }, [previews]);
-
-  useEffect(() => {
     if (isOpen) {
       setIsMounted(true);
+      // With a selection, the content-aware Matches tab is the useful landing
+      // page (and the natural hand-off from culling); without one, browsing
+      // all saved profiles makes more sense.
+      setTab(targetPaths.length > 0 ? 'matches' : 'profiles');
       const timer = setTimeout(() => setShow(true), 10);
       return () => clearTimeout(timer);
     }
@@ -167,16 +246,121 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
 
   const selectedProfile = profiles.find((p) => p.id === selectedId) ?? null;
 
+  useEffect(() => {
+    if (!isOpen || tab !== 'profiles' || !selectedProfile || !targetPaths[0]) {
+      setProfilePreview(null);
+      setProfilePreviewFailed(false);
+      setShowProfileBase(false);
+      return;
+    }
+    setShowProfileBase(false);
+    const request = ++profilePreviewRequest.current;
+    setProfilePreviewFailed(false);
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const batch = await invoke<{ base: number[]; looks: number[][] }>(Invokes.PreviewStyleProfiles, {
+            path: targetPaths[0],
+            profiles: [selectedProfile],
+            intensity,
+          });
+          if (request !== profilePreviewRequest.current) return;
+          const look = batch.looks[0];
+          if (!look || look.length === 0) {
+            setProfilePreviewFailed(true);
+            setProfilePreview(null);
+            return;
+          }
+          const base =
+            batch.base && batch.base.length > 0
+              ? URL.createObjectURL(new Blob([new Uint8Array(batch.base)], { type: 'image/jpeg' }))
+              : null;
+          setProfilePreview({
+            base,
+            look: URL.createObjectURL(new Blob([new Uint8Array(look)], { type: 'image/jpeg' })),
+            id: selectedProfile.id,
+          });
+        } catch (err) {
+          if (request !== profilePreviewRequest.current) return;
+          console.error('Could not render the saved profile preview:', err);
+          setProfilePreviewFailed(true);
+          setProfilePreview(null);
+        }
+      })();
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [isOpen, tab, selectedProfile, intensity, targetKey]);
+
+  const takeSidecarSnapshot = useCallback(async (): Promise<SidecarSnapshot[]> => {
+    try {
+      return await invoke<SidecarSnapshot[]>(Invokes.SnapshotSidecars, { paths: targetPaths });
+    } catch (err) {
+      // A failed snapshot must never block the actual style application.
+      console.error('Could not snapshot sidecars for undo:', err);
+      return [];
+    }
+  }, [targetPaths]);
+
+  const restoreAfterApply = useCallback(
+    async (snapshot: SidecarSnapshot[]) => {
+      try {
+        await invoke(Invokes.RestoreSidecars, { snapshots: snapshot });
+        // The apply already regenerated the thumbnails with the look; after
+        // restoring the sidecars they must be rendered again from the old edit.
+        await invoke(Invokes.RegenerateThumbnails, { paths: targetPaths });
+        toast.dismiss(UNDO_TOAST_ID);
+        toast.info(t('modals.aiStyle.undone'));
+        await onApplied();
+      } catch (err) {
+        toast.error(t('modals.aiStyle.undoFailed', { err: String(err) }));
+      }
+    },
+    [onApplied, t, targetPaths],
+  );
+
+  const showApplied = useCallback(
+    (message: string, snapshot: SidecarSnapshot[]) => {
+      if (snapshot.length === 0) {
+        toast.success(message);
+        return;
+      }
+      toast.dismiss(UNDO_TOAST_ID);
+      toast.success(
+        <div className="flex items-center gap-3">
+          <span>{message}</span>
+          <button
+            type="button"
+            className="shrink-0 rounded bg-white/20 px-2 py-0.5 text-xs font-semibold underline transition-colors hover:bg-white/30"
+            onClick={() => void restoreAfterApply(snapshot)}
+          >
+            {t('modals.aiStyle.undo')}
+          </button>
+        </div>,
+        {
+          toastId: UNDO_TOAST_ID,
+          autoClose: 10000,
+          closeOnClick: false,
+        },
+      );
+    },
+    [restoreAfterApply, t],
+  );
+
   const handleApplySelected = async () => {
     if (!selectedId || !pathCount) return;
+    if (intensity <= 0) {
+      toast.info(t('modals.aiStyle.nothingToApply'));
+      return;
+    }
     setBusy('apply');
     try {
+      const snapshot = await takeSidecarSnapshot();
       await invoke(Invokes.ApplyStyleProfileToPaths, {
         paths: targetPaths,
         profileId: selectedId,
         intensity,
       });
-      toast.success(t('modals.aiStyle.applied', { n: pathCount }));
+      showApplied(t('modals.aiStyle.applied', { n: pathCount }), snapshot);
       await onApplied();
       onClose();
     } catch (err) {
@@ -188,8 +372,13 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
 
   const handleAutoApply = async () => {
     if (!pathCount) return;
+    if (intensity <= 0) {
+      toast.info(t('modals.aiStyle.nothingToApply'));
+      return;
+    }
     setBusy('auto');
     try {
+      const snapshot = await takeSidecarSnapshot();
       const summary = await invoke<AutoStyleSummary>(Invokes.AutoStylePathsWithAi, {
         paths: targetPaths,
         minScore,
@@ -203,14 +392,15 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
         return;
       }
       if (summary.skipped.length > 0) {
-        toast.success(
+        showApplied(
           t('modals.aiStyle.autoAppliedPartial', {
             n: summary.applied,
             skipped: summary.skipped.length,
           }),
+          snapshot,
         );
       } else {
-        toast.success(t('modals.aiStyle.autoApplied', { n: summary.applied }));
+        showApplied(t('modals.aiStyle.autoApplied', { n: summary.applied }), snapshot);
       }
       await onApplied();
       onClose();
@@ -228,21 +418,27 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       const previewPath = targetPaths[0];
       if (!previewPath || list.length === 0) {
         setPreviews({});
+        setBasePreview(null);
         setPreviewFailed(!previewPath);
         return;
       }
       const request = ++previewRequest.current;
       try {
-        const bytes = await invoke<number[][]>(Invokes.PreviewStyleProfiles, {
+        const batch = await invoke<{ base: number[]; looks: number[][] }>(Invokes.PreviewStyleProfiles, {
           path: previewPath,
           profiles: list,
           intensity,
         });
         if (request !== previewRequest.current) return;
         setPreviewFailed(false);
+        setBasePreview(
+          batch.base && batch.base.length > 0
+            ? URL.createObjectURL(new Blob([new Uint8Array(batch.base)], { type: 'image/jpeg' }))
+            : null,
+        );
         const next: Record<string, string> = {};
         list.forEach((profile, index) => {
-          const data = bytes[index];
+          const data = batch.looks[index];
           if (data && data.length > 0) {
             next[profile.id] = URL.createObjectURL(new Blob([new Uint8Array(data)], { type: 'image/jpeg' }));
           }
@@ -252,14 +448,28 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
         if (request !== previewRequest.current) return;
         console.error('Could not render style previews:', err);
         setPreviews({});
+        setBasePreview(null);
         setPreviewFailed(true);
       }
     },
     [targetPaths, intensity],
   );
 
-  const handleGenerateCandidates = async () => {
-    if (!prompt.trim()) {
+  const rememberPrompt = (text: string) => {
+    setPromptHistory((current) => {
+      const next = [text, ...current.filter((item) => item !== text)].slice(0, 6);
+      try {
+        localStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(next));
+      } catch {
+        // A blocked localStorage must never stop the look from being generated.
+      }
+      return next;
+    });
+  };
+
+  const handleGenerateCandidates = async (textOverride?: string) => {
+    const text = (textOverride ?? prompt).trim();
+    if (!text) {
       toast.error(t('modals.aiStyle.promptEmpty'));
       return;
     }
@@ -268,14 +478,35 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     setSavedCandidates([]);
     setPreviewFailed(false);
     try {
-      const list = await invoke<StyleProfile[]>(Invokes.GenerateStyleCandidates, { prompt });
+      const list = await invoke<StyleProfile[]>(Invokes.GenerateStyleCandidates, { prompt: text });
       setCandidates(list);
+      rememberPrompt(text);
       await renderCandidatePreviews(list);
     } catch (err) {
       toast.error(t('modals.aiStyle.promptFailed', { err: String(err) }));
     } finally {
       setGenerating(false);
     }
+  };
+
+  const toggleIngredient = (phrase: string) => {
+    setPrompt((current) => {
+      if (promptHasPhrase(current, phrase)) {
+        const without = current.replace(
+          new RegExp(`(^|[^a-z0-9])${escapeRegExp(phrase)}(?=[^a-z0-9]|$)`, 'i'),
+          ' ',
+        );
+        return without.replace(/\s+/g, ' ').trim();
+      }
+      return `${current.trim()} ${phrase}`.trim();
+    });
+    promptRef.current?.focus();
+  };
+
+  const handleSurprise = () => {
+    const text = SURPRISE_PROMPTS[Math.floor(Math.random() * SURPRISE_PROMPTS.length)];
+    setPrompt(text);
+    void handleGenerateCandidates(text);
   };
 
   const candidateNumber = (profile: StyleProfile, key: string) => {
@@ -295,14 +526,19 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   };
 
   const handleApplyCandidate = async (profile: StyleProfile) => {
+    if (intensity <= 0) {
+      toast.info(t('modals.aiStyle.nothingToApply'));
+      return;
+    }
     setBusy(`apply-candidate:${profile.id}`);
     try {
+      const snapshot = await takeSidecarSnapshot();
       await invoke(Invokes.ApplyCustomStyleProfile, {
         paths: targetPaths,
         profile,
         intensity,
       });
-      toast.success(t('modals.aiStyle.applied', { n: pathCount }));
+      showApplied(t('modals.aiStyle.applied', { n: pathCount }), snapshot);
       await onApplied();
       onClose();
     } catch (err) {
@@ -361,18 +597,83 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
         ))}
       </div>
 
+      <div className="rounded-lg border border-border-color bg-bg-primary/60 p-2 space-y-1.5">
+        <Text variant={TextVariants.small} className="text-text-secondary">
+          {t('modals.aiStyle.ingredients')}
+        </Text>
+        {PROMPT_INGREDIENTS.map((group) => (
+          <div key={group.labelKey} className="flex flex-wrap items-center gap-1">
+            <span className="w-16 shrink-0 text-[10px] uppercase tracking-wide text-text-secondary">
+              {t(`modals.aiStyle.${group.labelKey}`)}
+            </span>
+            {group.items.map((item) => {
+              const active = promptHasPhrase(prompt, item);
+              return (
+                <button
+                  key={item}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => toggleIngredient(item)}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+                    active
+                      ? 'border-accent bg-accent/15 text-text-primary'
+                      : 'border-border-color bg-bg-primary text-text-secondary hover:border-accent hover:text-text-primary'
+                  }`}
+                >
+                  {item}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+
+      {promptHistory.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-text-secondary">
+            <History size={12} />
+            {t('modals.aiStyle.promptHistory')}
+          </span>
+          {promptHistory.map((item) => (
+            <button
+              key={item}
+              type="button"
+              title={item}
+              onClick={() => {
+                setPrompt(item);
+                promptRef.current?.focus();
+              }}
+              className="max-w-[16rem] truncate rounded-full border border-border-color bg-bg-primary px-2 py-0.5 text-[10px] text-text-secondary transition-colors hover:border-accent hover:text-text-primary"
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-center justify-between gap-3">
         <Text variant={TextVariants.small} className="text-text-secondary">
           {t('modals.aiStyle.promptPreviewNote', { name: previewName })}
         </Text>
-        <Button
-          onClick={handleGenerateCandidates}
-          disabled={generating || !prompt.trim()}
-          className="flex items-center gap-2 shrink-0"
-        >
-          {generating ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
-          {generating ? t('modals.aiStyle.promptGenerating') : t('modals.aiStyle.promptGenerate')}
-        </Button>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            onClick={handleSurprise}
+            disabled={generating}
+            className="flex items-center gap-2 bg-surface text-text-primary border border-border-color"
+            style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem' }}
+          >
+            <Dices size={15} />
+            {t('modals.aiStyle.surprise')}
+          </Button>
+          <Button
+            onClick={() => void handleGenerateCandidates()}
+            disabled={generating || !prompt.trim()}
+            className="flex items-center gap-2"
+          >
+            {generating ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
+            {generating ? t('modals.aiStyle.promptGenerating') : t('modals.aiStyle.promptGenerate')}
+          </Button>
+        </div>
       </div>
 
       {candidates.length > 0 && (
@@ -392,15 +693,40 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[42vh] overflow-y-auto pr-1">
-            {candidates.map((candidate) => {
+          <div
+            ref={candidatesRef}
+            className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[52vh] overflow-y-auto pr-1 scroll-mt-2"
+          >
+            {candidates.map((candidate, index) => {
               const preview = previews[candidate.id];
               const saved = savedCandidates.includes(candidate.id);
+              const showingBefore = compareCandidate === candidate.id && !!basePreview;
               return (
                 <div key={candidate.id} className="rounded-lg border border-border-color bg-bg-primary overflow-hidden">
-                  <div className="aspect-[3/2] bg-black/30">
+                  <div className="relative aspect-square bg-black/30">
                     {preview ? (
-                      <img src={preview} alt={candidate.name} className="w-full h-full object-contain" />
+                      <>
+                        <img
+                          src={showingBefore ? basePreview! : preview}
+                          alt={showingBefore ? `${candidate.name} — before` : candidate.name}
+                          className="w-full h-full object-contain"
+                        />
+                        {basePreview && (
+                          <button
+                            type="button"
+                            onPointerDown={(event) => {
+                              event.preventDefault();
+                              setCompareCandidate(candidate.id);
+                            }}
+                            onPointerUp={() => setCompareCandidate(null)}
+                            onPointerLeave={() => setCompareCandidate(null)}
+                            onPointerCancel={() => setCompareCandidate(null)}
+                            className="absolute bottom-2 right-2 rounded-full bg-black/70 px-2.5 py-1 text-[10px] font-medium text-white shadow-sm backdrop-blur transition-colors hover:bg-black/90"
+                          >
+                            {showingBefore ? t('modals.aiStyle.after') : t('modals.aiStyle.before')}
+                          </button>
+                        )}
+                      </>
                     ) : (
                       <div className="w-full h-full flex items-center justify-center px-3 text-center text-xs text-text-secondary">
                         {previewFailed
@@ -411,9 +737,16 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
                   </div>
                   <div className="p-2 space-y-1">
                     <div className="flex items-center justify-between gap-2">
-                      <Text variant={TextVariants.label} className="truncate">
-                        {candidate.name}
-                      </Text>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {index === 0 && (
+                          <span className="shrink-0 rounded-full bg-accent/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-accent">
+                            {t('modals.aiStyle.recommended')}
+                          </span>
+                        )}
+                        <Text variant={TextVariants.label} className="truncate">
+                          {candidate.name}
+                        </Text>
+                      </div>
                       {saved && <Check size={14} className="text-accent shrink-0" />}
                     </div>
                     {candidate.description && (
@@ -506,7 +839,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
                     {/* Ranges match the generator's clamps so a Bold or
                         black-and-white candidate never opens out of range. */}
                     {slider('contrast', t('adjustments.basic.contrast'), -60, 60, 1, 'default')}
-                    {slider('brightness', t('adjustments.basic.brightness'), -60, 60, 1, 'default')}
+                    {slider('brightness', t('adjustments.basic.brightness'), -5, 5, 0.1, 'default')}
                     {slider('saturation', t('adjustments.color.saturation'), -100, 40, 1, 'default')}
                     {slider('temperature', t('adjustments.color.temperature'), -40, 40, 1, 'default')}
                     {slider('highlights', t('adjustments.basic.highlights'), -80, 60, 1, 'default')}
@@ -617,6 +950,51 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
           {t('modals.aiStyle.tabLearn')}
         </Button>
       </div>
+
+      {selectedProfile && targetPaths[0] && (
+        <>
+          <div className="relative mx-auto aspect-square w-full max-w-[320px] overflow-hidden rounded-lg border border-border-color bg-black">
+          {profilePreview?.id === selectedProfile.id ? (
+            <>
+              <img
+                src={showProfileBase && profilePreview.base ? profilePreview.base : profilePreview.look}
+                alt={selectedProfile.name}
+                className="h-full w-full object-contain"
+              />
+              <div className="absolute left-2 top-2 max-w-[70%] truncate rounded bg-black/60 px-2 py-1 text-[10px] text-white/80">
+                {selectedProfile.name}
+              </div>
+              {profilePreview.base && (
+                <button
+                  type="button"
+                  className="absolute bottom-2 right-2 rounded bg-black/70 px-2 py-1 text-[11px] text-white transition-colors hover:bg-black/90"
+                  onPointerDown={() => setShowProfileBase(true)}
+                  onPointerUp={() => setShowProfileBase(false)}
+                  onPointerLeave={() => setShowProfileBase(false)}
+                  onPointerCancel={() => setShowProfileBase(false)}
+                >
+                  {showProfileBase ? t('modals.aiStyle.after') : t('modals.aiStyle.before')}
+                </button>
+              )}
+            </>
+          ) : (
+            <div className="flex h-20 items-center justify-center gap-2 text-xs text-text-secondary">
+              {profilePreviewFailed ? (
+                t('modals.aiStyle.promptPreviewFailed')
+              ) : (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {t('modals.aiStyle.promptPreviewPending')}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+          <Text variant={TextVariants.small} className="text-center text-text-secondary">
+            {t('modals.aiStyle.promptPreviewNote', { name: previewName })}
+          </Text>
+        </>
+      )}
 
       <div className="space-y-2 max-h-[42vh] overflow-y-auto pr-1">
         {profiles.length === 0 && (
@@ -956,7 +1334,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
                   onClick={() => setTab(item.key)}
                   className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors ${
                     tab === item.key
-                      ? 'bg-accent text-white'
+                      ? 'bg-accent text-button-text'
                       : 'text-text-secondary hover:bg-bg-primary hover:text-text-primary'
                   }`}
                 >

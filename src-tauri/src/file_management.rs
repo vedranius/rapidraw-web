@@ -2072,6 +2072,9 @@ pub fn start_thumbnail_workers(app_handle: tauri::AppHandle) {
                     .lock()
                     .unwrap()
                     .remove(&path_to_process);
+                // Wake `wait_for_thumbnail_completion` waiters (batch apply and
+                // Undo both need to know that this path is no longer rendering).
+                manager_clone.cvar.notify_all();
             }
         });
     }
@@ -2889,7 +2892,13 @@ pub async fn apply_adjustments_to_paths_map(
 
         let paths: Vec<String> = entries.iter().map(|(path, _)| path.clone()).collect();
         enqueue_thumbnail_regeneration(&app_handle, &paths);
-    });
+        // Report success only once the library thumbnails show the new edit.
+        // Otherwise an immediate Undo could restore the sidecar while a worker
+        // is still rendering the look, leaving a stale thumbnail behind.
+        wait_for_thumbnail_completion(&app_handle, &paths);
+    })
+    .await
+    .map_err(|error| format!("Failed to apply adjustments: {error}"))?;
 
     Ok(())
 }
@@ -2960,6 +2969,64 @@ fn enqueue_thumbnail_regeneration(app_handle: &AppHandle, paths: &[String]) {
         paths.len()
     );
     state.thumbnail_manager.cvar.notify_all();
+}
+
+/// Blocks until every path has left both the thumbnail queue and the set of
+/// thumbnails currently being rendered. Batch apply uses this before reporting
+/// success so an immediate Undo can never race a worker that already captured
+/// the look from the sidecar.
+fn wait_for_thumbnail_completion(app_handle: &AppHandle, paths: &[String]) {
+    if paths.is_empty() {
+        return;
+    }
+    let state = app_handle.state::<AppState>();
+    let manager = &state.thumbnail_manager;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    let mut queue = manager.queue.lock().unwrap();
+    loop {
+        let still_queued = paths.iter().any(|path| queue.contains(path));
+        let still_processing = {
+            let processing = manager.processing_now.lock().unwrap();
+            paths.iter().any(|path| processing.contains(path))
+        };
+        if !still_queued && !still_processing {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            log::warn!(
+                "Thumbnail regeneration still busy after 10 minutes for {} paths",
+                paths.len()
+            );
+            break;
+        }
+        // Use a timeout so an evicted queue entry (the queue is capped) can
+        // never leave this wait hanging forever.
+        let (guard, _) = manager
+            .cvar
+            .wait_timeout(queue, std::time::Duration::from_millis(500))
+            .unwrap();
+        queue = guard;
+    }
+}
+
+/// Re-render library thumbnails for `paths` after an Undo restored their
+/// sidecars. Without this the in-memory/frontend cache would keep showing the
+/// look that was just reverted (the apply queue already ran before the undo).
+#[tauri::command]
+pub async fn regenerate_thumbnails(
+    paths: Vec<String>,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        enqueue_thumbnail_regeneration(&app_handle, &paths);
+        wait_for_thumbnail_completion(&app_handle, &paths);
+    })
+    .await
+    .map_err(|error| format!("Failed to regenerate thumbnails: {error}"))?;
+    Ok(())
 }
 
 #[tauri::command]

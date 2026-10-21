@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle, XCircle, Loader2, Users, Trash2, Star, Tag, Image as ImageIcon } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, Users, Trash2, Star, Tag, Palette, Image as ImageIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CullingSettings, CullingSuggestions, Invokes, Progress } from '../ui/AppProperties';
 import Button from '../ui/Button';
@@ -20,6 +20,7 @@ interface CullingModalProps {
   imagePaths: string[];
   thumbnails: Record<string, string>;
   onApply(action: 'reject' | 'rate_zero' | 'delete', paths: string[]): void;
+  onStyleKeepers?(keepers: string[]): void;
   onError(error: string): void;
 }
 
@@ -87,6 +88,7 @@ export default function CullingModal({
   imagePaths,
   thumbnails,
   onApply,
+  onStyleKeepers,
   onError,
 }: CullingModalProps) {
   const { t } = useTranslation();
@@ -205,6 +207,18 @@ export default function CullingModal({
 
   const handleApply = () => {
     onApply(action, Array.from(selectedRejects));
+  };
+
+  const handleStyleKeepers = () => {
+    if (!onStyleKeepers) return;
+    const keepers = imagePaths.filter((path) => !selectedRejects.has(path));
+    if (keepers.length === 0) return;
+    // Apply the chosen action to the rejects first, then hand the survivors to
+    // the AI Style modal so culling and grading happen in one flow.
+    if (selectedRejects.size > 0) {
+      onApply(action, Array.from(selectedRejects));
+    }
+    onStyleKeepers(keepers);
   };
 
   const numSimilar = suggestions?.similarGroups.reduce((acc, group) => acc + group.duplicates.length, 0) || 0;
@@ -409,8 +423,18 @@ export default function CullingModal({
                                   score: group.representative.aiScore.toFixed(2),
                                 })}
                               </Text>
-                              <div className="truncate text-[10px] leading-tight text-white/70">
-                                {`E ${(group.representative.exposureMetric ?? 0).toFixed(2)} · C ${(group.representative.colorMetric ?? 0).toFixed(2)}`}
+                              <div
+                                className="truncate text-[10px] leading-tight text-white/70 cursor-help"
+                                title={[
+                                  `Quality ${(group.representative.qualityScore ?? 0).toFixed(2)}`,
+                                  `Content ${(group.representative.semanticScore ?? 0).toFixed(2)}`,
+                                  `Sharpness ${(group.representative.sharpnessMetric ?? 0).toFixed(0)}`,
+                                  `Centering ${(group.representative.centerFocusMetric ?? 0).toFixed(2)}`,
+                                  `Exposure ${(group.representative.exposureMetric ?? 0).toFixed(2)}`,
+                                  `Colour ${(group.representative.colorMetric ?? 0).toFixed(2)}`,
+                                ].join(' · ')}
+                              >
+                                {`Q ${(group.representative.qualityScore ?? 0).toFixed(2)} · S ${(group.representative.semanticScore ?? 0).toFixed(2)} · E ${(group.representative.exposureMetric ?? 0).toFixed(2)} · C ${(group.representative.colorMetric ?? 0).toFixed(2)}`}
                                 {group.representative.iso ? ` · ISO ${group.representative.iso}` : ''}
                               </div>
                               {group.representative.tags.length > 0 && (
@@ -478,6 +502,15 @@ export default function CullingModal({
               onClick={onClose}
             >
               {t('modals.culling.cancel')}
+            </button>
+            <button
+              className="flex items-center gap-2 px-4 py-2 rounded-md bg-surface text-text-primary hover:bg-card-active transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={handleStyleKeepers}
+              disabled={!onStyleKeepers || imagePaths.length <= selectedRejects.size}
+              title={t('modals.culling.styleKeepersHint')}
+            >
+              <Palette size={16} />
+              {t('modals.culling.styleKeepers')}
             </button>
             <Button onClick={handleApply} disabled={selectedRejects.size === 0}>
               {t('modals.culling.applyButton', { count: selectedRejects.size })}

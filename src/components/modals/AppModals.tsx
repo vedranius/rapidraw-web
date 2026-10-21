@@ -352,6 +352,12 @@ export default function AppModals(props: AppModalsProps) {
             cullingModalState: { isOpen: false, progress: null, suggestions: null, error: null, pathsToCull: [] },
           });
         }}
+        onStyleKeepers={(keepers) =>
+          setUI({
+            cullingModalState: { isOpen: false, progress: null, suggestions: null, error: null, pathsToCull: [] },
+            aiStyleModalState: { isOpen: true, targetPaths: keepers },
+          })
+        }
         onError={(err) => {
           setUI((state) => ({ cullingModalState: { ...state.cullingModalState, error: err, progress: null } }));
         }}

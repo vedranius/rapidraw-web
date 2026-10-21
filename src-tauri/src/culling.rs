@@ -222,7 +222,7 @@ fn analyze_image(
         .map_err(|e| e.to_string())?;
 
     let (width, height) = img.dimensions();
-    let thumbnail = img.thumbnail(ANALYSIS_DIM, ANALYSIS_DIM);
+    let thumbnail = crate::image_loader::downscale_for_analysis(&img, ANALYSIS_DIM);
     let gray_thumbnail = thumbnail.to_luma8();
 
     // Brightness, clipping, saturation, colourfulness and cast are measured on
@@ -280,7 +280,10 @@ fn analyze_image(
         .cloned()
         .collect();
 
-    let hash = hasher.hash_image(&thumbnail);
+    // The perceptual hash is used to group near-duplicate frames. Hashing the
+    // camera preview (display-referred) is far more stable than hashing the
+    // linear RAW base, whose shadows are almost black.
+    let hash = hasher.hash_image(&stats_image);
 
     Ok(ImageAnalysisData {
         hash,
