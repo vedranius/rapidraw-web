@@ -17,14 +17,27 @@ import {
   X,
   Dices,
   History,
+  Settings,
+  Server,
+  KeyRound,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
-import { AutoStyleSummary, Invokes, PromptAiStatus, SidecarSnapshot, StyleMatch, StyleProfile } from '../ui/AppProperties';
+import {
+  AutoStyleSummary,
+  Invokes,
+  PromptAiConfig,
+  PromptAiStatus,
+  SidecarSnapshot,
+  StyleMatch,
+  StyleProfile,
+} from '../ui/AppProperties';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
 import Slider from '../ui/Slider';
 import Text from '../ui/Text';
 import { TextVariants } from '../../types/typography';
+import { useShallow } from 'zustand/react/shallow';
+import { useSettingsStore } from '../../store/useSettingsStore';
 
 interface AIStyleModalProps {
   isOpen: boolean;
@@ -97,6 +110,134 @@ function TagChip({ label }: { label: string }) {
   );
 }
 
+interface HistogramStats {
+  median: number;
+  shadowClip: number;
+  highlightClip: number;
+  mean: number;
+}
+
+/**
+ * A compact histogram computed from the actual rendered preview, not from an
+ * abstract profile value. It lets the user see immediately whether a generated
+ * look is clipping, underexposed or overexposed before applying it.
+ */
+function HistogramStrip({ src }: { src: string }) {
+  const { t } = useTranslation();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [stats, setStats] = useState<HistogramStats | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const image = new Image();
+    image.onload = () => {
+      if (cancelled) return;
+      const sample = document.createElement('canvas');
+      sample.width = 128;
+      sample.height = 128;
+      const context = sample.getContext('2d', { willReadFrequently: true });
+      if (!context) return;
+      context.drawImage(image, 0, 0, sample.width, sample.height);
+      const data = context.getImageData(0, 0, sample.width, sample.height).data;
+      const bins = new Array<number>(64).fill(0);
+      let shadow = 0;
+      let highlight = 0;
+      let lumaSum = 0;
+      let pixels = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i] / 255;
+        const g = data[i + 1] / 255;
+        const b = data[i + 2] / 255;
+        const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        bins[Math.min(63, Math.max(0, Math.round(luma * 63)))] += 1;
+        if (luma <= 0.02) shadow += 1;
+        if (luma >= 0.98) highlight += 1;
+        lumaSum += luma;
+        pixels += 1;
+      }
+      const total = Math.max(1, pixels);
+      let cumulative = 0;
+      let median = 0;
+      for (let i = 0; i < bins.length; i += 1) {
+        cumulative += bins[i];
+        if (cumulative >= total / 2) {
+          median = i / 63;
+          break;
+        }
+      }
+      const nextStats = {
+        median,
+        shadowClip: shadow / total,
+        highlightClip: highlight / total,
+        mean: lumaSum / total,
+      };
+      setStats(nextStats);
+      drawHistogram(canvasRef.current, bins, total);
+    };
+    image.src = src;
+    return () => {
+      cancelled = true;
+      image.src = '';
+    };
+  }, [src]);
+
+  const warning =
+    !!stats &&
+    (stats.highlightClip > 0.03 ||
+      stats.shadowClip > 0.15 ||
+      stats.median < 0.035 ||
+      stats.median > 0.85);
+  const exposureLabel = !stats
+    ? t('modals.aiStyle.histogramPending')
+    : stats.highlightClip > 0.03
+      ? t('modals.aiStyle.histogramClipping')
+      : stats.shadowClip > 0.15
+        ? t('modals.aiStyle.histogramShadows')
+        : stats.median < 0.035
+          ? t('modals.aiStyle.histogramUnder')
+          : stats.median > 0.85
+            ? t('modals.aiStyle.histogramOver')
+            : t('modals.aiStyle.histogramOk');
+
+  return (
+    <div className="rounded-md border border-border-color bg-black/30 px-1.5 py-1">
+      <canvas ref={canvasRef} width={256} height={40} className="h-7 w-full" aria-hidden="true" />
+      <div className="flex items-center justify-between gap-1 text-[9px] text-text-secondary">
+        <span>{stats ? `${Math.round(stats.median * 100)}%` : '—'}</span>
+        <span className={warning ? 'text-amber-400' : 'text-emerald-400'}>{exposureLabel}</span>
+        <span>{stats ? `H ${Math.round(stats.highlightClip * 1000) / 10}%` : ''}</span>
+      </div>
+    </div>
+  );
+}
+
+function drawHistogram(canvas: HTMLCanvasElement | null, bins: number[], total: number) {
+  if (!canvas) return;
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  const width = canvas.width;
+  const height = canvas.height;
+  context.clearRect(0, 0, width, height);
+  const peak = Math.max(1, ...bins);
+  const barWidth = width / bins.length;
+  const gradient = context.createLinearGradient(0, 0, width, 0);
+  gradient.addColorStop(0, 'rgba(148, 163, 184, 0.55)');
+  gradient.addColorStop(0.5, 'rgba(226, 232, 240, 0.65)');
+  gradient.addColorStop(1, 'rgba(148, 163, 184, 0.55)');
+  context.fillStyle = gradient;
+  bins.forEach((count, index) => {
+    const normalized = Math.log1p(count) / Math.log1p(peak);
+    const barHeight = Math.max(1, normalized * (height - 2));
+    context.fillRect(index * barWidth, height - barHeight, Math.max(1, barWidth - 0.5), barHeight);
+  });
+  // Mark 0 %, 50 % and 100 % so the strip is readable at a glance.
+  context.fillStyle = 'rgba(255,255,255,0.18)';
+  context.fillRect(width / 2, 0, 1, height);
+  // Recover the unused denominator so TypeScript does not complain if the
+  // histogram is ever extended to percentages.
+  void total;
+}
+
 const UNDO_TOAST_ID = 'ai-style-undo';
 
 export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails, onApplied }: AIStyleModalProps) {
@@ -126,6 +267,21 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   const [prompt, setPrompt] = useState('');
   const [aiStatus, setAiStatus] = useState<PromptAiStatus | null>(null);
   const [useAi, setUseAi] = useState(true);
+  const [showAiSettings, setShowAiSettings] = useState(false);
+  const [savingAi, setSavingAi] = useState(false);
+  const [aiConfig, setAiConfig] = useState<PromptAiConfig>({
+    provider: 'ollama',
+    baseUrl: '',
+    apiKey: '',
+    model: '',
+    timeoutSecs: 120,
+  });
+  const { appSettings, handleSettingsChange } = useSettingsStore(
+    useShallow((state) => ({
+      appSettings: state.appSettings,
+      handleSettingsChange: state.handleSettingsChange,
+    })),
+  );
   const [candidates, setCandidates] = useState<StyleProfile[]>([]);
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const [basePreview, setBasePreview] = useState<string | null>(null);
@@ -223,28 +379,49 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     };
   }, [isOpen]);
 
-  // Local Ollama is optional: when present, it turns the prompt into
-  // photographic tags before the local colour engine builds the four looks.
+  const refreshAiStatus = useCallback(async () => {
+    try {
+      const status = await invoke<PromptAiStatus>(Invokes.GetPromptAiStatus);
+      setAiStatus(status);
+      setUseAi(status.available);
+      return status;
+    } catch {
+      const status: PromptAiStatus = {
+        available: false,
+        model: null,
+        url: '',
+        provider: 'ollama',
+        configured: false,
+        models: [],
+        detail: null,
+      };
+      setAiStatus(status);
+      setUseAi(false);
+      return status;
+    }
+  }, []);
+
+  // AI interpretation is optional: when a provider is available, it turns the
+  // prompt into photographic tags before the local colour engine builds the
+  // eight looks. Keeping the model config in the same modal makes it possible
+  // to use Ollama, ChatGPT/OpenCode-compatible endpoints or Claude without
+  // leaving the workflow.
   useEffect(() => {
     if (!isOpen) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const status = await invoke<PromptAiStatus>(Invokes.GetPromptAiStatus);
-        if (cancelled) return;
-        setAiStatus(status);
-        setUseAi(status.available);
-      } catch {
-        if (!cancelled) {
-          setAiStatus({ available: false, model: null, url: '' });
-          setUseAi(false);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen]);
+    void refreshAiStatus();
+  }, [isOpen, refreshAiStatus]);
+
+  useEffect(() => {
+    const stored = appSettings?.promptAi;
+    if (!stored) return;
+    setAiConfig({
+      provider: stored.provider || 'ollama',
+      baseUrl: stored.baseUrl ?? '',
+      apiKey: stored.apiKey ?? '',
+      model: stored.model ?? '',
+      timeoutSecs: stored.timeoutSecs ?? 120,
+    });
+  }, [appSettings?.promptAi]);
 
   const loadMatches = useCallback(async () => {
     if (!pathCount) {
@@ -519,6 +696,38 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     });
   };
 
+  const handleSaveAiConfig = async () => {
+    if (!appSettings) return;
+    setSavingAi(true);
+    try {
+      const config: PromptAiConfig = {
+        provider: aiConfig.provider || 'ollama',
+        baseUrl: aiConfig.baseUrl?.trim() || undefined,
+        apiKey: aiConfig.apiKey?.trim() || undefined,
+        model: aiConfig.model?.trim() || undefined,
+        timeoutSecs: aiConfig.timeoutSecs ?? 120,
+      };
+      await handleSettingsChange({ ...appSettings, promptAi: config });
+      setAiConfig({
+        provider: config.provider,
+        baseUrl: config.baseUrl ?? '',
+        apiKey: config.apiKey ?? '',
+        model: config.model ?? '',
+        timeoutSecs: config.timeoutSecs ?? 120,
+      });
+      const status = await refreshAiStatus();
+      if (status.available) {
+        toast.success(t('modals.aiStyle.aiConfigured', { model: status.model ?? config.provider }));
+      } else {
+        toast.warning(status.detail || t('modals.aiStyle.aiUnavailable'));
+      }
+    } catch (err) {
+      toast.error(t('modals.aiStyle.aiConfigFailed', { err: String(err) }));
+    } finally {
+      setSavingAi(false);
+    }
+  };
+
   const handleGenerateCandidates = async (textOverride?: string) => {
     const text = (textOverride ?? prompt).trim();
     if (!text) {
@@ -648,25 +857,145 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       />
 
       {aiStatus && (
-        <div className="flex flex-wrap items-center gap-2 text-[11px]">
-          <span className="inline-flex items-center gap-1 rounded-full border border-border-color bg-bg-primary px-2 py-0.5 text-text-secondary">
-            <Sparkles size={12} />
-            {t('modals.aiStyle.aiAssist')}
-          </span>
-          {aiStatus.available ? (
-            <label className="inline-flex cursor-pointer items-center gap-1.5 text-text-secondary">
-              <input
-                type="checkbox"
-                checked={useAi}
-                onChange={(event) => setUseAi(event.target.checked)}
-                className="accent-accent"
-              />
-              <span className="font-mono text-[10px]">{aiStatus.model}</span>
-            </label>
-          ) : (
-            <span className="text-text-secondary">{t('modals.aiStyle.aiUnavailable')}</span>
+        <div className="space-y-2 text-[11px]">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1 rounded-full border border-border-color bg-bg-primary px-2 py-0.5 text-text-secondary">
+              <Sparkles size={12} />
+              {t('modals.aiStyle.aiAssist')}
+            </span>
+            {aiStatus.available ? (
+              <label className="inline-flex cursor-pointer items-center gap-1.5 text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={useAi}
+                  onChange={(event) => setUseAi(event.target.checked)}
+                  className="accent-accent"
+                />
+                <span className="font-mono text-[10px]">{aiStatus.model}</span>
+              </label>
+            ) : (
+              <span className="text-text-secondary">{t('modals.aiStyle.aiUnavailable')}</span>
+            )}
+            <span className="rounded-full border border-border-color px-2 py-0.5 text-[10px] uppercase tracking-wide text-text-secondary">
+              {aiStatus.provider}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowAiSettings((current) => !current)}
+              className="ml-auto inline-flex items-center gap-1 rounded-full border border-border-color bg-bg-primary px-2 py-0.5 text-text-secondary transition-colors hover:border-accent hover:text-text-primary"
+            >
+              <Settings size={12} />
+              {t('modals.aiStyle.aiConfigure')}
+            </button>
+            <span className="w-full text-text-secondary/80">{t('modals.aiStyle.aiAssistHint')}</span>
+          </div>
+
+          {aiStatus.detail && (
+            <div className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300">
+              {aiStatus.detail}
+            </div>
           )}
-          <span className="text-text-secondary/80">{t('modals.aiStyle.aiAssistHint')}</span>
+
+          {showAiSettings && (
+            <div className="rounded-lg border border-border-color bg-bg-primary/60 p-3 space-y-3">
+              <div className="flex items-center gap-2">
+                <Server size={14} className="text-accent" />
+                <Text variant={TextVariants.label}>{t('modals.aiStyle.aiProviderTitle')}</Text>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  ['ollama', t('modals.aiStyle.aiProviderOllama')],
+                  ['openai', t('modals.aiStyle.aiProviderOpenai')],
+                  ['anthropic', t('modals.aiStyle.aiProviderAnthropic')],
+                ].map(([provider, label]) => (
+                  <button
+                    key={provider}
+                    type="button"
+                    onClick={() =>
+                      setAiConfig((current) => ({
+                        ...current,
+                        provider,
+                        model:
+                          current.model ||
+                          (provider === 'anthropic'
+                            ? 'claude-3-5-haiku-latest'
+                            : provider === 'openai'
+                              ? 'gpt-4o-mini'
+                              : ''),
+                      }))
+                    }
+                    className={`rounded-full border px-2.5 py-1 text-[10px] transition-colors ${
+                      aiConfig.provider === provider
+                        ? 'border-accent bg-accent/15 text-text-primary'
+                        : 'border-border-color bg-bg-primary text-text-secondary hover:border-accent hover:text-text-primary'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 gap-2">
+                <Input
+                  value={aiConfig.baseUrl ?? ''}
+                  onChange={(event) => setAiConfig((current) => ({ ...current, baseUrl: event.target.value }))}
+                  placeholder={
+                    aiConfig.provider === 'anthropic'
+                      ? 'https://api.anthropic.com/v1'
+                      : aiConfig.provider === 'openai'
+                        ? 'https://api.openai.com/v1  ·  https://openrouter.ai/api/v1  ·  http://localhost:1234/v1'
+                        : 'http://127.0.0.1:11434'
+                  }
+                  className="h-8 font-mono text-[11px]"
+                />
+                <Input
+                  value={aiConfig.model ?? ''}
+                  onChange={(event) => setAiConfig((current) => ({ ...current, model: event.target.value }))}
+                  placeholder={
+                    aiConfig.provider === 'anthropic'
+                      ? 'claude-3-5-haiku-latest'
+                      : aiConfig.provider === 'openai'
+                        ? 'gpt-4o-mini / your OpenCode model'
+                        : 'auto (qwen2.5:7b recommended)'
+                  }
+                  className="h-8 font-mono text-[11px]"
+                />
+                {aiConfig.provider !== 'ollama' && (
+                  <div className="relative">
+                    <KeyRound
+                      size={13}
+                      className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-text-secondary"
+                    />
+                    <Input
+                      type="password"
+                      value={aiConfig.apiKey ?? ''}
+                      onChange={(event) => setAiConfig((current) => ({ ...current, apiKey: event.target.value }))}
+                      placeholder={t('modals.aiStyle.aiApiKeyPlaceholder')}
+                      className="h-8 pl-7 font-mono text-[11px]"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <Text variant={TextVariants.small} className="text-text-secondary">
+                {t('modals.aiStyle.aiProviderHint')}
+              </Text>
+              <div className="flex items-center justify-between gap-2">
+                <Text variant={TextVariants.small} className="text-text-secondary/70">
+                  {t('modals.aiStyle.aiLocalOnly')}
+                </Text>
+                <Button
+                  onClick={() => void handleSaveAiConfig()}
+                  disabled={savingAi}
+                  className="flex items-center gap-1.5"
+                  style={{ padding: '0.3rem 0.7rem', fontSize: '0.75rem' }}
+                >
+                  {savingAi ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                  {t('modals.aiStyle.aiSaveProvider')}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -824,6 +1153,11 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
                       </div>
                     )}
                   </div>
+                  {preview && (
+                    <div className="px-2 pt-1">
+                      <HistogramStrip src={preview} />
+                    </div>
+                  )}
                   <div className="p-2 space-y-1">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 min-w-0">

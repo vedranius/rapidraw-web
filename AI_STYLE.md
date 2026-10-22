@@ -8,8 +8,8 @@ fotografije i automatsku obradu prema tom sadržaju (culling + stilovi/LUT-ovi).
 > sloj se na to nadograđuje i **ne pokreće novu CLIP inferenciju** tijekom
 > cullinga ili obrade — koristi postojeće tagove, pa je jednako brz. Jedini
 > opcionalni LLM poziv je tumačenje teksta u kartici **Describe** (lokalni
-> Ollama); on ne dira tagove, culling ni render, samo pripremi fotografski brief
-> za lokalni colour engine.
+> Ollama ili vanjski OpenAI-compatible/Claude model); on ne dira tagove, culling
+> ni render, samo pripremi fotografski brief za lokalni colour engine.
 
 ---
 
@@ -162,42 +162,55 @@ Ovo je dio koji radi ono što si opisao (npr. „Iron Maiden look"):
 Dobiveni profil dobiva `detectTags` iz najčešćih tagova izvornih slika, pa se
 automatski veže na sličan sadržaj.
 
-### Describe (opišeš look → dobiješ 4 varijante)
+### Describe (opišeš look → dobiješ 8 varijanti)
 
 Kartica **Describe** pretvara slobodan opis u gotove stilove. Napišeš npr.
 _„moody teal and orange concert look, soft highlights, subtle grain"_ ili
-_„mračni koncert, tirkizno i narančasto, zrnato"_ i klikneš **Generate 4 looks**.
+_„mračni koncert, tirkizno i narančasto, zrnato"_ i klikneš **Generate 8 looks**.
 Ispod polja su i **primjeri** (uključujući hrvatski); klik ih upiše u polje pa
 možeš odmah doraditi opis.
 
 Tu je i **Quick ingredients** ploča: čipovi za subjekt, mood, svjetlo i filmski
 stock jednim klikom dodaju točan engleski izraz koji interpreter razumije, a
 drugi klik ga uklanja. **Surprise me** odabere jednu od kuriranih, međusobno
-usklađenih kombinacija i odmah generira četiri varijante. Zadnjih šest opisa
+usklađenih kombinacija i odmah generira osam varijanti. Zadnjih šest opisa
 pamti se lokalno (**Recent prompts**), pa se možeš vraćati na njih.
 
 Generator ima **dva sloja**:
 
-1. **AI interpret** (opcionalno): lokalni Ollama model pročita cijeli opis i
-   pretvori ga u kratak fotografski brief — npr. _„1950s, glam rock, concert,
-   portrait"_. To je pravi jezični sloj: AI povezuje „Freddy Mercury / Queen" s
-   glam rockom, dekadu s erom i slične sinonime koje konačni rječnik ne mora
-   znati napamet.
-2. **Colour engine** (lokalno, deterministički): iz tog briefa gradi četiri
-   varijante, bira LUT, HSL i split tone te sve ostavlja kao normalne, editabilne
+1. **AI interpret** (opcionalno): model pročita cijeli opis i pretvori ga u
+   kratak fotografski brief — npr. _„1950s, glam rock, concert, portrait"_. To
+   je pravi jezični sloj: AI povezuje „Freddy Mercury / Queen" s glam rockom,
+   dekadu s erom i slične sinonime koje konačni rječnik ne mora znati napamet.
+   Model uz brief dobije i fotografsko pravilo: čuvaj medijan tona u upotrebljivom
+   rasponu, ne dopuštaj slučajno izbijanje highlighta, ne dri i zeleni/magenta
+   cast na koži i ne pretvaraj scenu u ravne primarne boje.
+2. **Colour engine** (lokalno, deterministički): iz tog briefa gradi osam
+   varijanti, bira LUT, HSL i split tone te sve ostavlja kao normalne, editabilne
    slidere. AI **ne renderira piksele**; zato je preview brz i ponovljiv, a look
    možeš odmah doraditi u _Edit_.
 
-AI je uključen kad je Ollama dostupan; u kartici Describe postoji checkbox
-**AI interpret** s imenom modela (trenutno preferira `qwen2.5-coder:7b`).
-Ako Ollama nije pokrenut, model ne odgovori ili checkbox isključiš, koristi se
-isti lokalni rječnik kao fallback. UI tada pokaže _„Local interpreter (AI
-unavailable)"_. Generirani profili s AI briefom nose **AI** badge i u opisu pišu
-_„AI interpreted: …"_, pa se točno vidi što je model zaključio. AI brief se
-filtrira: iz njega se uzimaju era/artist/subjekt/film stock, a generički
-finišni pojmovi („high contrast", „deep blacks", „halation") se ne dodaju drugi
-put jer su već dio odabrane ere/reference. Tvoja vlastita eksplicitna riječ
-(„extra high contrast") i dalje se normalno parsira.
+AI je uključen kad je odabrani provider dostupan. U kartici Describe postoji
+checkbox **AI interpret** s imenom modela i gumb **AI provider**, gdje biraš:
+
+- **Ollama (local)** — privatno i besplatno; aplikacija preferira brz tekstualni
+  model (`qwen2.5-coder:7b`), ne 12B vision model.
+- **OpenAI-compatible** — ChatGPT/OpenAI, OpenRouter, LM Studio, vLLM, OpenCode
+  i bilo koji servis s `/chat/completions` API-jem. Base URL može biti
+  `https://api.openai.com/v1`, `https://openrouter.ai/api/v1`,
+  `http://localhost:1234/v1` itd.; API key je opcionalan za lokalne servere.
+- **Claude** — Anthropic Messages API (`/v1/messages`).
+
+Ključevi se spremaju samo u lokalni `settings.json` i ne šalju se nigdje osim
+odabranom provideru. Ako provider ne odgovori, model vrati prazan brief ili
+checkbox isključiš, koristi se isti lokalni rječnik kao fallback. UI tada pokaže
+_„Local interpreter (AI unavailable)"_ i razlog u `detail` redu. Generirani
+profili s AI briefom nose **AI** badge i u opisu pišu _„AI interpreted: …"_, pa
+se točno vidi što je model zaključio. AI brief se filtrira: iz njega se uzimaju
+era/artist/subjekt/film stock i rijetke colour-story riječi (npr. `neon`,
+`teal and orange`), a generički finišni pojmovi („high contrast", „deep blacks",
+„halation") se ne dodaju drugi put jer su već dio odabrane ere/reference. Tvoja
+vlastita eksplicitna riječ („extra high contrast") i dalje se normalno parsira.
 
 Lokalni rječnik prepoznaje engleski i hrvatski vokabular za subjekt (concert,
 wedding, portrait, landscape, food, street, night, festival, sports, wildlife,
@@ -221,18 +234,31 @@ modifikatore (_subtle_, _strong_, _extreme_). Posebno su razrađene **era** i
   stvarni red/blue cast i doda toplinu samo onoliko koliko slici treba (vidi
   § „Per-image adaptacija"); dnevna 1950s fotografija ne dobiva taj dodatak.
 
-Dobiješ četiri varijante istog intenta — **Balanced**, **Soft**, **Bold**,
-**Film** — koje se razlikuju u kontrastu, clarityju, grain/fadeu i jačini LUT-a.
+Dobiješ osam varijanti istog intenta — **Balanced**, **Soft**, **Bold**,
+**Film**, **Airy**, **Noir**, **Vivid** i **Editorial** — koje se razlikuju u
+kontrastu, ekspoziciji, clarityju, grain/fadeu, vinjeti, split tonu i jačini
+LUT-a. To nisu samo procenti istog preseta:
+
+- **Soft** diže sjene, smanjuje kontrast i LUT, dodaje glow.
+- **Bold** spušta crne, diže kontrast i zasićenje, pojačava LUT.
+- **Film** dodaje grain, halation, faded krivulju i jači filmski LUT.
+- **Airy** je svjetliji, high-key, s podignutim crnima i mekšim kontrastom.
+- **Noir** je low-key, desaturiran, s dubokim crnima i jačom vinjetom.
+- **Vivid** je čist colour-pop s više zasićenja, clarityja i dehazea.
+- **Editorial** je crisp i suzdržan, s detaljem i bez pretjeranog graina.
+
 **Balanced** nosi oznaku **Recommended** jer je najsigurniji izbor za prosječnu
 fotografiju; ostale varijante su svjesno izraženije. Svaka kartica ima **pravi
 GPU preview** na prvoj odabranoj fotografiji (900 px, isti adjustmenti +
 per-image adaptacija koje će se primijeniti), pa ne moraš pogađati kako će
-izgledati. Kad se generiraju, modal sam skrola do kartica.
+izgledati. Ispod svakog previewa je **mini histogram** iz stvarnog rendera
+(medijan, clipping) s oznakom `exposure OK` / `check highlights` /
+`underexposed` / `overexposed`. Kad se generiraju, modal sam skrola do kartica.
 
 Iznad svakog previewa je gumb **Before**: dok ga držiš, vidiš istu fotografiju
 **bez** looka (s tvojim postojećim sidecarom), a na gumbu piše **After**. Time
-možeš uživo usporediti boju i tonalitet prije primjene. Baza i četiri looka
-renderiraju se u **jednom** pozivu (`preview_style_profiles` sada vraća
+možeš uživo usporediti boju i tonalitet prije primjene. Baza i osam lookova
+renderiraju se u **jednom** pozivu (`preview_style_profiles` vraća
 `{ base, looks }`), pa se RAW dekodira samo jednom.
 
 > **Napomena o previewu:** RAW baza je linearni `Rgb32F`. `DynamicImage::thumbnail`
@@ -301,6 +327,16 @@ Iz tih brojeva `adapt_look_to_photo()` prije primjene prilagodi look:
   bazna toplina recepta.
 - **White balance**: samo za neutralne/portretne stilove i samo kod izraženog
   casta (nikad za neon/stage-light scene ni tople lookove), s malim capom.
+- **Histogram guard (završna provjera)**: prije nego što se look zapiše, procjenjuje
+  se *konačni* medijan iz stvarnog medijana i svih pozitivnih exposure/brightness
+  kontrola. Ako bi Airy/Vivid/Bold izašao iz upotrebljivog raspona (0.035–0.82),
+  višak stopova se oduzima prvo od `brightness`, zatim od `exposure`. Na kadru
+  koji već ima izbijene highlighte (clip > 1.5 % ili p95 > 0.95) pozitivni
+  `highlights`/`whites` se nuliraju; na kadru sa zdrobljenim sjenama negativni
+  `shadows`/`blacks` se nuliraju. Isti guard ne dopušta da se topao grade
+  nadogradi na već toplu scenu (ili hladan na već hladnu) i smanjuje zasićenje na
+  već neon-zasićenim kadrovima. Zato varijante mogu biti izražajne, ali ne
+  iskaču iz fotografskih granica.
 
 Rezultat: ista „Iron Maiden" ili filmska receptura izgleda različito na
 nedovoljno eksponiranoj, preeksponiranoj i već zasićenoj fotografiji — što je i
@@ -394,8 +430,8 @@ tvoje reference + taga), te obrađuje boje/LUT/krivulje u skladu s tim.
 | Semantičko bodovanje cullinga          | `src-tauri/src/culling.rs`                                   |
 | Koncertni vokabular                    | `src-tauri/src/tagging_utils/candidates.rs`                  |
 | Style profili, učenje, match, primjena | `src-tauri/src/style_profile.rs`                             |
-| Prompt → 4 looka (lokalni colour engine) | `src-tauri/src/prompt_style.rs`                           |
-| AI interpret (Ollama)                  | `src-tauri/src/prompt_ai.rs`                                 |
+| Prompt → 8 lookova (lokalni colour engine) | `src-tauri/src/prompt_style.rs`                           |
+| AI interpret (Ollama / OpenAI-compatible / Claude) | `src-tauri/src/prompt_ai.rs`                     |
 | Registracija naredbi                   | `src-tauri/src/lib.rs`                                       |
 | UI                                     | `src/components/modals/AIStyleModal.tsx`, `CullingModal.tsx` |
 | Tipovi / Invokes                       | `src/components/ui/AppProperties.tsx`                        |
@@ -422,9 +458,14 @@ Korisnički profili se spremaju u `<app data>/style_profiles/style_profiles.json
   tvoju procjenu.
 - **Describe** s uključenim _AI interpret_ razumije slobodniji jezik, ali AI
   samo prevodi opis u fotografski brief; konačni grade i dalje gradi lokalni
-  engine. Bez Ollame (ili s isključenim checkboxom) radi kurirani rječnik, pa
+  engine. Bez providera (ili s isključenim checkboxom) radi kurirani rječnik, pa
   neobične formulacije mogu promašiti; tada pomogne konkretniji opis (npr.
   „teal shadows, orange highlights, Portra, grain").
+- **MCP/alatni modeli** nisu izravno implementirani kao MCP klijent. Podržani
+  su Ollama, OpenAI-compatible i Claude API; ako tvoj MCP alat nema
+  OpenAI-compatible endpoint, može se dodati kao mali lokalni bridge koji
+  izlaže `/v1/chat/completions`. To je namjerno odvojeno od rendera: AI samo
+  vraća tagove, pa ne može pokvariti histogram ili sidecar.
 - **Generator drži** contrast/blacks u rasponu bliskom naučenom profilu (do
   +26/−18 prije varijanti) kako jaki „moody" opisi ne bi srušili svijetle
   RAW-ove u crno. Za ekstremniji izgled koristi **Bold** ili ručno doradi u
@@ -439,8 +480,10 @@ Korisnički profili se spremaju u `<app data>/style_profiles/style_profiles.json
 - **OCR logotipa** + baza bendova za automatski prijedlog imena benda.
 - **Detekcija lica/očiju** za precizniji culling portreta.
 - Automatska obrada već pri **importu** (postavka „auto-edit on import").
-- **Progress bar** za auto-pass/apply na velikim selekcijama (trenutno spinner).
+- **Custom command / MCP bridge provider**: proizvoljna naredba (npr. `opencode
+  run`, `claude -p`) koja primi prompt na stdin i vrati tagove, za alate bez
+  OpenAI-compatible API-ja.
 - **Undo i za culling apply** (AI Style undo već postoji; culling flags se za sada
   vraćaju ručno).
-- **Brži baseline** (keširanje izmjerenog auto baselinea po putanji + mtime) da
-  auto-pass na stotinama neuređenih RAW-ova ne dekodira svaki dvaput.
+- **VLM procjena gotovog rendera**: dodatno provjeriti lice/kožu i kompoziciju na
+  stvarnom izlazu, ne samo histogram.

@@ -2647,6 +2647,19 @@ fn add_to_hsl_channel(adjustments: &mut Value, channel: &str, key: &str, delta: 
     }
 }
 
+fn scale_group_saturation(adjustments: &mut Value, group: &str, factor: f64) {
+    let Some(entries) = adjustments.get_mut(group).and_then(Value::as_object_mut) else {
+        return;
+    };
+    for entry in entries.values_mut() {
+        if let Some(saturation) = entry.get_mut("saturation")
+            && let Some(number) = saturation.as_f64()
+        {
+            *saturation = json!(number * factor);
+        }
+    }
+}
+
 fn add_to_scalar(adjustments: &mut Value, key: &str, delta: f64) {
     let Some(obj) = adjustments.as_object_mut() else {
         return;
@@ -2900,8 +2913,143 @@ fn adapt_look_to_photo(
         }
     }
 
+    // A look can be internally valid and still push an already bright frame
+    // over the top (Airy, Vivid and Bold all add positive exposure/whites).
+    // The final gate below reasons about the *projected* histogram instead of
+    // only the source histogram, and pulls back the offending controls.
+    enforce_histogram_safety(adjustments, stats);
+
     // Clamp once more: the adaptive deltas must stay inside editor ranges.
     clamp_look_adjustments(adjustments);
+}
+
+/// The last line of defence for photographic plausibility.
+///
+/// `adapt_look_to_photo` already rescues frames that start out badly exposed,
+/// but a generated variation can add brightness, whites and contrast on top of
+/// a frame that was already close to the ceiling. This function estimates the
+/// resulting median from the exposure controls and the measured histogram, then:
+///
+/// * removes positive exposure/brightness when the projection would leave the
+///   usable 0.035–0.82 luma window,
+/// * stops positive highlight controls on frames that are already clipping,
+/// * stops negative shadow controls on frames whose shadows are already
+///   crushed,
+/// * avoids stacking a warm/cool cast on a frame that already has a strong one,
+/// * tames saturation on already neon-colourful frames.
+///
+/// It never forces a moody frame to mid-grey: the window is intentionally wide
+/// and only the extremes are corrected.
+fn enforce_histogram_safety(adjustments: &mut Value, stats: &PhotoStats) {
+    let median = stats.luma_median.clamp(0.01, 0.99);
+    let stops = adjustments["exposure"].as_f64().unwrap_or(0.0)
+        + adjustments["brightness"].as_f64().unwrap_or(0.0);
+    let projected = median * 2f64.powf(stops);
+    let highlight_pressure = stats.highlight_clip > 0.015 || stats.luma_p95 > 0.95;
+    let shadow_pressure = stats.shadow_clip > 0.025 || stats.luma_p05 < 0.006;
+    let ceiling = if highlight_pressure { 0.72 } else { 0.82 };
+    let floor = if shadow_pressure { 0.055 } else { 0.035 };
+
+    if stops > 0.0 && (projected > ceiling || (highlight_pressure && stats.luma_median > 0.55)) {
+        let allowed = if highlight_pressure && stats.luma_median > 0.55 {
+            0.0
+        } else {
+            (ceiling / median).log2().max(0.0)
+        };
+        reduce_positive_stops(adjustments, (stops - allowed).max(0.0));
+    } else if stops < 0.0 && projected < floor {
+        let required = (floor / median).log2().max(0.0);
+        add_to_scalar(adjustments, "exposure", (required - stops).clamp(0.0, 0.45));
+    }
+
+    if highlight_pressure {
+        for key in ["highlights", "whites"] {
+            if adjustments[key].as_f64().unwrap_or(0.0) > 0.0 {
+                replace_scalar(adjustments, key, 0.0);
+            }
+        }
+        // Already-clipped stage lights should not be pushed harder by a
+        // "vivid" or "bold" variation.
+        if stats.highlight_clip > 0.03 && stats.luma_p95 > 0.96 {
+            for key in ["exposure", "brightness"] {
+                if adjustments[key].as_f64().unwrap_or(0.0) > 0.0 {
+                    replace_scalar(adjustments, key, 0.0);
+                }
+            }
+        }
+    }
+
+    if shadow_pressure {
+        for key in ["shadows", "blacks"] {
+            if adjustments[key].as_f64().unwrap_or(0.0) < 0.0 {
+                replace_scalar(adjustments, key, 0.0);
+            }
+        }
+        if stats.luma_median < 0.06 && adjustments["exposure"].as_f64().unwrap_or(0.0) < 0.0 {
+            replace_scalar(adjustments, "exposure", 0.0);
+        }
+    }
+
+    // Do not pour a warm grade on a frame that is already orange, or a cool
+    // grade on one that is already blue. A blue stage is the exception the
+    // glam rescue above deliberately targets, so only tame *same-direction*
+    // casts here.
+    if stats.cast_rb > 0.16 {
+        let temperature = adjustments["temperature"].as_f64().unwrap_or(0.0);
+        if temperature > 0.0 {
+            replace_scalar(adjustments, "temperature", temperature * 0.55);
+        }
+    } else if stats.cast_rb < -0.16 {
+        let temperature = adjustments["temperature"].as_f64().unwrap_or(0.0);
+        if temperature < 0.0 {
+            replace_scalar(adjustments, "temperature", temperature * 0.55);
+        }
+    }
+    if stats.cast_gm > 0.14 {
+        let tint = adjustments["tint"].as_f64().unwrap_or(0.0);
+        if tint > 0.0 {
+            replace_scalar(adjustments, "tint", tint * 0.55);
+        }
+    } else if stats.cast_gm < -0.14 {
+        let tint = adjustments["tint"].as_f64().unwrap_or(0.0);
+        if tint < 0.0 {
+            replace_scalar(adjustments, "tint", tint * 0.55);
+        }
+    }
+
+    // Existing neon/laser frames need less extra colour, otherwise skin and
+    // stage lights turn into flat primary colours.
+    if stats.colorfulness > 0.78 || stats.saturation > 0.64 {
+        for key in ["saturation", "vibrance"] {
+            let value = adjustments[key].as_f64().unwrap_or(0.0);
+            if value > 0.0 {
+                replace_scalar(adjustments, key, value * 0.78);
+            }
+        }
+        scale_group_saturation(adjustments, "colorGrading", 0.85);
+        scale_group_saturation(adjustments, "hsl", 0.9);
+    }
+}
+
+/// Reduces positive exposure/brightness by `amount` stops, taking it out of
+/// brightness first (the artistic control) and only then exposure (which also
+/// carries the rescue baseline).
+fn reduce_positive_stops(adjustments: &mut Value, amount: f64) {
+    if amount <= 0.0 {
+        return;
+    }
+    let brightness = adjustments["brightness"].as_f64().unwrap_or(0.0);
+    let from_brightness = brightness.max(0.0).min(amount);
+    if from_brightness > 0.0 {
+        replace_scalar(adjustments, "brightness", brightness - from_brightness);
+    }
+    let remaining = amount - from_brightness;
+    if remaining > 0.0 {
+        let exposure = adjustments["exposure"].as_f64().unwrap_or(0.0);
+        if exposure > 0.0 {
+            replace_scalar(adjustments, "exposure", (exposure - remaining).max(0.0));
+        }
+    }
 }
 
 /// The fully automatic pass: for every image, pick the best matching profile
@@ -3727,6 +3875,89 @@ mod tests {
         assert!(adjustments["clarity"].as_f64().unwrap() < 12.0);
         assert!(adjustments["sharpness"].as_f64().unwrap() < 20.0);
         assert!(adjustments["lumaNoiseReduction"].as_f64().unwrap() > 0.0);
+    }
+
+    #[test]
+    fn histogram_guard_pulls_back_a_bright_air_or_vivid_variation() {
+        let stats = PhotoStats {
+            luma_median: 0.68,
+            luma_p05: 0.12,
+            luma_p95: 0.99,
+            highlight_clip: 0.08,
+            contrast: 0.2,
+            ..PhotoStats::default()
+        };
+        let mut adjustments = json!({
+            "exposure": 0.4,
+            "brightness": 0.3,
+            "highlights": 5.0,
+            "whites": 8.0,
+        });
+        enforce_histogram_safety(&mut adjustments, &stats);
+        assert_eq!(adjustments["exposure"].as_f64().unwrap(), 0.0);
+        assert_eq!(adjustments["brightness"].as_f64().unwrap(), 0.0);
+        assert_eq!(adjustments["whites"].as_f64().unwrap(), 0.0);
+        assert_eq!(adjustments["highlights"].as_f64().unwrap(), 0.0);
+    }
+
+    #[test]
+    fn histogram_guard_does_not_crush_an_already_dark_frame_further() {
+        let stats = PhotoStats {
+            luma_median: 0.03,
+            luma_p05: 0.001,
+            luma_p95: 0.20,
+            shadow_clip: 0.20,
+            contrast: 0.1,
+            ..PhotoStats::default()
+        };
+        let mut adjustments = json!({
+            "exposure": -0.2,
+            "shadows": -10.0,
+            "blacks": -12.0,
+        });
+        enforce_histogram_safety(&mut adjustments, &stats);
+        assert!(
+            adjustments["exposure"].as_f64().unwrap() > 0.0,
+            "a near-black frame needs a small rescue, not a Negative-style crush"
+        );
+        assert_eq!(adjustments["shadows"].as_f64().unwrap(), 0.0);
+        assert_eq!(adjustments["blacks"].as_f64().unwrap(), 0.0);
+    }
+
+    #[test]
+    fn histogram_guard_avoids_double_casts_and_neon_saturation() {
+        let stats = PhotoStats {
+            cast_rb: 0.30,
+            cast_gm: 0.20,
+            saturation: 0.70,
+            colorfulness: 0.90,
+            ..PhotoStats::default()
+        };
+        let mut adjustments = json!({
+            "temperature": 20.0,
+            "tint": 10.0,
+            "saturation": 30.0,
+            "vibrance": 20.0,
+            "colorGrading": {
+                "shadows": { "hue": 210.0, "saturation": 20.0, "luminance": 0.0 },
+                "midtones": { "hue": 0.0, "saturation": 0.0, "luminance": 0.0 },
+                "highlights": { "hue": 38.0, "saturation": 20.0, "luminance": 0.0 }
+            },
+            "hsl": {
+                "reds": { "hue": 0.0, "saturation": 20.0, "luminance": 0.0 }
+            }
+        });
+        enforce_histogram_safety(&mut adjustments, &stats);
+        assert!(adjustments["temperature"].as_f64().unwrap() < 20.0);
+        assert!(adjustments["tint"].as_f64().unwrap() < 10.0);
+        assert!(adjustments["saturation"].as_f64().unwrap() < 30.0);
+        assert!(adjustments["vibrance"].as_f64().unwrap() < 20.0);
+        assert!(
+            adjustments["colorGrading"]["shadows"]["saturation"]
+                .as_f64()
+                .unwrap()
+                < 20.0
+        );
     }
 
     #[test]

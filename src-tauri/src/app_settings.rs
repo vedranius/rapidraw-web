@@ -471,6 +471,34 @@ pub fn default_open_tree_sections() -> Vec<String> {
     vec!["current".to_string()]
 }
 
+/// Configuration for the optional prompt interpreter. The renderer is always
+/// local; this only chooses which model translates the user's wording into
+/// auditable photographic tags. Keep it separate from `ai_provider`, which is
+/// the ComfyUI/cloud inpainting backend.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PromptAiConfig {
+    /// `ollama`, `openai` (any OpenAI-compatible endpoint) or `anthropic`.
+    pub provider: String,
+    pub base_url: Option<String>,
+    pub api_key: Option<String>,
+    pub model: Option<String>,
+    /// Generation timeout. Local 7B models on CPU can need more than a minute.
+    pub timeout_secs: Option<u64>,
+}
+
+impl Default for PromptAiConfig {
+    fn default() -> Self {
+        Self {
+            provider: "ollama".to_string(),
+            base_url: None,
+            api_key: None,
+            model: None,
+            timeout_secs: Some(120),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -515,6 +543,8 @@ pub struct AppSettings {
     pub thumbnail_size: Option<String>,
     pub thumbnail_aspect_ratio: Option<String>,
     pub ai_provider: Option<String>,
+    #[serde(default)]
+    pub prompt_ai: PromptAiConfig,
     #[serde(default = "default_open_tree_sections")]
     pub open_tree_sections: Vec<String>,
     #[serde(default)]
@@ -658,6 +688,7 @@ impl Default for AppSettings {
             thumbnail_size: Some("medium".to_string()),
             thumbnail_aspect_ratio: Some("contain".to_string()),
             ai_provider: Some("cpu".to_string()),
+            prompt_ai: PromptAiConfig::default(),
             open_tree_sections: default_open_tree_sections(),
             copy_paste_settings: CopyPasteSettings::default(),
             raw_highlight_compression: Some(2.5),

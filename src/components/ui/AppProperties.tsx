@@ -215,6 +215,7 @@ export type GroupingMode = 'off' | GroupPreference;
 export interface AppSettings {
   aiConnectorAddress?: string;
   aiProvider?: string;
+  promptAi?: PromptAiConfig;
   decorations?: any;
   editorPreviewResolution?: number;
   smallThumbnailResolution?: number;
@@ -524,10 +525,22 @@ export interface CullingSuggestions {
   failedPaths: string[];
 }
 
+export interface PromptAiConfig {
+  provider: string;
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
+  timeoutSecs?: number;
+}
+
 export interface PromptAiStatus {
   available: boolean;
   model: string | null;
   url: string;
+  provider: string;
+  configured: boolean;
+  models: string[];
+  detail: string | null;
 }
 
 export interface StyleProfileLut {

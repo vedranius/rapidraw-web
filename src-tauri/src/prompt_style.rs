@@ -9,9 +9,9 @@
 //! The interpreter understands English and Croatian keywords, subjects
 //! (concert, wedding, portrait, landscape, …), moods (cinematic, airy, moody,
 //! teal & orange, black & white, vintage, neon, …), film stocks and modifiers
-//! ("subtle", "bold"). It then builds four variations — Balanced, Soft, Bold
-//! and Film — so the user can compare treatments instead of accepting a single
-//! guess.
+//! ("subtle", "bold"). It then builds eight variations — Balanced, Soft, Bold,
+//! Film, Airy, Noir, Vivid and Editorial — so the user can compare genuinely
+//! different treatments instead of accepting a single guess.
 
 use serde_json::{Value, json};
 
@@ -33,6 +33,10 @@ enum Variant {
     Soft,
     Bold,
     Film,
+    Airy,
+    Noir,
+    Vivid,
+    Editorial,
 }
 
 impl Variant {
@@ -42,6 +46,10 @@ impl Variant {
             Self::Soft => "Soft",
             Self::Bold => "Bold",
             Self::Film => "Film",
+            Self::Airy => "Airy",
+            Self::Noir => "Noir",
+            Self::Vivid => "Vivid",
+            Self::Editorial => "Editorial",
         }
     }
 }
@@ -1493,10 +1501,10 @@ fn scale_nested_saturation(adjustments: &mut Value, group: &str, factor: f64) {
     }
 }
 
-/// The four candidates must read as four different treatments, not four
-/// contrast percentages of one preset. This adds a real soft/bold/film
-/// character on top of the shared colour story: different curves, split-tone
-/// strength, LUT blend, grain, halation, vignette and temperature.
+/// The candidates must read as different treatments, not eight contrast
+/// percentages of one preset. This adds a real soft/bold/film/airy/noir/vivid/
+/// editorial character on top of the shared colour story: different curves,
+/// split-tone strength, LUT blend, grain, halation, vignette and temperature.
 fn apply_variant_character(adjustments: &mut Value, variant: Variant, intent: &LookIntent) {
     match variant {
         Variant::Balanced => {}
@@ -1559,6 +1567,104 @@ fn apply_variant_character(adjustments: &mut Value, variant: Variant, intent: &L
                 scale_nested_saturation(adjustments, "hsl", 0.95);
             }
         }
+        // The four additions below are deliberately different photographic
+        // treatments, not more contrast steps: Airy is high-key and open,
+        // Noir is low-key and desaturated, Vivid is a clean colour pop and
+        // Editorial is crisp and restrained. The histogram guard in
+        // `adapt_look_to_photo` still has the final say on exposure and
+        // clipping, so these cannot turn a correctly exposed frame into a
+        // blown-out or muddy one.
+        Variant::Airy => {
+            add_scalar(adjustments, "brightness", 0.16);
+            add_scalar(adjustments, "contrast", -5.0);
+            add_scalar(adjustments, "highlights", -7.0);
+            add_scalar(adjustments, "shadows", 24.0);
+            add_scalar(adjustments, "blacks", 18.0);
+            add_scalar(adjustments, "whites", -2.0);
+            add_scalar(adjustments, "saturation", -5.0);
+            add_scalar(adjustments, "vibrance", 2.0);
+            add_scalar(adjustments, "temperature", 1.0);
+            add_scalar(adjustments, "clarity", -2.0);
+            add_scalar(adjustments, "grainAmount", -2.0);
+            add_scalar(adjustments, "glowAmount", 10.0);
+            add_scalar(adjustments, "halationAmount", 2.0);
+            scale_scalar(adjustments, "vignetteAmount", 0.25);
+            adjustments["grainSize"] = json!(20.0);
+            adjustments["grainRoughness"] = json!(35.0);
+            if !intent.mono {
+                scale_nested_saturation(adjustments, "colorGrading", 0.65);
+                scale_nested_saturation(adjustments, "hsl", 0.85);
+            }
+        }
+        Variant::Noir => {
+            add_scalar(adjustments, "brightness", -0.18);
+            add_scalar(adjustments, "contrast", 8.0);
+            add_scalar(adjustments, "highlights", -11.0);
+            add_scalar(adjustments, "shadows", -10.0);
+            add_scalar(adjustments, "blacks", -18.0);
+            add_scalar(adjustments, "whites", -3.0);
+            add_scalar(adjustments, "saturation", -34.0);
+            add_scalar(adjustments, "vibrance", -10.0);
+            add_scalar(adjustments, "temperature", -6.0);
+            add_scalar(adjustments, "clarity", 3.0);
+            add_scalar(adjustments, "grainAmount", 4.0);
+            add_scalar(adjustments, "halationAmount", -2.0);
+            add_scalar(adjustments, "glowAmount", -2.0);
+            scale_scalar(adjustments, "vignetteAmount", 1.35);
+            add_scalar(adjustments, "vignetteAmount", -8.0);
+            adjustments["grainSize"] = json!(36.0);
+            adjustments["grainRoughness"] = json!(58.0);
+            if !intent.mono {
+                scale_nested_saturation(adjustments, "colorGrading", 0.85);
+                scale_nested_saturation(adjustments, "hsl", 0.70);
+            }
+        }
+        Variant::Vivid => {
+            add_scalar(adjustments, "brightness", 0.04);
+            add_scalar(adjustments, "contrast", 7.0);
+            add_scalar(adjustments, "highlights", -6.0);
+            add_scalar(adjustments, "shadows", 6.0);
+            add_scalar(adjustments, "blacks", -6.0);
+            add_scalar(adjustments, "whites", 4.0);
+            add_scalar(adjustments, "saturation", 12.0);
+            add_scalar(adjustments, "vibrance", 15.0);
+            add_scalar(adjustments, "clarity", 6.0);
+            add_scalar(adjustments, "dehaze", 4.0);
+            add_scalar(adjustments, "temperature", 1.0);
+            scale_scalar(adjustments, "grainAmount", 0.7);
+            scale_scalar(adjustments, "halationAmount", 0.7);
+            scale_scalar(adjustments, "glowAmount", 0.8);
+            scale_scalar(adjustments, "vignetteAmount", 1.1);
+            add_scalar(adjustments, "vignetteAmount", -3.0);
+            adjustments["grainSize"] = json!(28.0);
+            adjustments["grainRoughness"] = json!(50.0);
+            if !intent.mono {
+                scale_nested_saturation(adjustments, "colorGrading", 1.30);
+                scale_nested_saturation(adjustments, "hsl", 1.25);
+            }
+        }
+        Variant::Editorial => {
+            add_scalar(adjustments, "brightness", 0.04);
+            add_scalar(adjustments, "contrast", 3.0);
+            add_scalar(adjustments, "highlights", -5.0);
+            add_scalar(adjustments, "shadows", 8.0);
+            add_scalar(adjustments, "blacks", 2.0);
+            add_scalar(adjustments, "whites", 2.0);
+            add_scalar(adjustments, "saturation", -2.0);
+            add_scalar(adjustments, "vibrance", 4.0);
+            add_scalar(adjustments, "clarity", 6.0);
+            add_scalar(adjustments, "sharpness", 10.0);
+            scale_scalar(adjustments, "grainAmount", 0.25);
+            scale_scalar(adjustments, "halationAmount", 0.5);
+            scale_scalar(adjustments, "glowAmount", 0.3);
+            scale_scalar(adjustments, "vignetteAmount", 0.8);
+            adjustments["grainSize"] = json!(24.0);
+            adjustments["grainRoughness"] = json!(42.0);
+            if !intent.mono {
+                scale_nested_saturation(adjustments, "colorGrading", 1.05);
+                scale_nested_saturation(adjustments, "hsl", 1.05);
+            }
+        }
     }
 }
 
@@ -1569,6 +1675,10 @@ fn build_adjustments(intent: &LookIntent, variant: Variant) -> Value {
         Variant::Soft => (0.65, 0.5, 0.6, 0.85),
         Variant::Bold => (1.35, 1.25, 1.1, 1.05),
         Variant::Film => (0.9, 0.9, 1.2, 0.95),
+        Variant::Airy => (0.75, 0.7, 0.5, 0.80),
+        Variant::Noir => (1.20, 1.1, 0.9, 0.70),
+        Variant::Vivid => (1.20, 1.35, 0.8, 1.20),
+        Variant::Editorial => (1.05, 1.2, 0.4, 0.90),
     };
 
     let scale = |value: f64| round(value * strength);
@@ -1658,7 +1768,10 @@ fn build_adjustments(intent: &LookIntent, variant: Variant) -> Value {
         Variant::Soft => intent.fade + 6.0,
         Variant::Film => intent.fade + 10.0,
         Variant::Bold => intent.fade,
-        Variant::Balanced => intent.fade,
+        Variant::Airy => intent.fade + 16.0,
+        Variant::Vivid => intent.fade,
+        Variant::Editorial => intent.fade + 3.0,
+        Variant::Noir | Variant::Balanced => intent.fade,
     };
     let fade = clamp(scale(fade), 0.0, 32.0);
     let contrast = clamp(scale(contrast_intent) * contrast_scale, -40.0, 45.0);
@@ -1683,6 +1796,34 @@ fn build_adjustments(intent: &LookIntent, variant: Variant) -> Value {
             (128.0, 128.0),
             (192.0, 196.0),
             (255.0, 252.0),
+        ]),
+        Variant::Airy => Some(vec![
+            (0.0, fade + 8.0),
+            (64.0, 80.0 + fade * 0.45),
+            (128.0, 134.0),
+            (192.0, 196.0),
+            (255.0, 254.0),
+        ]),
+        Variant::Noir => Some(vec![
+            (0.0, 0.0),
+            (40.0, 22.0),
+            (128.0, 118.0),
+            (200.0, 226.0),
+            (255.0, 255.0),
+        ]),
+        Variant::Vivid => Some(vec![
+            (0.0, 0.0),
+            (64.0, 56.0),
+            (128.0, 128.0),
+            (192.0, 205.0),
+            (255.0, 255.0),
+        ]),
+        Variant::Editorial => Some(vec![
+            (0.0, fade.min(6.0)),
+            (64.0, 66.0),
+            (128.0, 129.0),
+            (192.0, 193.0),
+            (255.0, 254.0),
         ]),
         Variant::Balanced if fade > 0.5 || intent.contrast.abs() > 8.0 => {
             let mid_lift = fade * 0.4;
@@ -1714,6 +1855,10 @@ fn build_adjustments(intent: &LookIntent, variant: Variant) -> Value {
             Variant::Soft => lut_intensity * 0.70,
             Variant::Bold => lut_intensity * 1.15,
             Variant::Film => lut_intensity * 1.20,
+            Variant::Airy => lut_intensity * 0.55,
+            Variant::Noir => lut_intensity * 0.80,
+            Variant::Vivid => lut_intensity * 1.10,
+            Variant::Editorial => lut_intensity * 0.90,
             Variant::Balanced => lut_intensity,
         };
         adjustments["__lut_name"] = json!(name);
@@ -1976,6 +2121,10 @@ fn candidates_from_text(
         Variant::Soft,
         Variant::Bold,
         Variant::Film,
+        Variant::Airy,
+        Variant::Noir,
+        Variant::Vivid,
+        Variant::Editorial,
     ];
     Ok(variants
         .iter()
@@ -1983,7 +2132,7 @@ fn candidates_from_text(
         .collect())
 }
 
-/// Turns a free-form prompt into four candidate looks. LUT paths are resolved
+/// Turns a free-form prompt into eight candidate looks. LUT paths are resolved
 /// later by the command (they depend on the installation directory). Test-only
 /// because the Tauri command uses the AI-aware entry point below.
 #[cfg(test)]
@@ -1991,11 +2140,12 @@ pub fn generate_candidates(prompt: &str) -> Result<Vec<StyleProfile>, String> {
     candidates_from_text(prompt, prompt, None)
 }
 
-/// Generates the four looks. When `use_ai` is on and a local Ollama model is
-/// available, the prompt is first expanded into photographic style tags
-/// ("1950s", "glam rock", "warm golds", ...). The grade itself is still built
-/// by the deterministic colour engine, so the result is fast and editable
-/// instead of an unpredictable wall of invented slider values.
+/// Generates the eight looks. When `use_ai` is on and a local or external AI
+/// provider is available, the prompt is first expanded into photographic style
+/// tags ("1950s", "glam rock", "warm golds", ...). The grade itself is still
+/// built by the deterministic colour engine, so the result is fast and
+/// editable instead of an unpredictable wall of invented slider values. The
+/// histogram guard in the renderer has the final say on exposure and clipping.
 #[tauri::command]
 pub async fn generate_style_candidates(
     prompt: String,
@@ -2014,7 +2164,7 @@ pub async fn generate_style_candidates(
 
     let mut ai_tags: Option<String> = None;
     let effective = if use_ai.unwrap_or(true) {
-        match crate::prompt_ai::expand_prompt(&original).await {
+        match crate::prompt_ai::expand_prompt(&app_handle, &original).await {
             Ok(tags) if !tags.trim().is_empty() => {
                 let tags = tags.trim().to_string();
                 ai_tags = Some(tags.clone());
@@ -2097,11 +2247,11 @@ mod tests {
     }
 
     #[test]
-    fn four_candidates_are_distinct_and_named() {
+    fn eight_candidates_are_distinct_and_named() {
         let candidates = generate_candidates("moody neon night portrait").unwrap();
-        assert_eq!(candidates.len(), 4);
+        assert_eq!(candidates.len(), 8);
         let ids: std::collections::HashSet<_> = candidates.iter().map(|p| p.id.clone()).collect();
-        assert_eq!(ids.len(), 4);
+        assert_eq!(ids.len(), 8);
         assert!(candidates.iter().all(|p| p.name.contains('—')));
         let contrasts: std::collections::HashSet<String> = candidates
             .iter()
@@ -2314,7 +2464,7 @@ mod tests {
     #[test]
     fn unrecognised_prompt_still_returns_a_gentle_look() {
         let candidates = generate_candidates("asdf qwer").unwrap();
-        assert_eq!(candidates.len(), 4);
+        assert_eq!(candidates.len(), 8);
         assert!(number(&candidates[0], "contrast") > 0.0);
     }
 
@@ -2350,12 +2500,16 @@ mod tests {
     }
 
     #[test]
-    fn the_four_era_variants_are_visibly_different() {
+    fn all_eight_era_variants_are_visibly_different() {
         let prompt = "1950s glam rock concert portrait, queen";
         let balanced = named(prompt, Variant::Balanced);
         let soft = named(prompt, Variant::Soft);
         let bold = named(prompt, Variant::Bold);
         let film = named(prompt, Variant::Film);
+        let airy = named(prompt, Variant::Airy);
+        let noir = named(prompt, Variant::Noir);
+        let vivid = named(prompt, Variant::Vivid);
+        let editorial = named(prompt, Variant::Editorial);
 
         assert!(
             number(&soft, "shadows") > number(&bold, "shadows"),
@@ -2368,6 +2522,43 @@ mod tests {
         assert!(
             number(&film, "grainAmount") > number(&balanced, "grainAmount"),
             "Film should carry noticeably more grain"
+        );
+        assert!(
+            number(&airy, "brightness") > number(&noir, "brightness"),
+            "Airy should be brighter than Noir"
+        );
+        assert!(
+            number(&airy, "blacks") > number(&noir, "blacks"),
+            "Airy should lift blacks while Noir keeps them deep"
+        );
+        assert!(
+            number(&vivid, "saturation") > number(&noir, "saturation"),
+            "Vivid should be far more saturated than Noir"
+        );
+        assert!(
+            number(&editorial, "clarity") > number(&balanced, "clarity"),
+            "Editorial should be crisper than the balanced look"
+        );
+
+        let signatures: std::collections::HashSet<String> = [
+            &balanced, &soft, &bold, &film, &airy, &noir, &vivid, &editorial,
+        ]
+        .iter()
+        .map(|profile| {
+            format!(
+                "{:.0}/{:.0}/{:.0}/{:.0}/{:.0}",
+                number(profile, "brightness"),
+                number(profile, "contrast"),
+                number(profile, "saturation"),
+                number(profile, "shadows"),
+                number(profile, "grainAmount")
+            )
+        })
+        .collect();
+        assert_eq!(
+            signatures.len(),
+            8,
+            "every candidate needs a distinct tonal signature"
         );
 
         let lut_intensity =
