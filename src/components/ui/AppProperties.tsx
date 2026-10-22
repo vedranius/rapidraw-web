@@ -62,6 +62,7 @@ export enum Invokes {
   SnapshotSidecars = 'snapshot_sidecars',
   RestoreSidecars = 'restore_sidecars',
   GenerateStyleCandidates = 'generate_style_candidates',
+  GetPromptAiStatus = 'get_prompt_ai_status',
   PreviewStyleProfiles = 'preview_style_profiles',
   AutoStylePathsWithAi = 'auto_style_paths_with_ai',
   AssignArtistToPaths = 'assign_artist_to_paths',
@@ -521,6 +522,12 @@ export interface CullingSuggestions {
   similarGroups: CullGroup[];
   blurryImages: ImageAnalysisResult[];
   failedPaths: string[];
+}
+
+export interface PromptAiStatus {
+  available: boolean;
+  model: string | null;
+  url: string;
 }
 
 export interface StyleProfileLut {

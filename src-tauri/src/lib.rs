@@ -58,6 +58,7 @@ mod panorama_stitching;
 mod panorama_utils;
 mod photo_analysis;
 mod preset_converter;
+mod prompt_ai;
 mod prompt_style;
 mod raw_processing;
 mod relight;
@@ -2588,6 +2589,7 @@ pub fn run() {
             style_profile::snapshot_sidecars,
             style_profile::restore_sidecars,
             prompt_style::generate_style_candidates,
+            prompt_ai::get_prompt_ai_status,
             preview_style_profiles,
             style_profile::auto_style_paths_with_ai,
             lens_correction::get_lensfun_makers,

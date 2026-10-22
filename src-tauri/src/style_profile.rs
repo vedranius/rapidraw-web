@@ -2566,6 +2566,21 @@ fn profile_luma_range(profile: &StyleProfile) -> (f64, f64) {
     }
 }
 
+fn add_to_hsl_channel(adjustments: &mut Value, channel: &str, key: &str, delta: f64) {
+    if let Some(entry) = adjustments
+        .get_mut("hsl")
+        .and_then(Value::as_object_mut)
+        .and_then(|hsl| hsl.get_mut(channel))
+        .and_then(Value::as_object_mut)
+        && let Some(current) = entry.get(key).and_then(Value::as_f64)
+    {
+        entry.insert(
+            key.to_string(),
+            json!((current + delta).clamp(-100.0, 100.0)),
+        );
+    }
+}
+
 fn add_to_scalar(adjustments: &mut Value, key: &str, delta: f64) {
     let Some(obj) = adjustments.as_object_mut() else {
         return;
@@ -2749,6 +2764,40 @@ fn adapt_look_to_photo(
         && vignette < 0.0
     {
         replace_scalar(adjustments, "vignetteAmount", vignette * 0.5);
+    }
+
+    // --- Blue stage wash: rescue warm period/glam looks -------------------
+    //
+    // A 1950s or Glam Rock grade is supposed to read gold, but a concert frame
+    // lit by blue LEDs can defeat a fixed temperature value. Measure the actual
+    // red/blue cast and add only as much warmth as this frame needs; a daylight
+    // portrait with the same prompt gets the recipe's base warmth and nothing
+    // more. This keeps the style recognisable without turning every photo orange.
+    let vintage_glam = profile.name.contains("1950s") || profile.name.contains("Glam Rock");
+    if vintage_glam && stats.cast_rb < -0.04 {
+        let rescue = ((-stats.cast_rb - 0.04) * 220.0).clamp(0.0, 14.0);
+        add_to_scalar(adjustments, "temperature", rescue);
+        add_to_scalar(adjustments, "tint", rescue * 0.12);
+        // A low-key stage frame also needs a touch more light on the face; the
+        // look's own brightness lift is usually not enough on an unedited RAW.
+        if stats.luma_median < 0.22 {
+            // Brightness is a stop control (the look's own +2 intent becomes
+            // +0.2 EV). Keep the rescue in the same unit and small: 0.12 EV is
+            // enough to open the face, while a value like 1.2 EV blows out a
+            // backlit stage background.
+            add_to_scalar(
+                adjustments,
+                "brightness",
+                ((0.22 - stats.luma_median) * 2.2).clamp(0.0, 0.12),
+            );
+        }
+        // Pull the competing blue wash back a little further, but never touch
+        // skin tones or the warm split tone.
+        let desat = rescue * 0.9;
+        add_to_hsl_channel(adjustments, "blues", "saturation", -desat);
+        add_to_hsl_channel(adjustments, "blues", "luminance", -rescue * 0.35);
+        add_to_hsl_channel(adjustments, "aquas", "saturation", -desat * 0.8);
+        add_to_hsl_channel(adjustments, "aquas", "luminance", -rescue * 0.25);
     }
 
     // --- White balance: conservative grey-world for neutral/skin looks -----
@@ -3613,6 +3662,63 @@ mod tests {
         adapt_look_to_photo(&mut adjustments, &adapt_profile(), &stats, &[]);
         let temperature = adjustments["temperature"].as_f64().unwrap();
         assert!(temperature < 0.0 && temperature >= -6.0, "{temperature}");
+    }
+
+    #[test]
+    fn glam_look_warms_a_blue_stage_frame_but_not_a_neutral_one() {
+        let profile = crate::prompt_style::generate_candidates(
+            "Make it 50s style portrait concert with Freddy Mercury style, queen",
+        )
+        .unwrap()
+        .remove(0);
+        let before = profile_to_adjustments(&profile, None);
+
+        let blue_stats = PhotoStats {
+            cast_rb: -0.15,
+            luma_median: 0.12,
+            luma_p05: 0.02,
+            luma_p95: 0.50,
+            contrast: 0.18,
+            saturation: 0.40,
+            ..PhotoStats::default()
+        };
+        let mut blue = before.clone();
+        adapt_look_to_photo(&mut blue, &profile, &blue_stats, &[]);
+
+        let neutral_stats = PhotoStats {
+            cast_rb: 0.0,
+            luma_median: 0.30,
+            luma_p05: 0.05,
+            luma_p95: 0.70,
+            contrast: 0.18,
+            saturation: 0.40,
+            ..PhotoStats::default()
+        };
+        let mut neutral = before.clone();
+        adapt_look_to_photo(&mut neutral, &profile, &neutral_stats, &[]);
+
+        let blue_temp = blue["temperature"].as_f64().unwrap();
+        let neutral_temp = neutral["temperature"].as_f64().unwrap();
+        assert!(
+            blue_temp > neutral_temp + 10.0,
+            "blue stage should get a real warm rescue: {blue_temp} vs {neutral_temp}"
+        );
+        let blue_brightness = blue["brightness"].as_f64().unwrap();
+        let neutral_brightness = neutral["brightness"].as_f64().unwrap();
+        assert!(
+            blue_brightness > neutral_brightness,
+            "a low-key stage frame needs a little more light"
+        );
+        assert!(
+            blue_brightness <= 0.5,
+            "brightness is in stops: a rescue must not turn into a 1+ EV lift ({blue_brightness})"
+        );
+        let blue_sat = blue["hsl"]["blues"]["saturation"].as_f64().unwrap();
+        let neutral_sat = neutral["hsl"]["blues"]["saturation"].as_f64().unwrap();
+        assert!(
+            blue_sat < neutral_sat - 5.0,
+            "the blue wash should be pulled back further: {blue_sat} vs {neutral_sat}"
+        );
     }
 }
 

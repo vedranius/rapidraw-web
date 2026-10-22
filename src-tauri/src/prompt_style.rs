@@ -77,6 +77,16 @@ struct LookIntent {
     lut: Option<&'static str>,
     lut_intensity: f64,
     subject: Option<&'static str>,
+    /// A decade/era reference such as `1950s`, used as a first-class part of
+    /// the look instead of being ignored as an unknown keyword.
+    era: Option<&'static str>,
+    /// A named photographic/musical reference such as `Glam Rock`, `Grunge`
+    /// or `Hollywood Glamour`.
+    reference: Option<&'static str>,
+    /// The prompt names a portrait in addition to another subject (for example
+    /// "concert portrait"), so skin protection is added without replacing the
+    /// concert treatment.
+    portrait_modifier: bool,
     labels: Vec<&'static str>,
     strength: f64,
 }
@@ -111,6 +121,9 @@ impl Default for LookIntent {
             lut: None,
             lut_intensity: 0.0,
             subject: None,
+            era: None,
+            reference: None,
+            portrait_modifier: false,
             labels: Vec::new(),
             strength: 1.0,
         }
@@ -148,6 +161,29 @@ impl LookIntent {
             entry.1 += saturation;
             entry.2 += luminance;
         }
+    }
+
+    /// A strong reference (era or artist) replaces the subject's default split
+    /// tone instead of merely adding to it. Otherwise "50s ... Queen" would
+    /// keep the blue concert grade and only get a little warmer.
+    fn set_shadow_grade(&mut self, hue: f64, saturation: f64) {
+        self.shadow_grade = Some((hue, saturation));
+    }
+
+    fn set_mid_grade(&mut self, hue: f64, saturation: f64) {
+        self.mid_grade = Some((hue, saturation));
+    }
+
+    fn set_highlight_grade(&mut self, hue: f64, saturation: f64) {
+        self.highlight_grade = Some((hue, saturation));
+    }
+
+    /// Likewise, an era/artist look chooses the film stock that carries its
+    /// colour story. An explicit film-stock word in the prompt can still
+    /// override this later.
+    fn set_lut(&mut self, name: &'static str, intensity: f64) {
+        self.lut = Some(name);
+        self.lut_intensity = intensity;
     }
 }
 
@@ -340,6 +376,399 @@ fn subject_tags(subject: &str) -> Vec<String> {
     tags.iter().map(|tag| (*tag).to_string()).collect()
 }
 
+/// True for whole tokens such as `50s` / `1950s`, ignoring apostrophes so
+/// "50's" and "50’s" are understood too. A plain "50" is deliberately not an
+/// era: it is far more likely to be a lens or an intensity.
+fn has_decade(text: &str, needles: &[&str]) -> bool {
+    let normalized = text.replace('\'', "").replace('’', "");
+    normalized
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|token| needles.contains(&token))
+}
+
+fn detect_era(text: &str) -> Option<&'static str> {
+    if has_decade(text, &["1950s", "50s", "fifties"]) {
+        Some("1950s")
+    } else if has_decade(text, &["1960s", "60s", "sixties"]) {
+        Some("1960s")
+    } else if has_decade(text, &["1970s", "70s", "seventies"]) {
+        Some("1970s")
+    } else if has_decade(text, &["1980s", "80s", "eighties"]) {
+        Some("1980s")
+    } else if has_decade(text, &["1990s", "90s", "nineties"]) {
+        Some("1990s")
+    } else if has_decade(text, &["2000s", "00s", "y2k", "noughties", "aughts"]) {
+        Some("2000s")
+    } else {
+        None
+    }
+}
+
+fn detect_reference(text: &str) -> Option<&'static str> {
+    let freddie = has(text, &["freddie", "freddy", "mercury"])
+        || (has_word(text, &["queen"])
+            && has(text, &["glam", "rock", "concert", "stage", "band", "style"]));
+    if freddie || has(text, &["glam rock", "glam-rock"]) {
+        return Some("Glam Rock");
+    }
+    if has_word(text, &["bowie", "ziggy"]) || has(text, &["ziggy stardust"]) {
+        return Some("Ziggy Glam");
+    }
+    if has_word(text, &["elvis", "presley"]) || has_word(text, &["rockabilly"]) {
+        return Some("Rockabilly");
+    }
+    if has_word(text, &["beatles"]) || has(text, &["british invasion"]) {
+        return Some("British Invasion");
+    }
+    if has_word(text, &["nirvana", "cobain", "grunge"]) {
+        return Some("Grunge");
+    }
+    if has_word(text, &["madonna"]) || has(text, &["new wave", "synth pop", "synthpop"]) {
+        return Some("New Wave");
+    }
+    if (has_word(text, &["stones"]) && has(text, &["rolling"])) || has(text, &["classic rock"]) {
+        return Some("Classic Rock");
+    }
+    if has(
+        text,
+        &[
+            "hollywood glamour",
+            "old hollywood",
+            "classic hollywood",
+            "silver screen",
+        ],
+    ) {
+        return Some("Hollywood Glamour");
+    }
+    if has_word(text, &["disco"]) {
+        return Some("Disco");
+    }
+    if has(text, &["film noir"]) || has_word(text, &["noir"]) {
+        return Some("Film Noir");
+    }
+    None
+}
+
+fn apply_portrait_modifier(intent: &mut LookIntent) {
+    intent.portrait_modifier = true;
+    intent.temperature += 2.0;
+    intent.vibrance += 3.0;
+    intent.clarity -= 5.0;
+    intent.shadows += 5.0;
+    // Skin lives mostly in the red/orange/yellow channels. Nudge warmth and
+    // luminance there, and pull a little saturation out so the result stays
+    // photographic rather than orange.
+    intent.hsl(0, 1.0, -2.0, 4.0);
+    intent.hsl(1, 2.0, -4.0, 6.0);
+    intent.hsl(2, 0.0, -3.0, 2.0);
+}
+
+fn apply_era(intent: &mut LookIntent, era: &'static str) {
+    intent.era = Some(era);
+    match era {
+        "1950s" => {
+            // Warm, gently faded, restrained colour and fine grain. The warm
+            // white balance also rescues portraits shot under blue stage LEDs.
+            // The finish is deliberately open (lifted shadows, protected
+            // highlights): early colour film is warm, not crushed.
+            intent.temperature = intent.temperature.max(24.0) + 2.0;
+            intent.tint += 1.0;
+            intent.contrast -= 2.0;
+            intent.highlights -= 8.0;
+            intent.shadows += 14.0;
+            intent.blacks += 2.0;
+            intent.whites += 4.0;
+            intent.saturation -= 8.0;
+            intent.vibrance += 4.0;
+            intent.clarity -= 4.0;
+            intent.grain += 8.0;
+            intent.fade += 8.0;
+            intent.glow += 4.0;
+            intent.halation += 3.0;
+            intent.vignette -= 6.0;
+            intent.hsl(0, 2.0, 6.0, 2.0);
+            intent.hsl(1, 2.0, 10.0, 4.0);
+            intent.hsl(2, 0.0, -4.0, 0.0);
+            intent.hsl(3, 0.0, -10.0, -2.0);
+            intent.hsl(4, 0.0, -14.0, -4.0);
+            intent.hsl(5, -2.0, -24.0, -8.0);
+            intent.hsl(6, 0.0, -8.0, 0.0);
+            intent.set_shadow_grade(35.0, 8.0);
+            intent.set_mid_grade(32.0, 4.0);
+            intent.set_highlight_grade(43.0, 14.0);
+            intent.set_lut(LUT_GOLD_200, 34.0);
+        }
+        "1960s" => {
+            intent.temperature = intent.temperature.max(6.0) + 1.0;
+            intent.contrast += 3.0;
+            intent.highlights -= 6.0;
+            intent.shadows += 4.0;
+            intent.saturation += 2.0;
+            intent.vibrance += 4.0;
+            intent.clarity -= 2.0;
+            intent.grain += 5.0;
+            intent.fade += 3.0;
+            intent.hsl(1, 1.0, 6.0, 2.0);
+            intent.hsl(5, -1.0, -10.0, -3.0);
+            intent.set_shadow_grade(35.0, 5.0);
+            intent.set_highlight_grade(40.0, 10.0);
+            intent.set_lut(LUT_EKTAR_100, 30.0);
+        }
+        "1970s" => {
+            intent.temperature = intent.temperature.max(10.0) + 2.0;
+            intent.contrast -= 2.0;
+            intent.highlights -= 8.0;
+            intent.shadows += 8.0;
+            intent.blacks += 4.0;
+            intent.saturation -= 4.0;
+            intent.vibrance += 6.0;
+            intent.clarity -= 2.0;
+            intent.grain += 12.0;
+            intent.fade += 10.0;
+            intent.glow += 2.0;
+            intent.hsl(1, 1.0, 6.0, 3.0);
+            intent.hsl(3, 3.0, 4.0, -2.0);
+            intent.hsl(5, -1.0, -10.0, -4.0);
+            intent.set_shadow_grade(30.0, 10.0);
+            intent.set_highlight_grade(42.0, 12.0);
+            intent.set_lut(LUT_GOLD_200, 38.0);
+        }
+        "1980s" => {
+            intent.temperature = intent.temperature.min(-2.0);
+            intent.contrast += 14.0;
+            intent.highlights -= 10.0;
+            intent.blacks -= 12.0;
+            intent.saturation += 6.0;
+            intent.vibrance += 8.0;
+            intent.clarity += 8.0;
+            intent.halation += 10.0;
+            intent.grain += 4.0;
+            intent.vignette -= 14.0;
+            intent.hsl(5, 2.0, 4.0, -2.0);
+            intent.hsl(7, 0.0, 10.0, 0.0);
+            intent.set_shadow_grade(205.0, 16.0);
+            intent.set_mid_grade(315.0, 4.0);
+            intent.set_highlight_grade(35.0, 14.0);
+            intent.set_lut(LUT_VISION_500T, 38.0);
+        }
+        "1990s" => {
+            intent.contrast += 10.0;
+            intent.highlights -= 12.0;
+            intent.blacks -= 6.0;
+            intent.saturation -= 8.0;
+            intent.clarity += 4.0;
+            intent.grain += 14.0;
+            intent.fade += 6.0;
+            intent.hsl(1, 0.0, -4.0, 0.0);
+            intent.hsl(3, 3.0, 6.0, -2.0);
+            intent.hsl(5, -1.0, -8.0, -3.0);
+            intent.set_shadow_grade(120.0, 10.0);
+            intent.set_highlight_grade(40.0, 6.0);
+            intent.set_lut(LUT_FUJI_400H, 32.0);
+        }
+        "2000s" => {
+            intent.temperature -= 2.0;
+            intent.contrast += 10.0;
+            intent.clarity += 10.0;
+            intent.sharpness += 5.0;
+            intent.hsl(4, 0.0, 4.0, 0.0);
+            intent.set_shadow_grade(210.0, 8.0);
+            intent.set_highlight_grade(40.0, 8.0);
+            intent.set_lut(LUT_VISION_250D, 25.0);
+        }
+        _ => {}
+    }
+}
+
+fn apply_reference(intent: &mut LookIntent, reference: &'static str) {
+    intent.reference = Some(reference);
+    match reference {
+        "Glam Rock" => {
+            // Queen / Freddie Mercury: a hard spotlight, gold and amber
+            // highlights, deep blacks and rich reds/yellows. The blue stage
+            // wash is deliberately pulled back so the performer reads warm.
+            //
+            // The look opens the face instead of only darkening it: a concert
+            // frame is usually low-key, and the earlier -16 highlights / -2
+            // shadows combination made the singer read almost as a silhouette.
+            // A small brightness lift, lifted shadows and a protected highlight
+            // give the skin its glow while the split tone and LUT carry the
+            // period colour. Blue stage light is rescued below in
+            // `adapt_look_to_photo`, where the measured cast is available.
+            intent.temperature = intent.temperature.max(36.0) + 2.0;
+            intent.tint += 5.0;
+            intent.brightness += 2.0;
+            intent.contrast += 16.0;
+            intent.highlights -= 12.0;
+            intent.shadows += 12.0;
+            intent.blacks -= 10.0;
+            intent.whites += 6.0;
+            intent.vibrance += 16.0;
+            intent.saturation += 2.0;
+            intent.clarity += 14.0;
+            intent.halation += 9.0;
+            intent.glow += 2.0;
+            intent.vignette -= 10.0;
+            intent.grain += 4.0;
+            intent.hsl(0, 2.0, 12.0, 4.0);
+            intent.hsl(1, 2.0, 12.0, 8.0);
+            intent.hsl(2, 0.0, 6.0, 6.0);
+            intent.hsl(4, 0.0, -20.0, -8.0);
+            intent.hsl(5, -2.0, -30.0, -14.0);
+            intent.hsl(7, 0.0, 6.0, 0.0);
+            intent.set_shadow_grade(30.0, 12.0);
+            intent.set_mid_grade(30.0, 6.0);
+            intent.set_highlight_grade(42.0, 22.0);
+            intent.set_lut(LUT_GOLD_200, 45.0);
+        }
+        "Ziggy Glam" => {
+            intent.temperature = intent.temperature.min(-4.0);
+            intent.contrast += 18.0;
+            intent.highlights -= 10.0;
+            intent.blacks -= 14.0;
+            intent.saturation += 6.0;
+            intent.vibrance += 8.0;
+            intent.clarity += 8.0;
+            intent.halation += 8.0;
+            intent.grain += 4.0;
+            intent.vignette -= 14.0;
+            intent.hsl(5, 2.0, 6.0, -2.0);
+            intent.hsl(7, 0.0, 10.0, 0.0);
+            intent.set_shadow_grade(205.0, 18.0);
+            intent.set_mid_grade(315.0, 6.0);
+            intent.set_highlight_grade(45.0, 18.0);
+            intent.set_lut(LUT_VISION_250D, 40.0);
+        }
+        "Rockabilly" => {
+            intent.temperature = intent.temperature.max(10.0) + 2.0;
+            intent.contrast += 14.0;
+            intent.highlights -= 10.0;
+            intent.shadows += 2.0;
+            intent.blacks -= 10.0;
+            intent.saturation -= 4.0;
+            intent.grain += 12.0;
+            intent.fade += 4.0;
+            intent.halation += 5.0;
+            intent.vignette -= 10.0;
+            intent.hsl(0, 1.0, 8.0, 1.0);
+            intent.hsl(2, 0.0, 8.0, 2.0);
+            intent.set_shadow_grade(30.0, 8.0);
+            intent.set_highlight_grade(42.0, 14.0);
+            intent.set_lut(LUT_GOLD_200, 38.0);
+        }
+        "British Invasion" => {
+            intent.temperature = intent.temperature.max(6.0) + 1.0;
+            intent.contrast += 8.0;
+            intent.highlights -= 6.0;
+            intent.saturation += 4.0;
+            intent.vibrance += 6.0;
+            intent.grain += 6.0;
+            intent.fade += 3.0;
+            intent.set_shadow_grade(35.0, 6.0);
+            intent.set_highlight_grade(40.0, 10.0);
+            intent.set_lut(LUT_EKTAR_100, 32.0);
+        }
+        "Grunge" => {
+            intent.contrast += 14.0;
+            intent.highlights -= 14.0;
+            intent.shadows -= 2.0;
+            intent.blacks -= 12.0;
+            intent.saturation -= 14.0;
+            intent.vibrance -= 4.0;
+            intent.clarity += 6.0;
+            intent.grain += 20.0;
+            intent.fade += 8.0;
+            intent.halation += 6.0;
+            intent.vignette -= 16.0;
+            intent.hsl(1, 0.0, -4.0, 0.0);
+            intent.hsl(3, 3.0, 6.0, -2.0);
+            intent.hsl(5, -1.0, -8.0, -3.0);
+            intent.set_shadow_grade(120.0, 12.0);
+            intent.set_highlight_grade(40.0, 8.0);
+            intent.set_lut(LUT_FUJI_400H, 30.0);
+        }
+        "New Wave" => {
+            intent.temperature = intent.temperature.min(-4.0);
+            intent.contrast += 16.0;
+            intent.highlights -= 10.0;
+            intent.blacks -= 12.0;
+            intent.saturation += 8.0;
+            intent.vibrance += 8.0;
+            intent.clarity += 8.0;
+            intent.halation += 9.0;
+            intent.grain += 4.0;
+            intent.vignette -= 14.0;
+            intent.hsl(5, 2.0, 6.0, -2.0);
+            intent.hsl(7, 0.0, 10.0, 0.0);
+            intent.set_shadow_grade(200.0, 18.0);
+            intent.set_mid_grade(315.0, 6.0);
+            intent.set_highlight_grade(330.0, 12.0);
+            intent.set_lut(LUT_VISION_500T, 38.0);
+        }
+        "Classic Rock" => {
+            intent.temperature = intent.temperature.max(8.0) + 1.0;
+            intent.contrast += 12.0;
+            intent.highlights -= 10.0;
+            intent.blacks -= 10.0;
+            intent.saturation -= 4.0;
+            intent.clarity += 6.0;
+            intent.grain += 10.0;
+            intent.vignette -= 12.0;
+            intent.hsl(0, 1.0, 6.0, 1.0);
+            intent.hsl(2, 0.0, 4.0, 0.0);
+            intent.set_shadow_grade(30.0, 8.0);
+            intent.set_highlight_grade(42.0, 12.0);
+            intent.set_lut(LUT_GOLD_200, 34.0);
+        }
+        "Hollywood Glamour" => {
+            // Classic studio portrait: soft glow, strong cheekbones, warm
+            // neutral skin. Not automatically black and white; the prompt
+            // can still ask for monochrome.
+            intent.temperature = intent.temperature.max(6.0) + 1.0;
+            intent.contrast += 16.0;
+            intent.highlights -= 12.0;
+            intent.shadows += 8.0;
+            intent.blacks -= 8.0;
+            intent.clarity += 2.0;
+            intent.glow += 8.0;
+            intent.grain += 8.0;
+            intent.vignette -= 18.0;
+            intent.fade += 2.0;
+            intent.hsl(0, 1.0, 4.0, 3.0);
+            intent.hsl(1, 1.0, 4.0, 5.0);
+            intent.set_shadow_grade(35.0, 6.0);
+            intent.set_highlight_grade(43.0, 12.0);
+            intent.set_lut(LUT_PORTRA_400, 25.0);
+        }
+        "Disco" => {
+            intent.temperature = intent.temperature.max(6.0) + 1.0;
+            intent.contrast += 8.0;
+            intent.highlights -= 8.0;
+            intent.saturation += 8.0;
+            intent.vibrance += 10.0;
+            intent.halation += 8.0;
+            intent.glow += 4.0;
+            intent.hsl(0, 1.0, 6.0, 1.0);
+            intent.hsl(2, 0.0, 8.0, 2.0);
+            intent.hsl(5, -1.0, -6.0, -2.0);
+            intent.set_shadow_grade(30.0, 8.0);
+            intent.set_highlight_grade(40.0, 14.0);
+            intent.set_lut(LUT_GOLD_200, 35.0);
+        }
+        "Film Noir" => {
+            intent.mono = true;
+            intent.contrast += 18.0;
+            intent.highlights -= 10.0;
+            intent.shadows += 4.0;
+            intent.blacks -= 14.0;
+            intent.clarity += 4.0;
+            intent.grain += 10.0;
+            intent.vignette -= 18.0;
+        }
+        _ => {}
+    }
+}
+
 fn apply_subject(intent: &mut LookIntent, subject: &'static str) {
     intent.subject = Some(subject);
     match subject {
@@ -515,15 +944,7 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
     if has(
         text,
         &[
-            "moody",
-            "dark",
-            "low key",
-            "low-key",
-            "lowkey",
-            "dramatic",
-            "mračn",
-            "tamn",
-            "dramatičn",
+            "moody", "dark", "low key", "low-key", "lowkey", "mračn", "tamn",
         ],
     ) {
         intent.brightness -= 7.0;
@@ -535,6 +956,54 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
         intent.shadow_grade(215.0, 16.0);
         intent.vignette -= 16.0;
         intent.label("Moody");
+    }
+
+    if has(
+        text,
+        &[
+            "dramatic",
+            "dramatic lighting",
+            "dramatic light",
+            "dramatičn",
+        ],
+    ) {
+        // "Dramatic" is primarily a contrast/spotlight cue, not a request to
+        // underexpose the frame. The old code treated it as "moody" and made
+        // every AI-expanded prompt needlessly dark.
+        intent.contrast += 7.0;
+        intent.vignette -= 8.0;
+        intent.highlight_grade(42.0, 8.0);
+        intent.label("Dramatic");
+    }
+
+    if has(
+        text,
+        &[
+            "spotlight",
+            "spot light",
+            "spot-lit",
+            "stage light",
+            "stage lighting",
+            "stage lights",
+            "reflektor",
+        ],
+    ) {
+        intent.contrast += 4.0;
+        intent.highlight_grade(42.0, 12.0);
+        intent.vignette -= 10.0;
+    }
+
+    if has(
+        text,
+        &["deep blacks", "deep black", "crushed blacks", "duboke crne"],
+    ) {
+        intent.blacks -= 12.0;
+        intent.contrast += 4.0;
+    }
+
+    if has(text, &["low contrast", "flat contrast", "meki kontrast"]) {
+        intent.contrast -= 12.0;
+        intent.shadows += 8.0;
     }
 
     if has(
@@ -558,19 +1027,20 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
         intent.label("Airy");
     }
 
-    if has(
+    let vintage_requested = has(
         text,
         &[
             "vintage",
             "retro",
             "analog",
             "analogue",
-            "faded",
             "polaroid",
             "disposable",
             "starinsk",
         ],
-    ) {
+    ) || (has_word(text, &["faded"])
+        && !has(text, &["faded blacks", "faded black"]));
+    if vintage_requested {
         intent.temperature += 6.0;
         intent.saturation -= 8.0;
         intent.contrast -= 4.0;
@@ -580,6 +1050,11 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
         intent.lut.get_or_insert(LUT_GOLD_200);
         intent.lut_intensity = intent.lut_intensity.max(35.0);
         intent.label("Vintage Film");
+    }
+
+    if has(text, &["faded blacks", "faded black", "faded shadow"]) {
+        intent.fade += 10.0;
+        intent.blacks += 6.0;
     }
 
     if has(text, &["modern", "clean", "crisp", "moder", "čist"]) {
@@ -807,7 +1282,24 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
     }
 
     // --- Physical / finishing cues ---------------------------------------
-    if has(text, &["grain", "grainy", "filmic grain", "zrnat", "zrno"]) {
+    if has(
+        text,
+        &["fine grain", "subtle grain", "light grain", "fino zrno"],
+    ) {
+        intent.grain += 8.0;
+        intent.label("Grain");
+    } else if has(
+        text,
+        &[
+            "heavy grain",
+            "strong grain",
+            "grainy",
+            "filmic grain",
+            "grain",
+            "zrnat",
+            "zrno",
+        ],
+    ) {
         intent.grain += 18.0;
         intent.label("Grain");
     }
@@ -848,8 +1340,11 @@ fn apply_mood(intent: &mut LookIntent, text: &str) {
         intent.hsl(1, 2.0, -4.0, 6.0);
         intent.clarity -= 4.0;
     }
+}
 
-    // --- Film stocks ------------------------------------------------------
+/// Explicit film-stock words are applied after era/artist cues, so
+/// "1970s, Portra 400" keeps Portra instead of being forced back to Gold.
+fn apply_film_stock(intent: &mut LookIntent, text: &str) {
     if has_word(text, &["portra"]) {
         intent.lut = Some(LUT_PORTRA_400);
         intent.lut_intensity = 35.0;
@@ -894,15 +1389,37 @@ fn interpret(prompt: &str) -> LookIntent {
     let text = prompt.to_lowercase();
     let mut intent = LookIntent::default();
 
-    if let Some(subject) = detect_subject(&text) {
+    let subject = detect_subject(&text);
+    if let Some(subject) = subject {
         apply_subject(&mut intent, subject);
     }
+
+    // "Concert portrait" keeps the concert treatment but also protects skin;
+    // treating it as one or the other loses half of the request.
+    let portrait_requested =
+        has(&text, &["portrait", "headshot", "portret", "portreti"]) || has_word(&text, &["model"]);
+    if portrait_requested && subject != Some("portrait") {
+        apply_portrait_modifier(&mut intent);
+    }
+
+    // Mood first, then the stronger era/artist references. A reference must be
+    // able to replace the subject's default blue concert grade; an explicit
+    // film stock can still replace the reference's default stock afterwards.
     apply_mood(&mut intent, &text);
+    if let Some(era) = detect_era(&text) {
+        apply_era(&mut intent, era);
+    }
+    if let Some(reference) = detect_reference(&text) {
+        apply_reference(&mut intent, reference);
+    }
+    apply_film_stock(&mut intent, &text);
 
     // Nothing recognised: still return a gentle, usable baseline instead of
     // failing the request.
     if intent.labels.is_empty()
         && intent.subject.is_none()
+        && intent.era.is_none()
+        && intent.reference.is_none()
         && intent.lut.is_none()
         && intent.adjustments_are_neutral()
     {
@@ -946,6 +1463,105 @@ impl LookIntent {
 // Profile construction
 // ---------------------------------------------------------------------------
 
+fn add_scalar(adjustments: &mut Value, key: &str, delta: f64) {
+    let Some(object) = adjustments.as_object_mut() else {
+        return;
+    };
+    let current = object.get(key).and_then(Value::as_f64).unwrap_or(0.0);
+    object.insert(key.to_string(), json!(current + delta));
+}
+
+fn scale_scalar(adjustments: &mut Value, key: &str, factor: f64) {
+    let Some(object) = adjustments.as_object_mut() else {
+        return;
+    };
+    if let Some(current) = object.get(key).and_then(Value::as_f64) {
+        object.insert(key.to_string(), json!(current * factor));
+    }
+}
+
+fn scale_nested_saturation(adjustments: &mut Value, group: &str, factor: f64) {
+    let Some(entries) = adjustments.get_mut(group).and_then(Value::as_object_mut) else {
+        return;
+    };
+    for entry in entries.values_mut() {
+        if let Some(saturation) = entry.get_mut("saturation") {
+            if let Some(number) = saturation.as_f64() {
+                *saturation = json!(number * factor);
+            }
+        }
+    }
+}
+
+/// The four candidates must read as four different treatments, not four
+/// contrast percentages of one preset. This adds a real soft/bold/film
+/// character on top of the shared colour story: different curves, split-tone
+/// strength, LUT blend, grain, halation, vignette and temperature.
+fn apply_variant_character(adjustments: &mut Value, variant: Variant, intent: &LookIntent) {
+    match variant {
+        Variant::Balanced => {}
+        Variant::Soft => {
+            add_scalar(adjustments, "contrast", -3.0);
+            add_scalar(adjustments, "clarity", -2.0);
+            add_scalar(adjustments, "highlights", -6.0);
+            add_scalar(adjustments, "shadows", 18.0);
+            add_scalar(adjustments, "blacks", 12.0);
+            add_scalar(adjustments, "whites", -4.0);
+            add_scalar(adjustments, "saturation", -3.0);
+            add_scalar(adjustments, "temperature", 3.0);
+            add_scalar(adjustments, "grainAmount", 2.0);
+            add_scalar(adjustments, "halationAmount", 4.0);
+            add_scalar(adjustments, "glowAmount", 8.0);
+            scale_scalar(adjustments, "vignetteAmount", 0.5);
+            adjustments["grainSize"] = json!(22.0);
+            adjustments["grainRoughness"] = json!(40.0);
+            if !intent.mono {
+                scale_nested_saturation(adjustments, "colorGrading", 0.7);
+                scale_nested_saturation(adjustments, "hsl", 0.8);
+            }
+        }
+        Variant::Bold => {
+            add_scalar(adjustments, "contrast", 5.0);
+            add_scalar(adjustments, "clarity", 2.0);
+            add_scalar(adjustments, "highlights", -8.0);
+            add_scalar(adjustments, "shadows", -4.0);
+            add_scalar(adjustments, "blacks", -12.0);
+            add_scalar(adjustments, "whites", 6.0);
+            add_scalar(adjustments, "saturation", 6.0);
+            add_scalar(adjustments, "vibrance", 4.0);
+            add_scalar(adjustments, "temperature", -1.0);
+            scale_scalar(adjustments, "grainAmount", 0.8);
+            scale_scalar(adjustments, "halationAmount", 0.8);
+            scale_scalar(adjustments, "glowAmount", 0.6);
+            scale_scalar(adjustments, "vignetteAmount", 1.25);
+            add_scalar(adjustments, "vignetteAmount", -6.0);
+            adjustments["grainSize"] = json!(32.0);
+            adjustments["grainRoughness"] = json!(55.0);
+            if !intent.mono {
+                scale_nested_saturation(adjustments, "colorGrading", 1.2);
+                scale_nested_saturation(adjustments, "hsl", 1.15);
+            }
+        }
+        Variant::Film => {
+            add_scalar(adjustments, "contrast", -1.0);
+            add_scalar(adjustments, "highlights", -4.0);
+            add_scalar(adjustments, "shadows", 4.0);
+            add_scalar(adjustments, "blacks", 4.0);
+            add_scalar(adjustments, "temperature", 2.0);
+            scale_scalar(adjustments, "grainAmount", 1.0);
+            add_scalar(adjustments, "grainAmount", 14.0);
+            add_scalar(adjustments, "halationAmount", 8.0);
+            add_scalar(adjustments, "glowAmount", 4.0);
+            adjustments["grainSize"] = json!(42.0);
+            adjustments["grainRoughness"] = json!(60.0);
+            if !intent.mono {
+                scale_nested_saturation(adjustments, "colorGrading", 1.05);
+                scale_nested_saturation(adjustments, "hsl", 0.95);
+            }
+        }
+    }
+}
+
 fn build_adjustments(intent: &LookIntent, variant: Variant) -> Value {
     let strength = intent.strength;
     let (contrast_scale, clarity_scale, grain_scale, sat_scale) = match variant {
@@ -981,7 +1597,10 @@ fn build_adjustments(intent: &LookIntent, variant: Variant) -> Value {
         "dehaze": round(clamp(scale(intent.dehaze), -10.0, 30.0)),
         "vibrance": round(clamp(scale(intent.vibrance) * sat_scale, -40.0, 40.0)),
         "saturation": round(clamp(scale(intent.saturation) * sat_scale, -100.0, 30.0)),
-        "temperature": round(clamp(scale(intent.temperature), -40.0, 40.0)),
+        // Period/glam looks need a real warm shift on a blue stage wash; the
+        // editor itself accepts -100..100. Keep the default prompts conservative
+        // through the intent values, not by silently clipping the strong ones.
+        "temperature": round(clamp(scale(intent.temperature), -60.0, 60.0)),
         "tint": round(clamp(scale(intent.tint), -30.0, 30.0)),
         "sharpness": round(clamp(scale(intent.sharpness) * clarity_scale, 0.0, 80.0)),
         "grainAmount": round(clamp(scale(intent.grain) * grain_scale, 0.0, 60.0)),
@@ -994,6 +1613,26 @@ fn build_adjustments(intent: &LookIntent, variant: Variant) -> Value {
         "glowAmount": round(clamp(scale(intent.glow), 0.0, 40.0)),
         "hsl": hsl_look(intent.hsl),
     });
+
+    let radius = |grade: Option<(f64, f64)>, fallback_hue: f64| -> (f64, f64, f64) {
+        match grade {
+            Some((hue, saturation)) if !intent.mono || intent.sepia => {
+                (hue, clamp(saturation * strength, 0.0, 100.0), 0.0)
+            }
+            _ => (fallback_hue, 0.0, 0.0),
+        }
+    };
+    adjustments["colorGrading"] = grading(
+        radius(intent.shadow_grade, 210.0),
+        radius(intent.mid_grade, 0.0),
+        radius(intent.highlight_grade, 38.0),
+        0.0,
+        52.0,
+    );
+
+    // Variant character is applied after the split tone exists so Soft/Bold/Film
+    // can genuinely change its strength rather than only the contrast slider.
+    apply_variant_character(&mut adjustments, variant, intent);
 
     if intent.mono {
         let saturation = adjustments["saturation"].as_f64().unwrap_or(0.0);
@@ -1015,60 +1654,70 @@ fn build_adjustments(intent: &LookIntent, variant: Variant) -> Value {
         }
     }
 
-    let radius = |grade: Option<(f64, f64)>, fallback_hue: f64| -> (f64, f64, f64) {
-        match grade {
-            Some((hue, saturation)) if !intent.mono || intent.sepia => {
-                (hue, clamp(saturation * strength, 0.0, 100.0), 0.0)
-            }
-            _ => (fallback_hue, 0.0, 0.0),
-        }
-    };
-    adjustments["colorGrading"] = grading(
-        radius(intent.shadow_grade, 210.0),
-        radius(intent.mid_grade, 0.0),
-        radius(intent.highlight_grade, 38.0),
-        0.0,
-        52.0,
-    );
-
-    let fade = if variant == Variant::Film {
-        intent.fade + 7.0
-    } else if variant == Variant::Soft {
-        intent.fade + 4.0
-    } else {
-        intent.fade
+    let fade = match variant {
+        Variant::Soft => intent.fade + 6.0,
+        Variant::Film => intent.fade + 10.0,
+        Variant::Bold => intent.fade,
+        Variant::Balanced => intent.fade,
     };
     let fade = clamp(scale(fade), 0.0, 32.0);
-    if fade > 0.5 || intent.contrast.abs() > 8.0 {
-        let contrast = clamp(scale(contrast_intent) * contrast_scale, -40.0, 45.0);
-        let lift = fade;
-        let mid_lift = lift * 0.4;
-        let shoulder = (contrast * 0.12).clamp(-8.0, 10.0);
-        adjustments["curves"] = curves(
-            &[
-                (0.0, lift),
+    let contrast = clamp(scale(contrast_intent) * contrast_scale, -40.0, 45.0);
+    let curve_points = match variant {
+        Variant::Soft => Some(vec![
+            (0.0, fade + 2.0),
+            (64.0, 64.0 + fade * 0.55 + 2.0),
+            (128.0, 128.0 + fade * 0.15),
+            (192.0, 191.0),
+            (255.0, 252.0),
+        ]),
+        Variant::Bold => Some(vec![
+            (0.0, 0.0),
+            (48.0, 34.0),
+            (128.0, 128.0),
+            (200.0, 220.0),
+            (255.0, 255.0),
+        ]),
+        Variant::Film => Some(vec![
+            (0.0, fade + 4.0),
+            (64.0, 64.0 + fade * 0.45),
+            (128.0, 128.0),
+            (192.0, 196.0),
+            (255.0, 252.0),
+        ]),
+        Variant::Balanced if fade > 0.5 || intent.contrast.abs() > 8.0 => {
+            let mid_lift = fade * 0.4;
+            let shoulder = (contrast * 0.12).clamp(-8.0, 10.0);
+            Some(vec![
+                (0.0, fade),
                 (64.0, 64.0 + mid_lift),
                 (128.0, 128.0),
                 (192.0, 192.0 + shoulder),
-                (255.0, 255.0 - lift * 0.2),
-            ],
-            &[],
-            &[],
-            &[],
-        );
+                (255.0, 255.0 - fade * 0.2),
+            ])
+        }
+        Variant::Balanced => None,
+    };
+    if let Some(points) = curve_points {
+        adjustments["curves"] = curves(&points, &[], &[], &[]);
     }
 
     let lut = match variant {
         Variant::Film if intent.lut.is_none() && !intent.mono => {
-            Some((default_lut_for(intent), 42.0))
+            Some((default_lut_for(intent), 48.0))
         }
         _ => intent.lut.map(|name| (name, intent.lut_intensity)),
     };
     if let Some((name, lut_intensity)) = lut
         && !intent.mono
     {
+        let variant_intensity = match variant {
+            Variant::Soft => lut_intensity * 0.70,
+            Variant::Bold => lut_intensity * 1.15,
+            Variant::Film => lut_intensity * 1.20,
+            Variant::Balanced => lut_intensity,
+        };
         adjustments["__lut_name"] = json!(name);
-        adjustments["__lut_intensity"] = json!(round(clamp(lut_intensity, 0.0, 100.0)));
+        adjustments["__lut_intensity"] = json!(round(clamp(variant_intensity, 0.0, 100.0)));
     }
 
     adjustments
@@ -1199,25 +1848,49 @@ fn preferred_label(intent: &LookIntent) -> Option<&str> {
 }
 
 fn base_label(intent: &LookIntent) -> String {
-    let subject = intent.subject.map(subject_label);
-    let style = preferred_label(intent);
-    match (subject, style) {
+    let subject = if intent.portrait_modifier {
+        // A named era/artist already supplies the context; "1950s Glam Rock
+        // Portrait" reads better than "1950s Glam Rock Concert Portrait".
+        if intent.reference.is_some() {
+            "Portrait"
+        } else if intent.subject == Some("concert") {
+            "Concert Portrait"
+        } else {
+            "Portrait"
+        }
+    } else {
+        intent.subject.map(subject_label).unwrap_or("Look")
+    };
+
+    let stage = match (intent.era, intent.reference) {
+        (Some(era), Some(reference)) => Some(format!("{era} {reference}")),
+        (Some(era), None) => Some(era.to_string()),
+        (None, Some(reference)) => Some(reference.to_string()),
+        _ => None,
+    };
+    let lead = stage.or_else(|| preferred_label(intent).map(str::to_string));
+    match (intent.subject, lead) {
         // Avoid "Portra Portrait": when one label contains the other, the more
         // specific style already says everything.
-        (Some(subject), Some(style))
-            if style.to_lowercase().contains(&subject.to_lowercase())
-                || subject.to_lowercase().contains(&style.to_lowercase()) =>
+        (Some(_), Some(lead))
+            if lead.to_lowercase().contains(&subject.to_lowercase())
+                || subject.to_lowercase().contains(&lead.to_lowercase()) =>
         {
-            style.to_string()
+            lead
         }
-        (Some(subject), Some(style)) => format!("{style} {subject}"),
-        (Some(subject), None) => format!("{subject} Look"),
-        (None, Some(style)) => style.to_string(),
+        (Some(_), Some(lead)) => format!("{lead} {subject}"),
+        (Some(_), None) => format!("{subject} Look"),
+        (None, Some(lead)) => lead,
         (None, None) => "Custom Look".to_string(),
     }
 }
 
-fn build_profile(prompt: &str, intent: &LookIntent, variant: Variant) -> StyleProfile {
+fn build_profile(
+    prompt: &str,
+    intent: &LookIntent,
+    variant: Variant,
+    ai_tags: Option<&str>,
+) -> StyleProfile {
     let label = base_label(intent);
     let name = format!("{label} — {}", variant.label());
     let mut adjustments = build_adjustments(intent, variant);
@@ -1231,17 +1904,48 @@ fn build_profile(prompt: &str, intent: &LookIntent, variant: Variant) -> StylePr
         })
         .and_then(|(name, intensity)| film_lut(&name, intensity));
 
-    let tags = intent.subject.map(subject_tags).unwrap_or_default();
+    let mut tags = intent.subject.map(subject_tags).unwrap_or_default();
+    if intent.portrait_modifier {
+        // "Concert portrait" must still match portrait photos when the saved
+        // look is reused, so carry both vocabularies.
+        for tag in subject_tags("portrait") {
+            if !tags.contains(&tag) {
+                tags.push(tag);
+            }
+        }
+    }
+    let traits = summary_from_adjustments(&adjustments, intent, lut.as_ref());
+    let description = match ai_tags {
+        Some(ai_tags) => {
+            let ai_tags = ai_tags.trim();
+            let ai_tags = if ai_tags.chars().count() > 240 {
+                ai_tags.chars().take(237).collect::<String>() + "..."
+            } else {
+                ai_tags.to_string()
+            };
+            format!(
+                "AI interpreted: {ai_tags}. Generated from \"{}\". {} variation: {}.",
+                prompt.trim(),
+                variant.label(),
+                traits
+            )
+        }
+        None => format!(
+            "Generated from \"{}\". {} variation: {}.",
+            prompt.trim(),
+            variant.label(),
+            traits
+        ),
+    };
 
-    let description = format!(
-        "Generated from \"{}\". {} variation: {}.",
-        prompt.trim(),
-        variant.label(),
-        summary_from_adjustments(&adjustments, intent, lut.as_ref())
-    );
+    let id = if ai_tags.is_some() {
+        format!("generated-ai-{}", uuid::Uuid::new_v4())
+    } else {
+        format!("generated-{}", uuid::Uuid::new_v4())
+    };
 
     StyleProfile {
-        id: format!("generated-{}", uuid::Uuid::new_v4()),
+        id,
         name,
         detect_tags: tags,
         subject: None,
@@ -1253,20 +1957,20 @@ fn build_profile(prompt: &str, intent: &LookIntent, variant: Variant) -> StylePr
     }
 }
 
-/// Turns a free-form prompt into four candidate looks. LUT paths are resolved
-/// later by the command (they depend on the installation directory).
-pub fn generate_candidates(prompt: &str) -> Result<Vec<StyleProfile>, String> {
-    let prompt = prompt.trim();
+fn candidates_from_text(
+    original_prompt: &str,
+    effective_prompt: &str,
+    ai_tags: Option<&str>,
+) -> Result<Vec<StyleProfile>, String> {
+    let prompt = original_prompt.trim();
     if prompt.is_empty() {
         return Err("Describe the look you want first.".to_string());
     }
-    // Count characters, not UTF-8 bytes: a 300-character Croatian prompt is
-    // 600+ bytes and used to be rejected even though the textarea allowed it.
     if prompt.chars().count() > 600 {
         return Err("Keep the description under 600 characters.".to_string());
     }
 
-    let intent = interpret(prompt);
+    let intent = interpret(effective_prompt);
     let variants = [
         Variant::Balanced,
         Variant::Soft,
@@ -1275,16 +1979,54 @@ pub fn generate_candidates(prompt: &str) -> Result<Vec<StyleProfile>, String> {
     ];
     Ok(variants
         .iter()
-        .map(|variant| build_profile(prompt, &intent, *variant))
+        .map(|variant| build_profile(prompt, &intent, *variant, ai_tags))
         .collect())
 }
 
+/// Turns a free-form prompt into four candidate looks. LUT paths are resolved
+/// later by the command (they depend on the installation directory). Test-only
+/// because the Tauri command uses the AI-aware entry point below.
+#[cfg(test)]
+pub fn generate_candidates(prompt: &str) -> Result<Vec<StyleProfile>, String> {
+    candidates_from_text(prompt, prompt, None)
+}
+
+/// Generates the four looks. When `use_ai` is on and a local Ollama model is
+/// available, the prompt is first expanded into photographic style tags
+/// ("1950s", "glam rock", "warm golds", ...). The grade itself is still built
+/// by the deterministic colour engine, so the result is fast and editable
+/// instead of an unpredictable wall of invented slider values.
 #[tauri::command]
-pub fn generate_style_candidates(
+pub async fn generate_style_candidates(
     prompt: String,
+    use_ai: Option<bool>,
     app_handle: tauri::AppHandle,
 ) -> Result<Vec<StyleProfile>, String> {
-    let mut candidates = generate_candidates(&prompt)?;
+    let original = prompt.trim().to_string();
+    if original.is_empty() {
+        return Err("Describe the look you want first.".to_string());
+    }
+    // Count characters, not UTF-8 bytes: a 300-character Croatian prompt is
+    // 600+ bytes and used to be rejected even though the textarea allowed it.
+    if original.chars().count() > 600 {
+        return Err("Keep the description under 600 characters.".to_string());
+    }
+
+    let mut ai_tags: Option<String> = None;
+    let effective = if use_ai.unwrap_or(true) {
+        match crate::prompt_ai::expand_prompt(&original).await {
+            Ok(tags) if !tags.trim().is_empty() => {
+                let tags = tags.trim().to_string();
+                ai_tags = Some(tags.clone());
+                format!("{original}, {tags}")
+            }
+            _ => original.clone(),
+        }
+    } else {
+        original.clone()
+    };
+
+    let mut candidates = candidates_from_text(&original, &effective, ai_tags.as_deref())?;
     crate::style_profile::resolve_builtin_lut_paths(&app_handle, &mut candidates);
     Ok(candidates)
 }
@@ -1303,7 +2045,7 @@ mod tests {
 
     fn named(prompt: &str, variant: Variant) -> StyleProfile {
         let intent = interpret(prompt);
-        build_profile(prompt, &intent, variant)
+        build_profile(prompt, &intent, variant, None)
     }
 
     #[test]
@@ -1574,5 +2316,81 @@ mod tests {
         let candidates = generate_candidates("asdf qwer").unwrap();
         assert_eq!(candidates.len(), 4);
         assert!(number(&candidates[0], "contrast") > 0.0);
+    }
+
+    #[test]
+    fn fifties_queen_prompt_becomes_a_warm_glam_look() {
+        let profile = named(
+            "Make it 50s style portrait concert with Freddy Mercury style, queen",
+            Variant::Balanced,
+        );
+        assert!(
+            profile.name.starts_with("1950s Glam Rock"),
+            "{}",
+            profile.name
+        );
+        assert!(
+            number(&profile, "temperature") > 10.0,
+            "the blue stage wash should be warmed: {}",
+            number(&profile, "temperature")
+        );
+        assert!(number(&profile, "grainAmount") > 5.0);
+        let lut = profile.lut.expect("the era should choose a film stock");
+        assert!(lut.name.contains("Gold"), "{}", lut.name);
+        let blues = profile.adjustments["hsl"]["blues"]["saturation"]
+            .as_f64()
+            .unwrap_or(0.0);
+        assert!(
+            blues < -15.0,
+            "blue stage light should be pulled back: {blues}"
+        );
+        assert!(profile.detect_tags.iter().any(|tag| tag == "concert"));
+        assert!(profile.detect_tags.iter().any(|tag| tag == "portrait"));
+        assert!(profile.id.starts_with("generated-"));
+    }
+
+    #[test]
+    fn the_four_era_variants_are_visibly_different() {
+        let prompt = "1950s glam rock concert portrait, queen";
+        let balanced = named(prompt, Variant::Balanced);
+        let soft = named(prompt, Variant::Soft);
+        let bold = named(prompt, Variant::Bold);
+        let film = named(prompt, Variant::Film);
+
+        assert!(
+            number(&soft, "shadows") > number(&bold, "shadows"),
+            "Soft should open the shadows, Bold should keep them deep"
+        );
+        assert!(
+            number(&bold, "contrast") > number(&soft, "contrast"),
+            "Bold should be visibly contrastier than Soft"
+        );
+        assert!(
+            number(&film, "grainAmount") > number(&balanced, "grainAmount"),
+            "Film should carry noticeably more grain"
+        );
+
+        let lut_intensity =
+            |profile: &StyleProfile| profile.lut.as_ref().map(|lut| lut.intensity).unwrap_or(0.0);
+        assert!(lut_intensity(&soft) < lut_intensity(&balanced));
+        assert!(lut_intensity(&bold) > lut_intensity(&balanced));
+        assert!(lut_intensity(&film) > lut_intensity(&bold));
+
+        let black_point = |profile: &StyleProfile| {
+            profile.adjustments["curves"]["luma"][0]["y"]
+                .as_f64()
+                .unwrap_or(0.0)
+        };
+        assert!(
+            black_point(&soft) > black_point(&bold),
+            "Soft should have a lifted black point, Bold should not"
+        );
+    }
+
+    #[test]
+    fn decade_words_do_not_misfire_on_lens_or_iso_numbers() {
+        let profile = named("50mm lens, ISO 1600 portrait", Variant::Balanced);
+        assert!(!profile.name.starts_with("1950s"), "{}", profile.name);
+        assert!(!profile.name.contains("Glam Rock"), "{}", profile.name);
     }
 }

@@ -18,7 +18,7 @@ import {
   History,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
-import { AutoStyleSummary, Invokes, SidecarSnapshot, StyleMatch, StyleProfile } from '../ui/AppProperties';
+import { AutoStyleSummary, Invokes, PromptAiStatus, SidecarSnapshot, StyleMatch, StyleProfile } from '../ui/AppProperties';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
 import Slider from '../ui/Slider';
@@ -41,6 +41,7 @@ const TAG_PREVIEW_LIMIT = 6;
 // English and double as a hint of the vocabulary it recognises.
 const PROMPT_EXAMPLES = [
   'moody teal and orange concert',
+  '1950s glam rock concert portrait, Queen',
   'warm airy wedding, Portra 400',
   'cinematic neon night portrait',
   'black and white street portrait',
@@ -115,6 +116,8 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
 
   // Prompt-driven looks ("moody teal and orange concert, subtle grain").
   const [prompt, setPrompt] = useState('');
+  const [aiStatus, setAiStatus] = useState<PromptAiStatus | null>(null);
+  const [useAi, setUseAi] = useState(true);
   const [candidates, setCandidates] = useState<StyleProfile[]>([]);
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const [basePreview, setBasePreview] = useState<string | null>(null);
@@ -196,6 +199,29 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       setError(null);
     }, 300);
     return () => clearTimeout(timer);
+  }, [isOpen]);
+
+  // Local Ollama is optional: when present, it turns the prompt into
+  // photographic tags before the local colour engine builds the four looks.
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const status = await invoke<PromptAiStatus>(Invokes.GetPromptAiStatus);
+        if (cancelled) return;
+        setAiStatus(status);
+        setUseAi(status.available);
+      } catch {
+        if (!cancelled) {
+          setAiStatus({ available: false, model: null, url: '' });
+          setUseAi(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen]);
 
   const loadMatches = useCallback(async () => {
@@ -478,8 +504,20 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     setSavedCandidates([]);
     setPreviewFailed(false);
     try {
-      const list = await invoke<StyleProfile[]>(Invokes.GenerateStyleCandidates, { prompt: text });
+      const list = await invoke<StyleProfile[]>(Invokes.GenerateStyleCandidates, {
+        prompt: text,
+        useAi: useAi && (aiStatus?.available ?? false),
+      });
       setCandidates(list);
+      if (
+        useAi &&
+        aiStatus?.available &&
+        !list.some((candidate) => candidate.id.startsWith('generated-ai-'))
+      ) {
+        // The status probe succeeded but the expansion call did not: be honest
+        // instead of silently presenting the local fallback as an AI result.
+        toast.info(t('modals.aiStyle.aiFallback'));
+      }
       rememberPrompt(text);
       await renderCandidatePreviews(list);
     } catch (err) {
@@ -580,6 +618,29 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
         rows={3}
         className="w-full resize-none rounded-md border border-border-color bg-bg-primary px-3 py-2 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent"
       />
+
+      {aiStatus && (
+        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="inline-flex items-center gap-1 rounded-full border border-border-color bg-bg-primary px-2 py-0.5 text-text-secondary">
+            <Sparkles size={12} />
+            {t('modals.aiStyle.aiAssist')}
+          </span>
+          {aiStatus.available ? (
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-text-secondary">
+              <input
+                type="checkbox"
+                checked={useAi}
+                onChange={(event) => setUseAi(event.target.checked)}
+                className="accent-accent"
+              />
+              <span className="font-mono text-[10px]">{aiStatus.model}</span>
+            </label>
+          ) : (
+            <span className="text-text-secondary">{t('modals.aiStyle.aiUnavailable')}</span>
+          )}
+          <span className="text-text-secondary/80">{t('modals.aiStyle.aiAssistHint')}</span>
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2">
         {PROMPT_EXAMPLES.map((example) => (
@@ -741,6 +802,11 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
                         {index === 0 && (
                           <span className="shrink-0 rounded-full bg-accent/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-accent">
                             {t('modals.aiStyle.recommended')}
+                          </span>
+                        )}
+                        {candidate.id.startsWith('generated-ai-') && (
+                          <span className="shrink-0 rounded-full border border-accent/40 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-accent">
+                            AI
                           </span>
                         )}
                         <Text variant={TextVariants.label} className="truncate">

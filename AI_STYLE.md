@@ -5,8 +5,11 @@ fotografije i automatsku obradu prema tom sadržaju (culling + stilovi/LUT-ovi).
 
 > Kratko: aplikacija **već** ima CLIP model koji tagira sadržaj svake slike
 > (`src-tauri/src/tagging.rs`, tagovi se spremaju u `.rrdata` sidecar). Novi AI
-> sloj se na to nadograđuje i **ne pokreće novu inferenciju** tijekom cullinga ili
-> obrade — koristi postojeće tagove, pa je jednako brz.
+> sloj se na to nadograđuje i **ne pokreće novu CLIP inferenciju** tijekom
+> cullinga ili obrade — koristi postojeće tagove, pa je jednako brz. Jedini
+> opcionalni LLM poziv je tumačenje teksta u kartici **Describe** (lokalni
+> Ollama); on ne dira tagove, culling ni render, samo pripremi fotografski brief
+> za lokalni colour engine.
 
 ---
 
@@ -173,15 +176,50 @@ drugi klik ga uklanja. **Surprise me** odabere jednu od kuriranih, međusobno
 usklađenih kombinacija i odmah generira četiri varijante. Zadnjih šest opisa
 pamti se lokalno (**Recent prompts**), pa se možeš vraćati na njih.
 
-Generator je **lokalan i determinističan** (nema poziva na LLM): prepoznaje
-engleski i hrvatski vokabular za subjekt (concert, wedding, portrait, landscape,
-food, street, night, festival, sports, wildlife, architecture, product, car),
-mood (cinematic, moody/dark, airy/bright, teal & orange, vintage (i
-Polaroid/disposable), modern, natural, punchy, soft/dreamy, matte,
-B&W/noir/sepia, neon, golden hour, warm, cool, earthy, muted…), filmske stockove
-(Portra, Ektar, Gold, Fuji 400H, Cinestill 250D, Vision 500T, Ilford/Tri-X),
-finiš (grain, vignette, halation/glow, clarity/detail, dehaze) i modifikatore
-(_subtle_, _strong_, _extreme_).
+Generator ima **dva sloja**:
+
+1. **AI interpret** (opcionalno): lokalni Ollama model pročita cijeli opis i
+   pretvori ga u kratak fotografski brief — npr. _„1950s, glam rock, concert,
+   portrait"_. To je pravi jezični sloj: AI povezuje „Freddy Mercury / Queen" s
+   glam rockom, dekadu s erom i slične sinonime koje konačni rječnik ne mora
+   znati napamet.
+2. **Colour engine** (lokalno, deterministički): iz tog briefa gradi četiri
+   varijante, bira LUT, HSL i split tone te sve ostavlja kao normalne, editabilne
+   slidere. AI **ne renderira piksele**; zato je preview brz i ponovljiv, a look
+   možeš odmah doraditi u _Edit_.
+
+AI je uključen kad je Ollama dostupan; u kartici Describe postoji checkbox
+**AI interpret** s imenom modela (trenutno preferira `qwen2.5-coder:7b`).
+Ako Ollama nije pokrenut, model ne odgovori ili checkbox isključiš, koristi se
+isti lokalni rječnik kao fallback. UI tada pokaže _„Local interpreter (AI
+unavailable)"_. Generirani profili s AI briefom nose **AI** badge i u opisu pišu
+_„AI interpreted: …"_, pa se točno vidi što je model zaključio. AI brief se
+filtrira: iz njega se uzimaju era/artist/subjekt/film stock, a generički
+finišni pojmovi („high contrast", „deep blacks", „halation") se ne dodaju drugi
+put jer su već dio odabrane ere/reference. Tvoja vlastita eksplicitna riječ
+(„extra high contrast") i dalje se normalno parsira.
+
+Lokalni rječnik prepoznaje engleski i hrvatski vokabular za subjekt (concert,
+wedding, portrait, landscape, food, street, night, festival, sports, wildlife,
+architecture, product, car), mood (cinematic, moody/dark, airy/bright, teal &
+orange, vintage (i Polaroid/disposable), modern, natural, punchy, soft/dreamy,
+matte, B&W/noir/sepia, neon, golden hour, warm, cool, earthy, muted…), filmske
+stockove (Portra, Ektar, Gold, Fuji 400H, Cinestill 250D, Vision 500T,
+Ilford/Tri-X), finiš (grain, vignette, halation/glow, clarity/detail, dehaze) i
+modifikatore (_subtle_, _strong_, _extreme_). Posebno su razrađene **era** i
+**artist/reference** kombinacije:
+
+- **1950s** → topao Gold 200, blago podignuta crna, fini grain, zaštićeni
+  highlighti i topli skin tonovi.
+- **Glam Rock** (Queen / Freddie Mercury) → zlatni i jantarni highlighti, duboka
+  crna, spotlight kontrast, halation i bogati crveni/žuti tonovi. Plavi stage
+  wash se svjesno povlači.
+- Redoslijed je **subjekt → portrait modifier → mood → era → reference →
+  eksplicitni film stock**, pa „50s portrait concert with Freddie Mercury"
+  završi kao **1950s Glam Rock Portrait**, a ne kao plavi koncertni look.
+- Kod plavo osvijetljenog koncerta `adapt_look_to_photo()` dodatno izmjeri
+  stvarni red/blue cast i doda toplinu samo onoliko koliko slici treba (vidi
+  § „Per-image adaptacija"); dnevna 1950s fotografija ne dobiva taj dodatak.
 
 Dobiješ četiri varijante istog intenta — **Balanced**, **Soft**, **Bold**,
 **Film** — koje se razlikuju u kontrastu, clarityju, grain/fadeu i jačini LUT-a.
@@ -255,6 +293,12 @@ Iz tih brojeva `adapt_look_to_photo()` prije primjene prilagodi look:
 - **Šum**: na ISO ≥ 1600 smanjuje se clarity/structure/sharpness i dodaje
   luma/color noise reduction.
 - **Vinjeta**: ne udvostručuje se ako su kutovi već tamni.
+- **Plavo stage svjetlo (1950s / Glam Rock)**: ako je izmjereni `cast_rb`
+  negativan (hladna/plava scena), dodaje se do +14 temperature, malo tinta i
+  brightnessa te se dodatno smanjuje zasićenje `blues`/`aquas` kanala. Time
+  crveni i zlatni tonovi na koži ostanu čitljivi i pod plavim LED reflektorima.
+  Na neutralnoj/dnevnoj fotografiji se taj dodatak ne aktivira; ostaje samo
+  bazna toplina recepta.
 - **White balance**: samo za neutralne/portretne stilove i samo kod izraženog
   casta (nikad za neon/stage-light scene ni tople lookove), s malim capom.
 
@@ -332,7 +376,8 @@ tvoje reference + taga), te obrađuje boje/LUT/krivulje u skladu s tim.
 | Semantičko bodovanje cullinga          | `src-tauri/src/culling.rs`                                   |
 | Koncertni vokabular                    | `src-tauri/src/tagging_utils/candidates.rs`                  |
 | Style profili, učenje, match, primjena | `src-tauri/src/style_profile.rs`                             |
-| Prompt → 4 looka (lokalni interpreter) | `src-tauri/src/prompt_style.rs`                              |
+| Prompt → 4 looka (lokalni colour engine) | `src-tauri/src/prompt_style.rs`                           |
+| AI interpret (Ollama)                  | `src-tauri/src/prompt_ai.rs`                                 |
 | Registracija naredbi                   | `src-tauri/src/lib.rs`                                       |
 | UI                                     | `src/components/modals/AIStyleModal.tsx`, `CullingModal.tsx` |
 | Tipovi / Invokes                       | `src/components/ui/AppProperties.tsx`                        |
@@ -343,7 +388,7 @@ Tauri naredbe: `list_style_profiles`, `save_style_profile`, `delete_style_profil
 `derive_style_profile_from_paths`, `assign_artist_to_paths`,
 `match_style_profiles_for_paths`, `apply_style_profile_to_paths`,
 `auto_style_paths_with_ai`, `generate_style_candidates`,
-`apply_custom_style_profile`, `preview_style_profiles`.
+`get_prompt_ai_status`, `apply_custom_style_profile`, `preview_style_profiles`.
 
 Korisnički profili se spremaju u `<app data>/style_profiles/style_profiles.json`.
 
@@ -357,9 +402,11 @@ Korisnički profili se spremaju u `<app data>/style_profiles/style_profiles.json
 - **„Najbolji kadar"** je i dalje djelomično subjektivan (izraz lica, trenutak).
   AI daje jak _shortlist_ i bira najboljeg u burstu, ali ne zamjenjuje u potpunosti
   tvoju procjenu.
-- **Describe** ne razumije slobodan jezik kao LLM: to je kurirani rječnik
-  fotografskih pojmova. Neobične formulacije mogu promašiti; tada pomogne
-  konkretniji opis (npr. „teal shadows, orange highlights, Portra, grain").
+- **Describe** s uključenim _AI interpret_ razumije slobodniji jezik, ali AI
+  samo prevodi opis u fotografski brief; konačni grade i dalje gradi lokalni
+  engine. Bez Ollame (ili s isključenim checkboxom) radi kurirani rječnik, pa
+  neobične formulacije mogu promašiti; tada pomogne konkretniji opis (npr.
+  „teal shadows, orange highlights, Portra, grain").
 - **Generator drži** contrast/blacks u rasponu bliskom naučenom profilu (do
   +26/−18 prije varijanti) kako jaki „moody" opisi ne bi srušili svijetle
   RAW-ove u crno. Za ekstremniji izgled koristi **Bold** ili ručno doradi u
