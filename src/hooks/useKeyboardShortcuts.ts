@@ -8,7 +8,7 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import { useUIStore } from '../store/useUIStore';
 import { useProcessStore } from '../store/useProcessStore';
 import { useEditorActions } from './useEditorActions';
-import { useLibraryActions } from './useLibraryActions';
+import { hasMetadataUndo, undoLastMetadataChange, useLibraryActions } from './useLibraryActions';
 
 const getParentFolder = (path: string) => {
   const physicalPath = path.split('?vc=')[0];
@@ -294,10 +294,16 @@ export const useKeyboardShortcuts = ({
         },
       },
       undo: {
-        shouldFire: (s: any) => s.ui.activeView === 'editor' && !!s.editor.selectedImage && s.editor.historyIndex > 0,
+        shouldFire: (s: any) =>
+          (s.ui.activeView === 'editor' && !!s.editor.selectedImage && s.editor.historyIndex > 0) ||
+          (s.ui.activeView !== 'editor' && hasMetadataUndo()),
         execute: (e: any, s: any) => {
           e.preventDefault();
-          s.editor.undo();
+          if (s.ui.activeView === 'editor') {
+            s.editor.undo();
+          } else {
+            void undoLastMetadataChange();
+          }
         },
       },
       redo: {

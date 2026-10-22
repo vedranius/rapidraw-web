@@ -9,7 +9,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 use anyhow::Result;
@@ -19,7 +19,7 @@ use image::{DynamicImage, GenericImageView, ImageBuffer, Luma};
 use rayon::prelude::*;
 use regex::regex;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use sysinfo::Disks;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
@@ -2864,11 +2864,16 @@ pub async fn apply_adjustments_to_paths_map(
         return Ok(());
     }
 
+    let total = entries.len();
     let state = app_handle.state::<AppState>();
-    add_to_thumbnail_queue(&state, entries.len(), &app_handle);
+    add_to_thumbnail_queue(&state, total, &app_handle);
+    let _ = app_handle.emit(
+        "style-apply-progress",
+        json!({ "stage": "writing", "current": 0, "total": total }),
+    );
 
     tauri::async_runtime::spawn_blocking(move || {
-        log::info!("Applying per-image adjustments to {} paths", entries.len());
+        log::info!("Applying per-image adjustments to {} paths", total);
         let settings = load_settings(app_handle.clone()).unwrap_or_default();
         let enable_xmp_sync = settings.enable_xmp_sync.unwrap_or(false);
         let create_xmp_if_missing = settings.create_xmp_if_missing.unwrap_or(false);
@@ -2880,6 +2885,8 @@ pub async fn apply_adjustments_to_paths_map(
             .unwrap()
             .clone();
 
+        let completed = AtomicUsize::new(0);
+        let report_every = (total / 50).max(1);
         entries.par_iter().for_each(|(path, adjustments)| {
             apply_one_adjustments(
                 path,
@@ -2888,9 +2895,20 @@ pub async fn apply_adjustments_to_paths_map(
                 enable_xmp_sync,
                 create_xmp_if_missing,
             );
+            let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+            if done % report_every == 0 || done == total {
+                let _ = app_handle.emit(
+                    "style-apply-progress",
+                    json!({ "stage": "writing", "current": done, "total": total }),
+                );
+            }
         });
 
         let paths: Vec<String> = entries.iter().map(|(path, _)| path.clone()).collect();
+        let _ = app_handle.emit(
+            "style-apply-progress",
+            json!({ "stage": "thumbnails", "current": 0, "total": total }),
+        );
         enqueue_thumbnail_regeneration(&app_handle, &paths);
         // Report success only once the library thumbnails show the new edit.
         // Otherwise an immediate Undo could restore the sidecar while a worker
@@ -2982,13 +3000,31 @@ fn wait_for_thumbnail_completion(app_handle: &AppHandle, paths: &[String]) {
     let state = app_handle.state::<AppState>();
     let manager = &state.thumbnail_manager;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    let total = paths.len();
+    let mut reported_done = usize::MAX;
     let mut queue = manager.queue.lock().unwrap();
     loop {
-        let still_queued = paths.iter().any(|path| queue.contains(path));
-        let still_processing = {
+        let (still_queued, still_processing, done) = {
             let processing = manager.processing_now.lock().unwrap();
-            paths.iter().any(|path| processing.contains(path))
+            let still_queued = paths.iter().any(|path| queue.contains(path));
+            let still_processing = paths.iter().any(|path| processing.contains(path));
+            let remaining = paths
+                .iter()
+                .filter(|path| queue.contains(*path) || processing.contains(*path))
+                .count();
+            (
+                still_queued,
+                still_processing,
+                total.saturating_sub(remaining),
+            )
         };
+        if done != reported_done {
+            reported_done = done;
+            let _ = app_handle.emit(
+                "style-apply-progress",
+                json!({ "stage": "thumbnails", "current": done, "total": total }),
+            );
+        }
         if !still_queued && !still_processing {
             break;
         }

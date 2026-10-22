@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useTranslation } from 'react-i18next';
 import {
   Loader2,
@@ -34,6 +35,12 @@ interface AIStyleModalProps {
 }
 
 type Tab = 'profiles' | 'prompt' | 'matches' | 'learn';
+
+interface StyleApplyProgress {
+  stage: 'analyzing' | 'writing' | 'thumbnails';
+  current: number;
+  total: number;
+}
 
 const TAG_PREVIEW_LIMIT = 6;
 
@@ -100,6 +107,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
 
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [applyProgress, setApplyProgress] = useState<StyleApplyProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [profiles, setProfiles] = useState<StyleProfile[]>([]);
@@ -184,6 +192,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   useEffect(() => {
     if (isOpen) {
       setIsMounted(true);
+      setApplyProgress(null);
       // With a selection, the content-aware Matches tab is the useful landing
       // page (and the natural hand-off from culling); without one, browsing
       // all saved profiles makes more sense.
@@ -197,8 +206,21 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       setTab('profiles');
       setDerived(null);
       setError(null);
+      setApplyProgress(null);
     }, 300);
     return () => clearTimeout(timer);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let disposed = false;
+    const subscription = listen<StyleApplyProgress>('style-apply-progress', (event) => {
+      if (!disposed) setApplyProgress(event.payload);
+    });
+    return () => {
+      disposed = true;
+      void subscription.then((unlisten) => unlisten());
+    };
   }, [isOpen]);
 
   // Local Ollama is optional: when present, it turns the prompt into
@@ -379,6 +401,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       return;
     }
     setBusy('apply');
+    setApplyProgress({ stage: 'analyzing', current: 0, total: pathCount });
     try {
       const snapshot = await takeSidecarSnapshot();
       await invoke(Invokes.ApplyStyleProfileToPaths, {
@@ -393,6 +416,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       toast.error(t('modals.aiStyle.applyFailed', { err: String(err) }));
     } finally {
       setBusy(null);
+      setApplyProgress(null);
     }
   };
 
@@ -403,6 +427,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       return;
     }
     setBusy('auto');
+    setApplyProgress({ stage: 'analyzing', current: 0, total: pathCount });
     try {
       const snapshot = await takeSidecarSnapshot();
       const summary = await invoke<AutoStyleSummary>(Invokes.AutoStylePathsWithAi, {
@@ -434,6 +459,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       toast.error(t('modals.aiStyle.applyFailed', { err: String(err) }));
     } finally {
       setBusy(null);
+      setApplyProgress(null);
     }
   };
 
@@ -569,6 +595,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       return;
     }
     setBusy(`apply-candidate:${profile.id}`);
+    setApplyProgress({ stage: 'analyzing', current: 0, total: pathCount });
     try {
       const snapshot = await takeSidecarSnapshot();
       await invoke(Invokes.ApplyCustomStyleProfile, {
@@ -583,6 +610,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       toast.error(t('modals.aiStyle.applyFailed', { err: String(err) }));
     } finally {
       setBusy(null);
+      setApplyProgress(null);
     }
   };
 
@@ -1409,6 +1437,31 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
                 </button>
               ))}
             </div>
+
+            {busy && applyProgress && applyProgress.total > 0 && (
+              <div className="mb-4 rounded-lg border border-border-color bg-bg-primary px-3 py-2">
+                <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-text-secondary">
+                  <span>
+                    {applyProgress.stage === 'analyzing'
+                      ? t('modals.aiStyle.progressAnalyzing')
+                      : applyProgress.stage === 'writing'
+                        ? t('modals.aiStyle.progressWriting')
+                        : t('modals.aiStyle.progressThumbnails')}
+                  </span>
+                  <span className="font-mono">
+                    {applyProgress.current}/{applyProgress.total}
+                  </span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-surface">
+                  <div
+                    className="h-full rounded-full bg-accent transition-[width] duration-200"
+                    style={{
+                      width: `${Math.min(100, (applyProgress.current / applyProgress.total) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
 
             {loading && tab === 'profiles' ? (
               <div className="flex items-center justify-center py-12">

@@ -973,6 +973,14 @@
         "name": "Name (A-Z)"
       }
     },
+    "metadataUndo": {
+      "color": "Color label updated",
+      "failed": "Could not undo: {{err}}",
+      "flag": "Flag updated",
+      "rating": "Rating updated",
+      "undo": "Undo",
+      "undone": "Change reverted"
+    },
     "culling": {
       "addTagPlaceholder": "Add tag...",
       "altCullingPreviewHighRes": "Culling Preview High Res",
@@ -1248,6 +1256,9 @@
       "title": "AI Style",
       "subtitle": "Apply a content-aware look, or learn one from your edited photos.",
       "adaptHint": "Every photo is analysed (brightness, colour, noise) and the look adapts to it automatically.",
+      "progressAnalyzing": "Analysing each photo and adapting the look…",
+      "progressWriting": "Writing adjustments to the sidecars…",
+      "progressThumbnails": "Rendering the updated thumbnails…",
       "tabProfiles": "Profiles",
       "tabMatches": "Matches",
       "tabLearn": "Learn",

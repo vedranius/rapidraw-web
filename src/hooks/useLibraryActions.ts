@@ -1,6 +1,7 @@
-import { useCallback } from 'react';
+import { createElement, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'react-toastify';
+import i18n from '../i18n';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { useEditorStore } from '../store/useEditorStore';
 import { useUIStore } from '../store/useUIStore';
@@ -36,6 +37,135 @@ const withFlag = (imageList: ImageFile[], paths: string[], flag: ImageFlag | nul
     pathSet.has(image.path) && image.flag !== flag && (!onlyFrom || image.flag === onlyFrom)
       ? { ...image, flag }
       : image,
+  );
+};
+
+const METADATA_UNDO_TOAST_ID = 'metadata-undo';
+
+type MetadataUndoEntry = {
+  path: string;
+  rating: number;
+  flag: ImageFlag | null;
+  color: string | null;
+};
+
+let pendingMetadataUndo: MetadataUndoEntry[] | null = null;
+
+const colorFromTags = (tags?: string[] | null) => {
+  const tag = tags?.find((entry) => entry.startsWith('color:'));
+  return tag ? tag.substring(6) : null;
+};
+
+const snapshotMetadata = (paths: string[]): MetadataUndoEntry[] => {
+  const { imageRatings, imageList } = useLibraryStore.getState();
+  const byPath = new Map(imageList.map((image) => [image.path, image]));
+  return paths.map((path) => {
+    const image = byPath.get(path);
+    return {
+      path,
+      rating: imageRatings[path] ?? 0,
+      flag: image?.flag ?? null,
+      color: colorFromTags(image?.tags),
+    };
+  });
+};
+
+export const hasMetadataUndo = () => pendingMetadataUndo !== null;
+
+/**
+ * Reverts the last rating/flag/color change from the library or culling view.
+ *
+ * The three commands touch the same sidecar, so they must run in sequence:
+ * a rating can clear a Reject flag, and a parallel flag/colour write could
+ * otherwise overwrite it with stale metadata.
+ */
+export const undoLastMetadataChange = async () => {
+  const entries = pendingMetadataUndo;
+  if (!entries?.length) return;
+  pendingMetadataUndo = null;
+  toast.dismiss(METADATA_UNDO_TOAST_ID);
+
+  const byPath = new Map(entries.map((entry) => [entry.path, entry]));
+  useLibraryStore.getState().setLibrary((state) => ({
+    imageRatings: {
+      ...state.imageRatings,
+      ...Object.fromEntries(entries.map((entry) => [entry.path, entry.rating])),
+    },
+    imageList: state.imageList.map((image) => {
+      const entry = byPath.get(image.path);
+      if (!entry) return image;
+      const otherTags = (image.tags ?? []).filter((tag) => !tag.startsWith('color:'));
+      return {
+        ...image,
+        flag: entry.flag,
+        tags: entry.color ? [...otherTags, `color:${entry.color}`] : otherTags,
+      };
+    }),
+  }));
+
+  const ratings = new Map<number, string[]>();
+  const flags = new Map<string, { flag: ImageFlag | null; paths: string[] }>();
+  const colors = new Map<string, { color: string | null; paths: string[] }>();
+  for (const entry of entries) {
+    ratings.set(entry.rating, [...(ratings.get(entry.rating) ?? []), entry.path]);
+    const flagKey = entry.flag ?? 'none';
+    const flagGroup = flags.get(flagKey) ?? { flag: entry.flag, paths: [] };
+    flagGroup.paths.push(entry.path);
+    flags.set(flagKey, flagGroup);
+    const colorKey = entry.color ?? 'none';
+    const colorGroup = colors.get(colorKey) ?? { color: entry.color, paths: [] };
+    colorGroup.paths.push(entry.path);
+    colors.set(colorKey, colorGroup);
+  }
+
+  try {
+    await Promise.all(
+      Array.from(ratings, ([rating, paths]) => invoke(Invokes.SetRatingForPaths, { paths, rating })),
+    );
+    await Promise.all(
+      Array.from(flags.values(), ({ flag, paths }) => invoke(Invokes.SetFlagForPaths, { paths, flag })),
+    );
+    await Promise.all(
+      Array.from(colors.values(), ({ color, paths }) =>
+        invoke(Invokes.SetColorLabelForPaths, { paths, color }),
+      ),
+    );
+    toast.info(i18n.t('library.metadataUndo.undone'));
+  } catch (err) {
+    toast.error(i18n.t('library.metadataUndo.failed', { err: String(err) }));
+  }
+};
+
+const showMetadataUndo = (message: string, entries: MetadataUndoEntry[]) => {
+  if (!entries.length) return;
+  pendingMetadataUndo = entries;
+  toast.dismiss(METADATA_UNDO_TOAST_ID);
+  toast.success(
+    createElement(
+      'div',
+      { className: 'flex items-center gap-3' },
+      createElement('span', null, message),
+      createElement(
+        'button',
+        {
+          type: 'button',
+          className:
+            'shrink-0 rounded bg-white/20 px-2 py-0.5 text-xs font-semibold underline transition-colors hover:bg-white/30',
+          onClick: () => void undoLastMetadataChange(),
+        },
+        i18n.t('library.metadataUndo.undo'),
+      ),
+    ),
+    {
+      toastId: METADATA_UNDO_TOAST_ID,
+      autoClose: 10000,
+      closeOnClick: false,
+      onClose: () => {
+        // Once the toast is gone the shortcut should not revert a much older
+        // edit the user has already moved on from.
+        if (pendingMetadataUndo === entries) pendingMetadataUndo = null;
+      },
+    },
   );
 };
 
@@ -110,6 +240,10 @@ export function useLibraryActions(handleImageSelect?: (path: string, openInEdito
     const isRejected = getImageFlag(imageList, selectedPaths[0]) === ImageFlag.Reject;
     const currentRating = imageRatings[selectedPaths[0]] || 0;
     const finalRating = newRating === currentRating && !isRejected ? 0 : newRating;
+    const before = snapshotMetadata(pathsToRate);
+    const changed = before.some(
+      (entry) => entry.rating !== finalRating || (finalRating > 0 && entry.flag === ImageFlag.Reject),
+    );
 
     applyWithAutoAdvance(pathsToRate, () =>
       setLibrary((state) => {
@@ -127,15 +261,22 @@ export function useLibraryActions(handleImageSelect?: (path: string, openInEdito
       }),
     );
 
-    invoke(Invokes.SetRatingForPaths, { paths: pathsToRate, rating: finalRating }).catch((err) => {
-      console.error(err);
-      toast.error(`Failed to apply rating: ${err}`);
-    });
+    void invoke(Invokes.SetRatingForPaths, { paths: pathsToRate, rating: finalRating })
+      .then(() => {
+        if (changed) showMetadataUndo(i18n.t('library.metadataUndo.rating'), before);
+      })
+      .catch((err) => {
+        console.error(err);
+        toast.error(`Failed to apply rating: ${err}`);
+      });
   }, []);
 
   const handleSetFlag = useCallback((flag: ImageFlag | null, paths?: string[]) => {
     const { expandedPaths } = resolveTargetPaths(paths);
     if (expandedPaths.length === 0) return;
+
+    const before = snapshotMetadata(expandedPaths);
+    const changed = before.some((entry) => entry.flag !== flag);
 
     applyWithAutoAdvance(expandedPaths, () =>
       useLibraryStore.getState().setLibrary((state) => ({
@@ -143,10 +284,14 @@ export function useLibraryActions(handleImageSelect?: (path: string, openInEdito
       })),
     );
 
-    invoke(Invokes.SetFlagForPaths, { paths: expandedPaths, flag }).catch((err) => {
-      console.error(err);
-      toast.error(`Failed to update flag: ${err}`);
-    });
+    void invoke(Invokes.SetFlagForPaths, { paths: expandedPaths, flag })
+      .then(() => {
+        if (changed) showMetadataUndo(i18n.t('library.metadataUndo.flag'), before);
+      })
+      .catch((err) => {
+        console.error(err);
+        toast.error(`Failed to update flag: ${err}`);
+      });
   }, []);
 
   const handleToggleFlag = useCallback(
@@ -176,6 +321,8 @@ export function useLibraryActions(handleImageSelect?: (path: string, openInEdito
       if (colorTag) currentColor = colorTag.substring(6);
     }
     const finalColor = color !== null && color === currentColor ? null : color;
+    const before = snapshotMetadata(pathsToUpdate);
+    const changed = before.some((entry) => entry.color !== finalColor);
 
     try {
       await invoke(Invokes.SetColorLabelForPaths, { paths: pathsToUpdate, color: finalColor });
@@ -191,6 +338,7 @@ export function useLibraryActions(handleImageSelect?: (path: string, openInEdito
           }),
         })),
       );
+      if (changed) showMetadataUndo(i18n.t('library.metadataUndo.color'), before);
     } catch (err) {
       toast.error(`Failed to set color label: ${err}`);
     }

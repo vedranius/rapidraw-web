@@ -346,6 +346,24 @@ cargo test --lib real_library_edit_targets -- --ignored --nocapture
 cargo test --lib real_culling_scores -- --ignored --nocapture
 ```
 
+### Undo, batch progress i cache
+
+- **Rating, flag i color label** sada imaju pravi Undo: nakon promjene pojavi se
+  toast s gumbom _Undo_, a u biblioteci radi i **Ctrl+Z**. Vraćaju se i rating i
+  flag i boja (jer rating > 0 može obrisati Reject), pa se sidecar ne može
+  „pokvariti" djelomičnim undo-om. Kod grupiranih slika vraća se stanje svake
+  pojedine fotografije, ne samo aktivne.
+- **Batch apply** u AI Style modalu pokazuje stvarni napredak u tri faze:
+  `Analysing` (per-image adaptacija), `Writing` (sidecar upisi) i
+  `Rendering` (čekanje da thumbnails doista prikažu novi izgled). Brojke su
+  `current/total`; traka nije lažni timer. Modal se zatvara tek kad su sidecari
+  i thumbnails gotovi, pa je Undo odmah siguran.
+- **Auto baseline cache** pamti izračunati baseline za neuređeni RAW po
+  apsolutnoj putanji + mtime + relevantnim render postavkama (baseline exposure,
+  raw/linear mode, white balance, highlight compression). Drugi prolaz kroz istu
+  fotografiju (npr. match → apply) više ne dekodira cijeli RAW; cache je omeđen
+  na 512 zapisa. Promjena datoteke ili postavke automatski ga invalidira.
+
 ---
 
 ## 4. Bend-specifičan look (npr. Iron Maiden) — točan radni tok

@@ -16,10 +16,12 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::file_management::{
     apply_adjustments_to_paths_map, cached_analysis_source, parse_virtual_path,
@@ -2261,11 +2263,16 @@ pub(crate) async fn apply_profile_object_to_paths(
     }
 
     let intensity = intensity.unwrap_or(profile.intensity).clamp(0.0, 100.0);
+    let total = paths.len();
     log::info!(
         "AI Style: applying profile '{}' to {} images (intensity {:.0})",
         profile.name,
-        paths.len(),
+        total,
         intensity
+    );
+    let _ = app_handle.emit(
+        "style-apply-progress",
+        json!({ "stage": "analyzing", "current": 0, "total": total }),
     );
 
     // Per-image analysis (JPEG decode of the cached 480 px previews) is CPU
@@ -2273,8 +2280,9 @@ pub(crate) async fn apply_profile_object_to_paths(
     let task_handle = app_handle.clone();
     let task_profile = profile.clone();
     let entries = tauri::async_runtime::spawn_blocking(move || {
-        let mut entries = Vec::with_capacity(paths.len());
-        for path in paths {
+        let report_every = (total / 50).max(1);
+        let mut entries = Vec::with_capacity(total);
+        for (index, path) in paths.into_iter().enumerate() {
             let tags = tags_for_path(&path);
             let (_, sidecar_path) = parse_virtual_path(&path);
             let unedited = crate::exif_processing::load_sidecar(&sidecar_path)
@@ -2294,6 +2302,13 @@ pub(crate) async fn apply_profile_object_to_paths(
                 stats.as_deref(),
             );
             entries.push((path, adjustments));
+            let current = index + 1;
+            if current % report_every == 0 || current == total {
+                let _ = task_handle.emit(
+                    "style-apply-progress",
+                    json!({ "stage": "analyzing", "current": current, "total": total }),
+                );
+            }
         }
         entries
     })
@@ -2344,6 +2359,37 @@ pub(crate) fn auto_baseline_for_image(
     })
 }
 
+/// Small bounded cache for the expensive unedited-RAW baseline decode.
+///
+/// A batch apply asks for the same photo's baseline once during matching and
+/// again while the look is built. The decode is the slow part (full RAW load +
+/// analysis downscale), while the resulting tonal values only depend on the
+/// source bytes and the render settings. Keying by absolute path, mtime and the
+/// settings that affect RAW rendering keeps the cache correct after a file is
+/// replaced or the baseline/tonemapper settings change.
+const AUTO_BASELINE_CACHE_LIMIT: usize = 512;
+static AUTO_BASELINE_CACHE: OnceLock<Mutex<HashMap<String, Value>>> = OnceLock::new();
+
+fn auto_baseline_cache_key(
+    source_path: &std::path::Path,
+    settings: &crate::app_settings::AppSettings,
+) -> Option<String> {
+    let modified = fs::metadata(source_path).ok()?.modified().ok()?;
+    let mtime = modified.duration_since(UNIX_EPOCH).ok()?.as_nanos();
+    Some(format!(
+        "{}|{}|{}|{}|{:?}|{:?}|{:?}|{:?}|{}",
+        source_path.to_string_lossy(),
+        mtime,
+        settings.enable_baseline_exposure,
+        settings.baseline_exposure,
+        settings.compensate_highlight_preservation,
+        settings.raw_highlight_compression,
+        settings.processing_backend,
+        settings.white_balance_mode,
+        settings.linear_raw_mode
+    ))
+}
+
 /// Decodes an unedited photo at analysis size so `auto_baseline_for_image`
 /// can measure it during a batch apply. Only called for photos without a
 /// sidecar, which is also the only case where the lift is added.
@@ -2355,6 +2401,16 @@ fn auto_baseline_for_path(path: &str, app_handle: &AppHandle) -> Option<Value> {
         return None;
     }
     let settings = crate::app_settings::load_settings(app_handle.clone()).ok()?;
+    let cache_key = auto_baseline_cache_key(&source_path, &settings);
+    if let Some(key) = &cache_key
+        && let Ok(cache) = AUTO_BASELINE_CACHE
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+        && let Some(cached) = cache.get(key)
+    {
+        return Some(cached.clone());
+    }
+
     let as_shot = crate::as_shot::as_shot(&source_path_str);
     let base = crate::image_processing::default_adjustments();
     let bytes = fs::read(&source_path)
@@ -2370,9 +2426,19 @@ fn auto_baseline_for_path(path: &str, app_handle: &AppHandle) -> Option<Value> {
     )
     .ok()?;
     let preview = crate::image_loader::downscale_for_analysis(&image, 900);
-    Some(auto_baseline_for_image(
-        &preview, is_raw, &base, as_shot, &settings,
-    ))
+    let baseline = auto_baseline_for_image(&preview, is_raw, &base, as_shot, &settings);
+
+    if let Some(key) = cache_key
+        && let Ok(mut cache) = AUTO_BASELINE_CACHE
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+    {
+        if cache.len() >= AUTO_BASELINE_CACHE_LIMIT {
+            cache.clear();
+        }
+        cache.insert(key, baseline.clone());
+    }
+    Some(baseline)
 }
 
 fn enable_basic_tool(overlay: &mut Value) {
@@ -2860,10 +2926,15 @@ pub async fn auto_style_paths_with_ai(
         .and_then(|id| profiles.iter().find(|p| p.id == *id))
         .cloned();
 
+    let total = paths.len();
     log::info!(
         "AI Style: auto pass over {} images (min score {:.2})",
-        paths.len(),
+        total,
         min_score
+    );
+    let _ = app_handle.emit(
+        "style-apply-progress",
+        json!({ "stage": "analyzing", "current": 0, "total": total }),
     );
 
     // Matching + per-image analysis + look adaptation all happen in one blocking
@@ -2873,12 +2944,17 @@ pub async fn auto_style_paths_with_ai(
     let task_handle = app_handle.clone();
     let profiles_for_task = profiles.clone();
     let (entries, names, counts, skipped) = tauri::async_runtime::spawn_blocking(move || {
-        let mut entries = Vec::with_capacity(paths.len());
+        let mut entries = Vec::with_capacity(total);
         let mut names: HashMap<String, String> = HashMap::new();
         let mut counts: HashMap<String, usize> = HashMap::new();
         let mut skipped: Vec<String> = Vec::new();
 
-        for path in paths {
+        for (index, path) in paths.into_iter().enumerate() {
+            // Emit before each match so the UI moves even for skipped frames.
+            let _ = task_handle.emit(
+                "style-apply-progress",
+                json!({ "stage": "analyzing", "current": index, "total": total }),
+            );
             let tags = tags_for_path(&path);
             let matched = best_profile_for_tags(&tags, &profiles_for_task, min_score);
             let chosen = matched
@@ -2917,6 +2993,10 @@ pub async fn auto_style_paths_with_ai(
             entries.push((path, adjustments));
         }
 
+        let _ = task_handle.emit(
+            "style-apply-progress",
+            json!({ "stage": "analyzing", "current": total, "total": total }),
+        );
         (entries, names, counts, skipped)
     })
     .await
@@ -4442,5 +4522,30 @@ mod real_edit_targets {
         println!("auto baseline for DSCF5001: {baseline}");
         assert!(baseline["exposure"].as_f64().unwrap() > 0.0);
         assert!(baseline["shadows"].as_f64().unwrap() > 0.0);
+    }
+
+    #[test]
+    fn auto_baseline_cache_key_tracks_path_and_render_settings() {
+        let dir = std::env::temp_dir().join(format!("rr-baseline-cache-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = dir.join("first.raw");
+        let second = dir.join("second.raw");
+        std::fs::write(&first, b"first").unwrap();
+        std::fs::write(&second, b"second").unwrap();
+        let settings = crate::app_settings::AppSettings::default();
+
+        let first_key = super::auto_baseline_cache_key(&first, &settings).unwrap();
+        let second_key = super::auto_baseline_cache_key(&second, &settings).unwrap();
+        assert_ne!(first_key, second_key);
+
+        let mut changed = settings.clone();
+        changed.baseline_exposure += 0.25;
+        let changed_key = super::auto_baseline_cache_key(&first, &changed).unwrap();
+        assert_ne!(
+            first_key, changed_key,
+            "a baseline exposure change must invalidate the cached lift"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
