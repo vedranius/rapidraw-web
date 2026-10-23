@@ -68,6 +68,8 @@ struct OllamaChatRequest<'a> {
     messages: Vec<ChatMessage<'a>>,
     stream: bool,
     keep_alive: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<&'a str>,
     options: serde_json::Value,
 }
 
@@ -603,6 +605,7 @@ async fn expand_ollama(config: &PromptAiConfig, prompt: &str) -> Result<String, 
         // Keep the model warm between the four/eight previews; the first
         // request is what usually times out when a model has to be loaded.
         keep_alive: "15m",
+        format: None,
         options: json!({
             "temperature": 0.1,
             "top_p": 0.9,
@@ -834,6 +837,179 @@ fn filter_semantic_tags(tags: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Generic JSON-producing completion used by the RapidRAW command planner.
+///
+/// Unlike `expand_prompt_with_config` this deliberately does not filter or
+/// reinterpret the answer: the agent layer needs the model's structured plan,
+/// and validates every tool call against the local command registry afterwards.
+pub async fn complete_json(
+    config: &PromptAiConfig,
+    system: &str,
+    user: &str,
+    max_tokens: u32,
+) -> Result<String, String> {
+    match normalized_provider(config) {
+        "openai" => {
+            let url = base_url(config);
+            let model = configured_model(config).ok_or_else(|| {
+                "Enter an OpenAI-compatible model name in the AI provider settings.".to_string()
+            })?;
+            let key = configured_key(config);
+            let client = reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(5))
+                .timeout(configured_timeout(config))
+                .build()
+                .map_err(|error| error.to_string())?;
+            let payload = OpenAiChatRequest {
+                model: &model,
+                messages: vec![
+                    ChatMessage {
+                        role: "system",
+                        content: system.to_string(),
+                    },
+                    ChatMessage {
+                        role: "user",
+                        content: user.to_string(),
+                    },
+                ],
+                temperature: 0.1,
+                max_tokens,
+                stream: false,
+            };
+            let mut request = client.post(openai_chat_url(&url)).json(&payload);
+            if let Some(key) = key {
+                request = request.bearer_auth(key);
+            }
+            let response = request
+                .send()
+                .await
+                .map_err(|error| format!("AI endpoint request failed: {error}"))?;
+            if !response.status().is_success() {
+                return Err(format!(
+                    "AI endpoint returned {}: {}",
+                    response.status(),
+                    response.text().await.unwrap_or_default()
+                ));
+            }
+            let body: OpenAiChatResponse = response
+                .json()
+                .await
+                .map_err(|error| format!("AI endpoint returned invalid JSON: {error}"))?;
+            body.choices
+                .into_iter()
+                .find_map(|choice| choice.message.content)
+                .ok_or_else(|| "The AI endpoint returned an empty answer.".to_string())
+        }
+        "anthropic" => {
+            let url = base_url(config);
+            let model = configured_model(config)
+                .ok_or_else(|| "Enter a Claude model name first.".to_string())?;
+            let key = configured_key(config)
+                .ok_or_else(|| "Enter a Claude API key first.".to_string())?;
+            let client = reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(5))
+                .timeout(configured_timeout(config))
+                .build()
+                .map_err(|error| error.to_string())?;
+            let payload = AnthropicChatRequest {
+                model: &model,
+                max_tokens,
+                system: system.to_string(),
+                messages: vec![ChatMessage {
+                    role: "user",
+                    content: user.to_string(),
+                }],
+            };
+            let response = client
+                .post(anthropic_messages_url(&url))
+                .header("x-api-key", key)
+                .header("anthropic-version", "2023-06-01")
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|error| format!("Claude request failed: {error}"))?;
+            if !response.status().is_success() {
+                return Err(format!(
+                    "Claude returned {}: {}",
+                    response.status(),
+                    response.text().await.unwrap_or_default()
+                ));
+            }
+            let body: AnthropicChatResponse = response
+                .json()
+                .await
+                .map_err(|error| format!("Claude returned invalid JSON: {error}"))?;
+            let content = body
+                .content
+                .into_iter()
+                .filter_map(|block| block.text)
+                .collect::<Vec<_>>()
+                .join("\n");
+            if content.trim().is_empty() {
+                Err("Claude returned an empty answer.".to_string())
+            } else {
+                Ok(content)
+            }
+        }
+        _ => {
+            let status = ollama_status(config).await;
+            let model = status
+                .model
+                .ok_or_else(|| status.detail.unwrap_or_else(|| {
+                    "No local Ollama model is available. Pull a model or configure another provider."
+                        .to_string()
+                }))?;
+            let client = reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(5))
+                .timeout(configured_timeout(config))
+                .build()
+                .map_err(|error| error.to_string())?;
+            let payload = OllamaChatRequest {
+                model: &model,
+                messages: vec![
+                    ChatMessage {
+                        role: "system",
+                        content: system.to_string(),
+                    },
+                    ChatMessage {
+                        role: "user",
+                        content: user.to_string(),
+                    },
+                ],
+                stream: false,
+                keep_alive: "15m",
+                format: Some("json"),
+                options: json!({
+                    "temperature": 0.1,
+                    "top_p": 0.9,
+                    "num_predict": max_tokens,
+                    // The command planner receives the full tool catalog, the live context and
+                    // the selected skill. 8k tokens can truncate the tail of that prompt.
+                    "num_ctx": 20480,
+                }),
+            };
+            let response = client
+                .post(format!("{}/api/chat", status.url))
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|error| format!("Ollama request failed: {error}"))?;
+            if !response.status().is_success() {
+                return Err(format!(
+                    "Ollama returned {}: {}",
+                    response.status(),
+                    response.text().await.unwrap_or_default()
+                ));
+            }
+            let body: ChatResponse = response
+                .json()
+                .await
+                .map_err(|error| format!("Ollama returned invalid JSON: {error}"))?;
+            Ok(body.message.content)
+        }
+    }
 }
 
 #[tauri::command]

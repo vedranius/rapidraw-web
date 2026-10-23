@@ -64,6 +64,7 @@ export enum Invokes {
   GenerateStyleCandidates = 'generate_style_candidates',
   GetPromptAiStatus = 'get_prompt_ai_status',
   PreviewStyleProfiles = 'preview_style_profiles',
+  PlanEditAgent = 'plan_edit_agent',
   AutoStylePathsWithAi = 'auto_style_paths_with_ai',
   AssignArtistToPaths = 'assign_artist_to_paths',
   DeleteFolder = 'delete_folder',

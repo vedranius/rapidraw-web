@@ -34,6 +34,7 @@ mod cache_utils;
 mod camera_tethering;
 mod culling;
 mod denoising;
+mod edit_agent;
 mod effect_maps;
 mod exif_processing;
 mod export_processing;
@@ -2590,6 +2591,7 @@ pub fn run() {
             style_profile::restore_sidecars,
             prompt_style::generate_style_candidates,
             prompt_ai::get_prompt_ai_status,
+            edit_agent::plan_edit_agent,
             preview_style_profiles,
             style_profile::auto_style_paths_with_ai,
             lens_correction::get_lensfun_makers,

@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { RotateCcw, Copy, ClipboardPaste, PencilSparkles, ChartArea, LayoutList } from 'lucide-react';
+import { RotateCcw, Copy, ClipboardPaste, PencilSparkles, ChartArea, LayoutList, Wand2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
@@ -231,6 +231,18 @@ export default function Controls() {
             data-tooltip={t('editor.adjustments.tooltips.autoAdjust')}
           >
             <PencilSparkles size={18} />
+          </button>
+          <button
+            className="p-2 rounded-full hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-accent"
+            disabled={!selectedImage}
+            onClick={() => {
+              if (selectedImage) {
+                setUI({ editAgentModalState: { isOpen: true, targetPaths: [selectedImage.path] } });
+              }
+            }}
+            data-tooltip={t('editor.adjustments.tooltips.aiEditor', { defaultValue: 'AI Editor — any command' })}
+          >
+            <Wand2 size={18} />
           </button>
           <button
             className={clsx(

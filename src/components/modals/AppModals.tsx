@@ -19,6 +19,7 @@ import ConfirmModal from './ConfirmModal';
 import ImportSettingsModal from './ImportSettingsModal';
 import CullingModal from './CullingModal';
 import AIStyleModal from './AIStyleModal';
+import EditAgentModal from './EditAgentModal';
 import CollageModal from './CollageModal';
 import { AppSettings, Invokes, ImageFlag, AlbumItem, Album, AlbumGroup } from '../ui/AppProperties';
 import { CopyPasteSettings } from '../../utils/adjustments';
@@ -79,6 +80,7 @@ export default function AppModals(props: AppModalsProps) {
     denoiseModalState,
     cullingModalState,
     aiStyleModalState,
+    editAgentModalState,
     collageModalState,
     setUI,
   } = useUIStore(
@@ -103,6 +105,7 @@ export default function AppModals(props: AppModalsProps) {
       denoiseModalState: state.denoiseModalState,
       cullingModalState: state.cullingModalState,
       aiStyleModalState: state.aiStyleModalState,
+      editAgentModalState: state.editAgentModalState,
       collageModalState: state.collageModalState,
       setUI: state.setUI,
     })),
@@ -373,6 +376,19 @@ export default function AppModals(props: AppModalsProps) {
           await reloadAdjustmentsForPaths(paths);
           await props.refreshImageList();
         }}
+      />
+      <EditAgentModal
+        isOpen={editAgentModalState.isOpen}
+        onClose={() => setUI({ editAgentModalState: { isOpen: false, targetPaths: [] } })}
+        targetPaths={editAgentModalState.targetPaths}
+        onApplied={async () => {
+          const paths = editAgentModalState.targetPaths;
+          paths.forEach((path) => globalImageCache.delete(path));
+          await reloadAdjustmentsForPaths(paths);
+          await props.refreshImageList();
+        }}
+        handleImageSelect={props.handleImageSelect}
+        refreshImageList={props.refreshImageList}
       />
       <CollageModal
         isOpen={collageModalState.isOpen}

@@ -88,6 +88,11 @@ interface AIStyleModalState {
   targetPaths: Array<string>;
 }
 
+interface EditAgentModalState {
+  isOpen: boolean;
+  targetPaths: Array<string>;
+}
+
 const ALL_PANELS: Panel[] = [
   Panel.Metadata,
   Panel.FolderTree,
@@ -271,6 +276,7 @@ export interface UIState {
   denoiseModalState: DenoiseModalState;
   cullingModalState: CullingModalState;
   aiStyleModalState: AIStyleModalState;
+  editAgentModalState: EditAgentModalState;
   collageModalState: CollageModalState;
 
   setUI: (updater: Partial<UIState> | ((state: UIState) => Partial<UIState>)) => void;
@@ -385,6 +391,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   },
   cullingModalState: { isOpen: false, suggestions: null, progress: null, error: null, pathsToCull: [] },
   aiStyleModalState: { isOpen: false, targetPaths: [] },
+  editAgentModalState: { isOpen: false, targetPaths: [] },
   collageModalState: { isOpen: false, sourceImages: [] },
 
   setUI: (updater) => set((state) => (typeof updater === 'function' ? updater(state) : updater)),

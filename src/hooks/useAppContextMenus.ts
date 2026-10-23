@@ -257,6 +257,16 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
               disabled: !selectedImage?.isReady,
             },
             {
+              label: t('contextMenus.editor.aiEditor', { defaultValue: 'AI Editor (any command)' }),
+              icon: Wand2,
+              onClick: () => {
+                if (selectedImage) {
+                  setUI({ editAgentModalState: { isOpen: true, targetPaths: [selectedImage.path] } });
+                }
+              },
+              disabled: !selectedImage?.isReady,
+            },
+            {
               label: t('contextMenus.editor.aiStyle'),
               icon: Palette,
               onClick: () => {
@@ -650,6 +660,15 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
                 setUI({ collageModalState: { isOpen: true, sourceImages: imagesForCollage } });
               },
               disabled: selectionCount === 0 || selectionCount > 9,
+            },
+            {
+              label: t('contextMenus.thumbnail.aiEditor', { defaultValue: 'AI Editor (any command)' }),
+              icon: Wand2,
+              onClick: () =>
+                setUI({
+                  editAgentModalState: { isOpen: true, targetPaths: finalSelection },
+                }),
+              disabled: selectionCount === 0,
             },
             {
               label: t('contextMenus.thumbnail.aiStyle'),
