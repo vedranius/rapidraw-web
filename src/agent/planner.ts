@@ -179,7 +179,7 @@ function parseNumber(raw: string | undefined): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-function findValue(text: string, aliases: string[]): { value: number; explicit: boolean } | null {
+function findValue(text: string, aliases: string[]): { value: number; explicit: boolean; signed: boolean } | null {
   for (const alias of aliases) {
     const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const regex = new RegExp(`${escaped}[^0-9+\\-]{0,24}([+\\-]?\\d+(?:[.,]\\d+)?)\\s*(ev|stops?|stop|%)?`, 'i');
@@ -188,7 +188,7 @@ function findValue(text: string, aliases: string[]): { value: number; explicit: 
       let value = parseNumber(match[1]);
       if (value === null) continue;
       if (match[2] === '%' && ['exposure', 'brightness'].includes(alias)) value /= 100;
-      return { value, explicit: true };
+      return { value, explicit: true, signed: /^[+\-]/.test(match[1]) };
     }
   }
   return null;
@@ -260,7 +260,16 @@ function buildPatch(text: string): { patch: Record<string, unknown>; labels: str
     const hasKey = aliasIndex !== undefined && aliasIndex >= 0;
     if (!found && !hasKey) continue;
     if (!hasKey) continue;
-    const value = found?.value ?? normalizedDirection(text, aliasIndex, aliases[0].length, fallback);
+    const direction = normalizedDirection(text, aliasIndex, aliases[0].length, fallback);
+    // "Smanji exposure za 0.10" contains an unsigned number; the verb still
+    // decides the sign. An explicit "-0.10" always wins.
+    const value = found
+      ? found.signed
+        ? found.value
+        : direction < 0
+          ? -Math.abs(found.value)
+          : found.value
+      : direction;
     if (!Number.isFinite(value) || value === 0) continue;
     patch[key] = value;
     labels.push(`${key} ${value > 0 ? '+' : ''}${value}`);
@@ -476,6 +485,10 @@ export function planLocally(
       },
       'Generiraj koherentan look iz opisa.',
     );
+  }
+
+  if (/\bhistogram\b/i.test(text) && !has('photo.histogram')) {
+    add('photo.histogram', {}, 'Provjeri histogram nakon promjene.');
   }
 
   if (steps.length === 0) {

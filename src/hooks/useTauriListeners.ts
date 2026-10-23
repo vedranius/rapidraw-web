@@ -1,8 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { toast } from 'react-toastify';
 import { Status } from '../components/ui/ExportImportProperties';
-import { useProcessStore } from '../store/useProcessStore';
+import { Invokes } from '../components/ui/AppProperties';
+import { MaskContainer } from '../utils/adjustments';
+import { AiJobsStatus, useProcessStore } from '../store/useProcessStore';
 import { useEditorStore } from '../store/useEditorStore';
 import { useUIStore } from '../store/useUIStore';
 import { useLibraryStore } from '../store/useLibraryStore';
@@ -30,6 +33,8 @@ export function useTauriListeners({
   const mediumThumbnailBuffer = useRef<Record<string, string>>({});
   const ratingBuffer = useRef<Record<string, number>>({});
   const editStatusBuffer = useRef<Record<string, boolean>>({});
+  const metadataBuffer = useRef<Record<string, { flag: any; tags: any; needs_ai: boolean }>>({});
+  const progressBuffer = useRef<{ current: number; total: number } | null>(null);
   const flushHandle = useRef<number | null>(null);
 
   useEffect(() => {
@@ -43,29 +48,77 @@ export function useTauriListeners({
       const pendingMediumThumbs = mediumThumbnailBuffer.current;
       const pendingRatings = ratingBuffer.current;
       const pendingEdits = editStatusBuffer.current;
+      const pendingMetadata = metadataBuffer.current;
+      const pendingProgress = progressBuffer.current;
 
       thumbnailBuffer.current = {};
       mediumThumbnailBuffer.current = {};
       ratingBuffer.current = {};
       editStatusBuffer.current = {};
+      metadataBuffer.current = {};
+      progressBuffer.current = null;
 
-      if (Object.keys(pendingThumbs).length > 0) {
-        useProcessStore.getState().setProcess((state) => ({
-          thumbnails: { ...state.thumbnails, ...pendingThumbs },
-          mediumThumbnails: { ...state.mediumThumbnails, ...pendingMediumThumbs },
-        }));
+      const hasThumbs = Object.keys(pendingThumbs).length > 0;
+      if (hasThumbs || pendingProgress) {
+        useProcessStore.getState().setProcess((state) => {
+          const update: Partial<typeof state> = {};
+          if (hasThumbs) {
+            update.thumbnails = { ...state.thumbnails, ...pendingThumbs };
+            update.mediumThumbnails = { ...state.mediumThumbnails, ...pendingMediumThumbs };
+          }
+          if (
+            pendingProgress &&
+            (state.thumbnailProgress?.current !== pendingProgress.current ||
+              state.thumbnailProgress?.total !== pendingProgress.total)
+          ) {
+            update.thumbnailProgress = pendingProgress;
+          }
+          return update;
+        });
       }
 
-      if (Object.keys(pendingRatings).length > 0 || Object.keys(pendingEdits).length > 0) {
-        useLibraryStore.getState().setLibrary((state) => ({
-          imageRatings: { ...state.imageRatings, ...pendingRatings },
-          imageList:
-            Object.keys(pendingEdits).length > 0
-              ? state.imageList.map((img) =>
-                  pendingEdits[img.path] !== undefined ? { ...img, is_edited: pendingEdits[img.path] } : img,
-                )
-              : state.imageList,
-        }));
+      const ratingPaths = Object.keys(pendingRatings);
+      const editPaths = Object.keys(pendingEdits);
+      const metadataPaths = Object.keys(pendingMetadata);
+      if (ratingPaths.length === 0 && editPaths.length === 0 && metadataPaths.length === 0) return;
+
+      const libraryState = useLibraryStore.getState();
+
+      let nextRatings: Record<string, number> | null = null;
+      for (const path of ratingPaths) {
+        const rating = pendingRatings[path];
+        if (libraryState.imageRatings[path] !== rating || !(path in libraryState.imageRatings)) {
+          if (!nextRatings) nextRatings = { ...libraryState.imageRatings };
+          nextRatings[path] = rating;
+        }
+      }
+
+      let nextImageList: typeof libraryState.imageList | null = null;
+      if (editPaths.length > 0 || metadataPaths.length > 0) {
+        const list = libraryState.imageList;
+        for (let i = 0; i < list.length; i++) {
+          const img = list[i];
+          const hasEdit = img.path in pendingEdits;
+          const meta = pendingMetadata[img.path];
+          if (!hasEdit && !meta) continue;
+          const isEdited = hasEdit ? pendingEdits[img.path] : img.is_edited;
+          const flag = meta ? meta.flag : img.flag;
+          const tags = meta ? (meta.tags ?? img.tags) : img.tags;
+          const needsAi = meta ? meta.needs_ai : img.needs_ai;
+          if (isEdited === img.is_edited && flag === img.flag && tags === img.tags && needsAi === img.needs_ai)
+            continue;
+          if (!nextImageList) nextImageList = list.slice();
+          nextImageList[i] = meta
+            ? { ...img, flag, is_edited: isEdited, tags, needs_ai: needsAi }
+            : { ...img, is_edited: isEdited };
+        }
+      }
+
+      if (nextRatings || nextImageList) {
+        const update: Partial<typeof libraryState> = {};
+        if (nextRatings) update.imageRatings = nextRatings;
+        if (nextImageList) update.imageList = nextImageList;
+        libraryState.setLibrary(update);
       }
     };
 
@@ -93,13 +146,14 @@ export function useTauriListeners({
         if (isEffectActive) useProcessStore.getState().setProcess({ externalEditSession: event.payload });
       }),
       listen('thumbnail-progress', (event: any) => {
-        if (isEffectActive)
-          useProcessStore
-            .getState()
-            .setProcess({ thumbnailProgress: { current: event.payload.current, total: event.payload.total } });
+        if (!isEffectActive) return;
+        progressBuffer.current = { current: event.payload.current, total: event.payload.total };
+        scheduleFlush();
       }),
       listen('thumbnail-generation-complete', () => {
-        if (isEffectActive) useProcessStore.getState().setProcess({ thumbnailProgress: { current: 0, total: 0 } });
+        if (!isEffectActive) return;
+        progressBuffer.current = null;
+        useProcessStore.getState().setProcess({ thumbnailProgress: { current: 0, total: 0 } });
       }),
       listen('thumbnail-generated', (event: any) => {
         if (!isEffectActive) return;
@@ -126,14 +180,12 @@ export function useTauriListeners({
       }),
       listen('image-metadata-loaded', (event: any) => {
         if (!isEffectActive) return;
-        const { path, rating, flag, is_edited, tags } = event.payload;
+        const { path, rating, flag, is_edited, tags, needs_ai } = event.payload;
 
-        useLibraryStore.getState().setLibrary((state) => ({
-          imageRatings: { ...state.imageRatings, [path]: rating },
-          imageList: state.imageList.map((img) =>
-            img.path === path ? { ...img, flag, is_edited, tags: tags ?? img.tags } : img,
-          ),
-        }));
+        ratingBuffer.current[path] = rating;
+        editStatusBuffer.current[path] = is_edited;
+        metadataBuffer.current[path] = { flag, tags, needs_ai };
+        scheduleFlush();
       }),
       listen('ai-model-download-start', (event: any) => {
         if (isEffectActive) useProcessStore.getState().setProcess({ aiModelDownloadStatus: event.payload });
@@ -242,9 +294,90 @@ export function useTauriListeners({
           }));
         }
       }),
+      listen<{ path: string; progress: number }>('ai-denoise-progress', (event) => {
+        if (!isEffectActive) return;
+        const { path, progress } = event.payload;
+        useEditorStore
+          .getState()
+          .setEditor((state) => ({ aiDenoiseProgress: { ...state.aiDenoiseProgress, [path]: progress } }));
+      }),
+      listen<string>('ai-denoise-ready', (event) => {
+        if (!isEffectActive) return;
+        useEditorStore.getState().setEditor((state) => {
+          const { [event.payload]: _, ...aiDenoiseProgress } = state.aiDenoiseProgress;
+          return {
+            aiDenoiseProgress,
+            ...(state.selectedImage?.path === event.payload ? { adjustments: { ...state.adjustments } } : {}),
+          };
+        });
+      }),
+      listen<{ path: string; error: string }>('ai-denoise-error', (event) => {
+        if (!isEffectActive) return;
+        const { path, error } = event.payload;
+        toast.error(`AI denoise failed: ${error}`);
+        useEditorStore.getState().setEditor((state) => {
+          const { [path]: _, ...aiDenoiseProgress } = state.aiDenoiseProgress;
+          return {
+            aiDenoiseProgress,
+            ...(state.selectedImage?.path === path
+              ? { adjustments: { ...state.adjustments, aiDenoiseEnabled: false } }
+              : {}),
+          };
+        });
+      }),
+      listen<AiJobsStatus>('ai-jobs-status', (event) => {
+        if (isEffectActive) useProcessStore.getState().setProcess({ aiJobs: event.payload });
+      }),
+      listen<{ added: string[]; removed: string[]; resolved: boolean }>('ai-jobs-pending', (event) => {
+        if (!isEffectActive) return;
+        const { added, removed, resolved } = event.payload;
+        useProcessStore.getState().setProcess((state) => {
+          const aiPendingPaths = { ...state.aiPendingPaths };
+          added.forEach((path) => (aiPendingPaths[path] = true));
+          removed.forEach((path) => delete aiPendingPaths[path]);
+          return { aiPendingPaths };
+        });
+
+        const removedPaths = new Set(removed);
+        const { imageList, setLibrary } = useLibraryStore.getState();
+        if (imageList.some((img) => removedPaths.has(img.path) && img.needs_ai === resolved)) {
+          setLibrary({
+            imageList: imageList.map((img) => (removedPaths.has(img.path) ? { ...img, needs_ai: !resolved } : img)),
+          });
+        }
+      }),
+      listen<{ path: string; subMasks: Record<string, any>; maps: Record<string, string> }>(
+        'ai-job-result',
+        (event) => {
+          const { path, subMasks, maps } = event.payload;
+          const { selectedImage, patchesSentToBackend, setEditor } = useEditorStore.getState();
+          if (!isEffectActive || selectedImage?.path !== path) return;
+
+          Object.keys(subMasks).forEach((id) => patchesSentToBackend.delete(id));
+          setEditor((state) => ({
+            adjustments: {
+              ...state.adjustments,
+              ...maps,
+              masks: state.adjustments.masks?.map((container: MaskContainer) => ({
+                ...container,
+                subMasks: container.subMasks.map((subMask) =>
+                  subMasks[subMask.id]
+                    ? { ...subMask, parameters: { ...subMask.parameters, ...subMasks[subMask.id] } }
+                    : subMask,
+                ),
+              })),
+            },
+          }));
+        },
+      ),
       listen('wgpu-frame-ready', (event: any) => {
-        if (isEffectActive && event.payload?.path === useEditorStore.getState().selectedImage?.path) {
-          useEditorStore.getState().setEditor({ hasRenderedFirstFrame: true });
+        const editorState = useEditorStore.getState();
+        if (
+          isEffectActive &&
+          !editorState.hasRenderedFirstFrame &&
+          event.payload?.path === editorState.selectedImage?.path
+        ) {
+          editorState.setEditor({ hasRenderedFirstFrame: true });
         }
       }),
       listen('panorama-progress', (event: any) => {
@@ -392,6 +525,21 @@ export function useTauriListeners({
       }),
     ];
 
+    invoke<AiJobsStatus>(Invokes.GetAiJobsStatus)
+      .then((aiJobs) => {
+        if (isEffectActive) useProcessStore.getState().setProcess({ aiJobs });
+      })
+      .catch((err) => console.error('Failed to load AI job status:', err));
+    invoke<string[]>(Invokes.GetPendingAiPaths)
+      .then((paths) => {
+        if (isEffectActive) {
+          useProcessStore
+            .getState()
+            .setProcess({ aiPendingPaths: Object.fromEntries(paths.map((path) => [path, true as const])) });
+        }
+      })
+      .catch((err) => console.error('Failed to load pending AI jobs:', err));
+
     return () => {
       isEffectActive = false;
       if (flushHandle.current !== null) {
@@ -399,7 +547,11 @@ export function useTauriListeners({
         flushHandle.current = null;
       }
       thumbnailBuffer.current = {};
+      mediumThumbnailBuffer.current = {};
       ratingBuffer.current = {};
+      editStatusBuffer.current = {};
+      metadataBuffer.current = {};
+      progressBuffer.current = null;
       listeners.forEach((p) => p.then((unlisten) => unlisten()));
     };
   }, []);

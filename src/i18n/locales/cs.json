@@ -95,13 +95,22 @@
       "resetPoint": "Resetovat bodovou křivku ({{channel}})"
     },
     "details": {
+      "aiDenoise": "AI odšumění",
+      "aiDenoiseDetail": "Detail",
       "blueYellow": "Modrá/Žlutá",
       "centre": "Střed",
       "chromaticAberration": "Chromatická aberace",
       "clarity": "Zřetelnost",
       "color": "Barva",
+      "convertNegative": "Převést negativ",
       "dehaze": "Odmlžení",
       "luminance": "Jas",
+      "negativeBlue": "Modrá",
+      "negativeContrast": "Gradace papíru",
+      "negativeConversion": "Převod negativu",
+      "negativeExposure": "Expozice zvětšeniny",
+      "negativeGreen": "Zelená",
+      "negativeRed": "Červená",
       "noiseReduction": "Redukce šumu",
       "presence": "Prezence",
       "redCyan": "Červená/Azurová",
@@ -139,6 +148,7 @@
       "relightColor": "Barva světla",
       "relightCone": "Kužel",
       "relightDepth": "Hloubka",
+      "relightDuplicateLight": "Duplikovat světlo",
       "relightElevation": "Výška",
       "relightFalloff": "Útlum",
       "relightHint": "Přidejte nebo vyberte světlo a klikněte nebo táhněte v obrázku pro jeho umístění.",
@@ -196,6 +206,11 @@
       "renameGroup": "Přejmenovat skupinu",
       "rootDir": "Kořenový adresář"
     },
+    "autoAdjustModes": {
+      "normal": "Normální",
+      "strong": "Silné",
+      "subtle": "Jemné"
+    },
     "colors": {
       "blue": "Modrá",
       "green": "Zelená",
@@ -215,14 +230,14 @@
       "confirmReset": "Potvrďte reset",
       "convertNegative": "Převést negativ",
       "copyAdjustments": "Kopírovat úpravy",
-      "cullImage": "Chytré třídění",
-      "denoise": "Odšumovat snímek",
+      "cullImage": "Automatické třídění",
+      "denoise": "Odšumit",
       "editImage": "Upravit snímek",
       "exportImage": "Export snímku",
       "flag": "Vlajka",
       "flagPick": "Vybrané",
       "flagReject": "Zamítnuté",
-      "frameImage": "Rám snímku",
+      "frameImage": "Editor rámečků",
       "mergeHdr": "Sloučit do HDR",
       "noLabel": "Žádný štítek",
       "noRating": "Žádné hodnocení",
@@ -280,11 +295,11 @@
       "autoAdjust_other": "Automaticky upravit",
       "autoLensCorrection_one": "Auto korekce objektivu",
       "autoLensCorrection_other": "Auto korekce objektivu",
-      "autoStraighten_few": "Automaticky vyrovnat snímky",
-      "autoStraighten_many": "Automaticky vyrovnat snímky",
-      "autoStraighten_one": "Automaticky vyrovnat snímek",
-      "autoStraighten_other": "Automaticky vyrovnat snímky",
-      "collage_one": "Zarámovat snímek",
+      "autoStraighten_few": "Automaticky vyrovnat",
+      "autoStraighten_many": "Automaticky vyrovnat",
+      "autoStraighten_one": "Automaticky vyrovnat",
+      "autoStraighten_other": "Automaticky vyrovnat",
+      "collage_one": "Editor rámečků",
       "collage_other": "Vytvořit koláž",
       "confirmDelete": "Potvrdit smazání",
       "confirmDeleteVc": "Potvrdit smazání + virtuální kopie",
@@ -292,14 +307,14 @@
       "convertNegative_other": "Převést negativy",
       "copyImage_one": "Kopírovat snímek",
       "copyImage_other": "Kopírovat {{count}} snímků",
-      "cullImage_one": "Chytré třídění snímku",
-      "cullImage_other": "Chytré třídění snímků",
+      "cullImage_one": "Automatické třídění",
+      "cullImage_other": "Automatické třídění",
       "deleteAssociated": "Smazat + Přidružené",
       "deleteImage_one": "Smazat snímek",
       "deleteImage_other": "Smazat {{count}} snímků",
       "deleteSelected": "Smazat pouze vybrané",
-      "denoise_one": "Odšumovat snímek",
-      "denoise_other": "Odšumovat snímky",
+      "denoise_one": "Odšumit",
+      "denoise_other": "Odšumit",
       "duplicateImage": "Duplikovat snímek",
       "exportImage_one": "Exportovat snímek",
       "exportImage_other": "Exportovat {{count}} snímků",
@@ -392,7 +407,7 @@
       "comingSoon": "Již brzy",
       "connection": {
         "backendLabel": "AI Backend:",
-        "builtinDesc": "Použití základního místního CPU. Výběr cloudového, nebo AI konektoru v nastavení pro generativní náhradu.",
+        "builtinDesc": "Použití základní vestavěné AI. Výběr cloudového, nebo AI konektoru v nastavení pro generativní náhradu.",
         "builtinLabel": "Vestavěná AI:",
         "cloudLabel": "Cloud AI:",
         "connectorConnectedDesc": "Připojeno k místnímu generativnímu backendu.",
@@ -408,6 +423,7 @@
       },
       "createNewTitle": "Vytvořit novou generativní úpravu",
       "createNewTooltip": "Vytvořit novou {{name}} úpravu",
+      "denoising": "Probíhá AI odšumění...",
       "dropzoneText": "Přetažením sem vytvoříte novou úpravu",
       "editSettingsTitle": "Upravit nastavení",
       "editsTitle": "Úpravy",
@@ -681,6 +697,7 @@
         "applyPreset": "Použít předvolbu",
         "componentPropertiesTitle": "{{name}} vlastnosti",
         "copySectionSettings": "Kopírovat {{section}} nastavení",
+        "generateTextMask": "Vytvořit masku",
         "invertComponent": "Invertovat komponentu",
         "invertMask": "Invertovat masku",
         "maskPropertiesTitle": "Vlastnosti masky",
@@ -690,7 +707,8 @@
         "pasteSettings": "Vložit nastavení",
         "resetSectionSettings": "Resetovat {{section}} nastavení",
         "select": "Vybrat",
-        "selectPresetTooltip": "Vyberte předvolbu, kterou chcete použít"
+        "selectPresetTooltip": "Vyberte předvolbu, kterou chcete použít",
+        "textPromptPlaceholder": "např. osoba, auto, voda"
       },
       "toggleAnalyticsInAdjustments": "Přepnout analytiku v panelu Úpravy",
       "toggleAnalyticsTooltip": "Přepnout zobrazení Analytics",
@@ -958,6 +976,40 @@
     }
   },
   "library": {
+    "aiJobs": {
+      "discard": "Zahodit zbývající AI zpracování",
+      "failed": "Selhalo ({{failedCount}})",
+      "kinds": {
+        "denoise": "AI odšumování",
+        "depthMap": "Analýza hloubky",
+        "depthMask": "Vytváření hloubkové masky",
+        "foregroundMask": "Vytváření masky popředí",
+        "normalMap": "Analýza povrchů",
+        "skyMask": "Vytváření masky oblohy",
+        "subjectMask": "Vytváření masky objektu",
+        "textMask": "Vytváření textové masky"
+      },
+      "more": "+{{moreCount}} další",
+      "pause": "Pozastavit AI zpracování",
+      "paused": "Pozastaveno · zbývá {{remaining}}",
+      "pausedItem": "Pozastaveno",
+      "pausing": "Pozastaví se po aktuálním kroku…",
+      "process": "Zpracovat obrázky",
+      "progress": "{{current}}/{{total}}",
+      "queue": "Fronta",
+      "queuedItem": "Ve frontě",
+      "resume": "Pokračovat v AI zpracování",
+      "retry": "Zkusit znovu",
+      "taskWithMask": "{{task}} „{{mask}}“",
+      "thumbnailPaused": "AI zpracování pozastaveno",
+      "thumbnailPending": "Čeká na AI zpracování",
+      "title": "AI zpracování",
+      "unprocessed_few": "{{count}} obrázky vyžadují AI zpracování",
+      "unprocessed_many": "{{count}} obrázku vyžaduje AI zpracování",
+      "unprocessed_one": "{{count}} obrázek vyžaduje AI zpracování",
+      "unprocessed_other": "{{count}} obrázků vyžaduje AI zpracování",
+      "waiting": "Příprava AI zpracování…"
+    },
     "community": {
       "actionSave": "Uložit",
       "actionSaved": "Uloženo",
@@ -1232,7 +1284,8 @@
       "radial": "Radiální",
       "retouch": "Retuš",
       "sky": "Obloha",
-      "subject": "Objekt"
+      "subject": "Objekt",
+      "text": "Text"
     }
   },
   "menus": {
@@ -1366,6 +1419,7 @@
       "descMerge": "Přidá vaše zkopírované změny, ostatní nastavení zůstanou nedotčená.",
       "descReplace": "Přepíše všechna vybraná nastavení, zbytek obnoví na výchozí hodnoty.",
       "groups": {
+        "aiDenoise": "AI odšumění",
         "chromaticAberration": "Chromatická aberace",
         "clarityDehaze": "Zřetelnost a odmlžení",
         "colorCalibration": "Kalibrace barev",
@@ -1374,15 +1428,19 @@
         "cropAspectRatio": "Oříznutí a poměr stran",
         "curves": "Křivky",
         "exposureToneMapper": "Expozice a mapování tónů",
+        "fog": "Mlha",
         "grain": "Zrno",
         "guidedPerspective": "Naváděná perspektiva",
         "halationGlow": "Halace a záře",
         "hueShift": "Globální posun odstínu",
+        "lensBlur": "Rozostření objektivu",
         "lensCorrection": "Korekce objektivu",
         "lut": "LUT",
         "masks": "Masky",
+        "negativeConversion": "Převod negativu",
         "noiseReduction": "Redukce šumu",
         "presence": "Prezence",
+        "relight": "Přesvětlení",
         "sharpness": "Ostrost",
         "tone": "Tón",
         "transformRotation": "Transformace a rotace",
@@ -1559,30 +1617,6 @@
       "zoomInTooltip": "Přiblížit",
       "zoomOutTooltip": "Oddálit"
     },
-    "negativeConversion": {
-      "blueWeight": "Modrá (žlutá)",
-      "cancel": "Zrušit",
-      "colorTiming": "Barevné tónování",
-      "compareTooltip": "Podržením zobrazíte originál",
-      "contrast": "Kontrast (stupeň)",
-      "convertAndSave": "Převést a uložit",
-      "convertAndSaveAll": "Převést a uložit vše ({{count}})",
-      "convertAndSaveAll_one": "Převést a uložit vše ({{count}})",
-      "convertAndSaveAll_other": "Převést a uložit vše ({{count}})",
-      "converting": "Konverze",
-      "convertingProgress": "Konverze {{current}}/{{total}}",
-      "exposure": "Expozice",
-      "greenWeight": "Zelená (purpurová)",
-      "noticeText": "Inverzní logika inspirovaná <0>NegPy</0> vytvořil marcinz606 (<1>GPL-3.0</1>).",
-      "originalLabel": "Původní negativ",
-      "printGrade": "Stupeň kontrastu",
-      "redWeight": "Červená (azurová)",
-      "resetTooltip": "Resetovat",
-      "resetViewTooltip": "Obnovit zobrazení",
-      "title": "Negativní konverze",
-      "zoomInTooltip": "Přiblížit",
-      "zoomOutTooltip": "Oddálit"
-    },
     "panorama": {
       "cancel": "Zrušit",
       "close": "Zavřít",
@@ -1679,6 +1713,9 @@
       "zoomDesc": "Upravte, jak rychle se plátno přibližuje a oddaluje pomocí rolovacího kolečka nebo gesta sevření."
     },
     "data": {
+      "clearAiDenoise": "Vymazat mezipaměť AI odšumění",
+      "clearAiDenoiseButton": "Vymazat",
+      "clearAiDenoiseDesc": "Smaže uložené výsledky AI odšumění ({{size}}). Snímky se zapnutým AI odšuměním jej při dalším otevření přepočítají.",
       "clearSidecars": "Vymazat všechny sidecar soubory",
       "clearSidecarsButton": "Vymazat",
       "clearSidecarsDesc": "Tím smažete všechny soubory .rrdata (obsahující vaše úpravy) ve vašich kořenových složkách:",
@@ -1690,6 +1727,7 @@
       "logsButton": "Otevřít",
       "logsDesc": "Zobrazit soubor protokolu aplikace pro řešení potíží. Protokol se nachází v:",
       "modals": {
+        "aiDenoiseMessage": "Opravdu chcete vymazat mezipaměť AI odšumění?\n\nSnímky se zapnutým AI odšuměním bude nutné znovu odšumět, což může trvat několik minut na snímek.",
         "aiMessage": "Opravdu chcete odstranit všechny značky generované AI ze všech snímků ve všech aktivních kořenových složkách?\n\nUživatelem přidané značky tím nebudou dotčeny. Tuto akci nelze vrátit.",
         "allMessage": "Opravdu chcete odstranit všechny značky generované umělou inteligencí i přidané uživatelem ze všech snímků ve všech aktivních kořenových složkách?\n\nTuto akci nelze vrátit.",
         "cacheMessage": "Opravdu chcete vymazat mezipaměť miniatur?\n\nVšechny miniatury bude nutné znovu vygenerovat, což může u velkých složek trvat dlouho.",
@@ -1712,6 +1750,7 @@
       "resetLayoutDesc": "Obnovit ukotvení panelů, postranní rozdělovače, výšky a přepínače panelů na výchozí rozložení.",
       "resetLayoutTitle": "Obnovit rozložení pracovní plochy",
       "statuses": {
+        "aiDenoiseSuccess": "Mezipaměť AI odšumění byla úspěšně vymazána.",
         "aiSuccess": "{{count}} souborů aktualizováno. Značky AI odstraněny.",
         "aiSuccess_one": "{{count}} soubor aktualizován. Značky AI odstraněny.",
         "aiSuccess_other": "{{count}} souborů aktualizováno. Značky AI odstraněny.",
@@ -1720,6 +1759,7 @@
         "allSuccess_other": "{{count}} souborů aktualizováno. Odstraněny všechny značky kromě barevných.",
         "cacheSuccess": "Mezipaměť miniatur byla úspěšně vymazána.",
         "clearingAi": "Mazání značek AI ze všech sidecar souborů...",
+        "clearingAiDenoise": "Mazání mezipaměti AI odšumění...",
         "clearingAll": "Mazání všech značek ze sidecar souborů...",
         "clearingCache": "Mazání mezipaměti miniatur...",
         "deleting": "Mazání sidecar souborů, čekejte prosím...",
@@ -1848,6 +1888,16 @@
       "title": "Moje objektivy"
     },
     "processing": {
+      "advanced": {
+        "heading": "Pokročilé",
+        "headingDesc": "Ladění výkonu náhledů, mezipaměti a exportů. Výchozí hodnoty vyhovují většině uživatelů.",
+        "title": "Pokročilá nastavení",
+        "auto": "Automaticky",
+        "exportThreads": "Paralelní exporty",
+        "exportThreadsDesc": "Počet obrázků exportovaných současně. Automaticky zvolí hodnotu podle procesoru. Snižte ji, pokud velké exporty selhávají nebo má grafická karta málo paměti.",
+        "exportMemoryLimit": "Limit paměti pro export",
+        "exportMemoryLimitDesc": "Podíl volné paměti RAM, který mohou dávkové exporty využít. Snižte jej, aby ostatní aplikace zůstaly při velkých exportech svižné."
+      },
       "ai": {
         "cloud": {
           "description": "Pro ty, kteří chtějí jednodušší řešení, poskytuje volitelné předplatné stejně vysoce kvalitní výsledky jako vlastní hosting bez jakýchkoli starostí. Je to nejpohodlnější možnost a nejlepší způsob, jak podpořit projekt.",
@@ -1892,8 +1942,11 @@
           "description": "Tyto funkce jsou integrovány přímo do RapidRAW a běží výhradně na vašem počítači. Jsou rychlé, zdarma a nevyžadují žádné nastavení, takže jsou ideální pro každodenní zrychlení práce.",
           "feature1": "Maskování AI (předmět, obloha, popředí)",
           "feature2": "Automatické označování snímků",
-          "feature3": "Jednoduchá generativní výměna založená na CPU",
-          "title": "Vestavěná AI (CPU)"
+          "feature3": "Jednoduchá generativní výměna přímo v zařízení",
+          "gpuAcceleration": "Akcelerace GPU",
+          "gpuAccelerationDesc": "Spouští vestavěné funkce AI, jako je odšumění, masky, hloubkové a normálové mapy a štítkování, na grafické kartě pro výrazně rychlejší výsledky. Vypněte, pokud dochází k pádům nebo nesprávným výsledkům AI.",
+          "gpuAccelerationLabel": "Používat GPU pro modely AI",
+          "title": "Vestavěná AI"
         },
         "aiFree": {
           "description": "Vypne všechny funkce AI. Všechny ovládací prvky související s AI jsou v rozhraní skryty, takže RapidRAW funguje jako čistě tradiční editor RAW.",
@@ -1907,7 +1960,7 @@
           "aiConnector": "AI konektor",
           "aiFree": "Bez AI",
           "cloud": "Cloud",
-          "cpu": "CPU"
+          "cpu": "Vestavěná"
         },
         "title": "Generativní AI"
       },
@@ -1991,7 +2044,6 @@
       "previewResDesc": "Určuje maximální rozlišení náhledu. Nižší hodnoty výrazně zlepšují výkon.",
       "previewStrategy": "Náhled strategie vykreslování",
       "qualities": {
-        "full": "Plné rozlišení",
         "high": "Vysoká kvalita",
         "performance": "Výkon"
       },
@@ -2047,8 +2099,10 @@
     "thanks": {
       "description": "Velké poděkování patří následujícím projektům, které byly velmi důležité při vývoji RapidRAW:",
       "list": {
+        "birefnet": "Za segmentační model s vysokým rozlišením, který pohání detekci popředí pomocí AI.",
         "darktable": "Pro některé referenční implementace, které vedly části této práce.",
         "depth": "Pro výkonný monokulární model odhadu hloubky, který umožňuje AI hloubkové maskování.",
+        "efficientsam3": "Za efektivní segmentační model ovládaný textem, odvozený od SAM 3, který pohání AI masky oblohy a textu.",
         "lama": "Pro výkonný a jednoduchý model malování snímků, který umožňuje výplň a odstraňování objektů s ohledem na obsah.",
         "lensfun": "Pro svou neocenitelnou open-source knihovnu a komplexní databázi pro automatickou korekci objektivů.",
         "libgphoto2": "Pro komplexní knihovnu pro komunikaci s fotoaparátem, která pohání tethering a vzdálené snímání v RapidRAW.",
@@ -2057,7 +2111,6 @@
         "rawler": "Za vynikající přepravku Rust, která poskytuje základ pro zpracování souborů RAW v tomto projektu.",
         "sam2": "Za poskytnutí základního modelu používaného pro schopnosti detekce předmětů AI.",
         "spektrafilm": "Pro spektrálně založené filmové emulační LUT od Andrey Volpata, použité pro vestavěné filmové emulace v RapidRAW. Licence CC BY-SA 4.0.",
-        "u2net": "Pro zajištění robustní architektury používané pro schopnosti detekce oblohy a popředí AI.",
         "you": "Za používání a podporu RapidRAW. Váš zájem udržuje tento projekt živý a rozvíjející se.",
         "youLabel": "Vy"
       },

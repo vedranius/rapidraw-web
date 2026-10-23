@@ -96,13 +96,22 @@
       "resetPoint": "Resetuj krzywą punktową ({{channel}})"
     },
     "details": {
+      "aiDenoise": "Odszumianie AI",
+      "aiDenoiseDetail": "Szczegóły",
       "blueYellow": "Niebieski/Żółty",
       "centre": "Środek",
       "chromaticAberration": "Aberracja chromatyczna",
       "clarity": "Przejrzystość",
       "color": "Kolor",
+      "convertNegative": "Konwertuj negatyw",
       "dehaze": "Usuwanie mgły",
       "luminance": "Luminancja",
+      "negativeBlue": "Niebieski",
+      "negativeContrast": "Gradacja papieru",
+      "negativeConversion": "Konwersja negatywu",
+      "negativeExposure": "Naświetlanie odbitki",
+      "negativeGreen": "Zielony",
+      "negativeRed": "Czerwony",
       "noiseReduction": "Redukcja szumu",
       "presence": "Prezencja",
       "redCyan": "Czerwony/Cyjan",
@@ -140,6 +149,7 @@
       "relightColor": "Kolor światła",
       "relightCone": "Stożek",
       "relightDepth": "Głębia",
+      "relightDuplicateLight": "Duplikuj światło",
       "relightElevation": "Wysokość",
       "relightFalloff": "Spadek",
       "relightHint": "Dodaj lub wybierz światło, a następnie kliknij lub przeciągnij na obrazie, aby je umieścić.",
@@ -207,7 +217,7 @@
       "yellow": "Żółty"
     },
     "editor": {
-      "autoAdjust": "Auto-korekta obrazu",
+      "autoAdjust": "Auto-korekta",
       "autoLensCorrection": "Automatyczna korekcja obiektywu",
       "aiStyle": "AI Style (auto-edit)",
       "autoStraighten": "Automatyczne prostowanie",
@@ -216,14 +226,14 @@
       "confirmReset": "Potwierdź reset",
       "convertNegative": "Konwertuj negatyw",
       "copyAdjustments": "Kopiuj ustawienia",
-      "cullImage": "Selekcja obrazu",
-      "denoise": "Odszum obraz",
+      "cullImage": "Automatyczna selekcja",
+      "denoise": "Odszumianie",
       "editImage": "Edytuj obraz",
       "exportImage": "Eksportuj obraz",
       "flag": "Oznaczenie",
       "flagPick": "Wybrane",
       "flagReject": "Odrzucone",
-      "frameImage": "Dodaj ramkę do obrazu",
+      "frameImage": "Edytor ramek",
       "mergeHdr": "Scal do HDR",
       "noLabel": "Brak etykiety",
       "noRating": "Brak oceny",
@@ -285,19 +295,19 @@
     "thumbnail": {
       "addToAlbum": "Dodaj do albumu",
       "aiStyle": "AI Style (auto-edit)",
-      "autoAdjust_few": "Auto-korekta obrazów",
-      "autoAdjust_many": "Auto-korekta obrazów",
-      "autoAdjust_one": "Auto-korekta obrazu",
-      "autoAdjust_other": "Auto-korekta obrazów",
+      "autoAdjust_few": "Auto-korekta",
+      "autoAdjust_many": "Auto-korekta",
+      "autoAdjust_one": "Auto-korekta",
+      "autoAdjust_other": "Auto-korekta",
       "autoLensCorrection_one": "Automatyczna korekcja obiektywu",
       "autoLensCorrection_other": "Automatyczna korekcja obiektywu",
-      "autoStraighten_few": "Automatyczne prostowanie obrazów",
-      "autoStraighten_many": "Automatyczne prostowanie obrazów",
-      "autoStraighten_one": "Automatyczne prostowanie obrazu",
-      "autoStraighten_other": "Automatyczne prostowanie obrazów",
+      "autoStraighten_few": "Automatyczne prostowanie",
+      "autoStraighten_many": "Automatyczne prostowanie",
+      "autoStraighten_one": "Automatyczne prostowanie",
+      "autoStraighten_other": "Automatyczne prostowanie",
       "collage_few": "Dodaj ramki do obrazów",
       "collage_many": "Utwórz kolaż z {{count}} obrazów",
-      "collage_one": "Dodaj ramkę do obrazu",
+      "collage_one": "Edytor ramek",
       "collage_other": "Utwórz kolaż",
       "confirmDelete": "Potwierdź usunięcie",
       "confirmDeleteVc": "Potwierdź usunięcie + kopie wirtualne",
@@ -309,20 +319,20 @@
       "copyImage_many": "Kopiuj {{count}} obrazów",
       "copyImage_one": "Kopiuj obraz",
       "copyImage_other": "Kopiuj {{count}} obrazów",
-      "cullImage_few": "Selekcja {{count}} obrazów",
-      "cullImage_many": "Selekcja {{count}} obrazów",
-      "cullImage_one": "Selekcja obrazu",
-      "cullImage_other": "Selekcja obrazów",
+      "cullImage_few": "Automatyczna selekcja",
+      "cullImage_many": "Automatyczna selekcja",
+      "cullImage_one": "Automatyczna selekcja",
+      "cullImage_other": "Automatyczna selekcja",
       "deleteAssociated": "Usuń + powiązane",
       "deleteImage_few": "Usuń {{count}} obrazy",
       "deleteImage_many": "Usuń {{count}} obrazów",
       "deleteImage_one": "Usuń obraz",
       "deleteImage_other": "Usuń {{count}} obrazów",
       "deleteSelected": "Usuń tylko zaznaczone",
-      "denoise_few": "Odszum {{count}} obrazy",
-      "denoise_many": "Odszum {{count}} obrazów",
-      "denoise_one": "Odszum obraz",
-      "denoise_other": "Odszum obrazy",
+      "denoise_few": "Odszumianie",
+      "denoise_many": "Odszumianie",
+      "denoise_one": "Odszumianie",
+      "denoise_other": "Odszumianie",
       "duplicateImage": "Duplikuj obraz",
       "exportImage_few": "Eksportuj {{count}} obrazy",
       "exportImage_many": "Eksportuj {{count}} obrazów",
@@ -364,6 +374,11 @@
       "failedMoveError": "Nie udało się przenieść: {{err}}",
       "failedMoveInvalid": "Nie udało się przenieść: Grupa docelowa nie znaleziona lub nieprawidłowa.",
       "failedRemoveImages": "Nie udało się usunąć obrazów: {{err}}"
+    },
+    "autoAdjustModes": {
+      "normal": "Normalne",
+      "strong": "Mocne",
+      "subtle": "Subtelne"
     }
   },
   "editor": {
@@ -425,7 +440,7 @@
       "comingSoon": "Wkrótce",
       "connection": {
         "backendLabel": "Backend AI:",
-        "builtinDesc": "Używanie podstawowego lokalnego procesora. Wybierz Chmurę lub Złącze AI w ustawieniach do zastępowania generatywnego.",
+        "builtinDesc": "Używanie podstawowego wbudowanego AI. Wybierz Chmurę lub Złącze AI w ustawieniach do zastępowania generatywnego.",
         "builtinLabel": "Wbudowane AI:",
         "cloudLabel": "AI w Chmurze:",
         "connectorConnectedDesc": "Połączono z lokalnym backendem generatywnym.",
@@ -441,6 +456,7 @@
       },
       "createNewTitle": "Utwórz nową edycję generatywną",
       "createNewTooltip": "Utwórz nową edycję {{name}}",
+      "denoising": "Trwa odszumianie AI...",
       "dropzoneText": "Upuść tutaj, aby utworzyć nową edycję",
       "editSettingsTitle": "Ustawienia edycji",
       "editsTitle": "Edycje",
@@ -724,6 +740,7 @@
         "applyPreset": "Zastosuj preset",
         "componentPropertiesTitle": "Właściwości dla {{name}}",
         "copySectionSettings": "Kopiuj ustawienia sekcji {{section}}",
+        "generateTextMask": "Generuj maskę",
         "invertComponent": "Odwróć komponent",
         "invertMask": "Odwróć maskę",
         "maskPropertiesTitle": "Właściwości maski",
@@ -733,7 +750,8 @@
         "pasteSettings": "Wklej ustawienia",
         "resetSectionSettings": "Resetuj ustawienia sekcji {{section}}",
         "select": "Wybierz",
-        "selectPresetTooltip": "Wybierz preset do zastosowania"
+        "selectPresetTooltip": "Wybierz preset do zastosowania",
+        "textPromptPlaceholder": "np. osoba, samochód, woda"
       },
       "toggleAnalyticsInAdjustments": "Przełącz analizę w panelu Dopasowania",
       "toggleAnalyticsTooltip": "Przełącz widok analityki",
@@ -1005,6 +1023,40 @@
     }
   },
   "library": {
+    "aiJobs": {
+      "discard": "Odrzuć pozostałe przetwarzanie AI",
+      "failed": "Nieudane ({{failedCount}})",
+      "kinds": {
+        "denoise": "Odszumianie AI",
+        "depthMap": "Analiza głębi",
+        "depthMask": "Generowanie maski głębi",
+        "foregroundMask": "Generowanie maski pierwszego planu",
+        "normalMap": "Analiza powierzchni",
+        "skyMask": "Generowanie maski nieba",
+        "subjectMask": "Generowanie maski obiektu",
+        "textMask": "Generowanie maski tekstowej"
+      },
+      "more": "+{{moreCount}} więcej",
+      "pause": "Wstrzymaj przetwarzanie AI",
+      "paused": "Wstrzymano · pozostało: {{remaining}}",
+      "pausedItem": "Wstrzymane",
+      "pausing": "Wstrzymanie po bieżącym kroku…",
+      "process": "Przetwórz obrazy",
+      "progress": "{{current}}/{{total}}",
+      "queue": "Kolejka",
+      "queuedItem": "W kolejce",
+      "resume": "Wznów przetwarzanie AI",
+      "retry": "Ponów",
+      "taskWithMask": "{{task}} „{{mask}}”",
+      "thumbnailPaused": "Przetwarzanie AI wstrzymane",
+      "thumbnailPending": "Oczekuje na przetwarzanie AI",
+      "title": "Przetwarzanie AI",
+      "unprocessed_few": "{{count}} obrazy wymagają przetwarzania AI",
+      "unprocessed_many": "{{count}} obrazów wymaga przetwarzania AI",
+      "unprocessed_one": "{{count}} obraz wymaga przetwarzania AI",
+      "unprocessed_other": "{{count}} obrazu wymaga przetwarzania AI",
+      "waiting": "Przygotowywanie przetwarzania AI…"
+    },
     "community": {
       "actionSave": "Zapisz",
       "actionSaved": "Zapisano",
@@ -1285,7 +1337,8 @@
       "radial": "Radialny",
       "retouch": "Retusz",
       "sky": "Niebo",
-      "subject": "Temat"
+      "subject": "Temat",
+      "text": "Tekst"
     }
   },
   "menus": {
@@ -1419,6 +1472,7 @@
       "descMerge": "Dodaje skopiowane zmiany, pozostawiając resztę ustawień nienaruszoną.",
       "descReplace": "Nadpisuje wszystkie wybrane ustawienia, przywracając resztę do wartości domyślnych.",
       "groups": {
+        "aiDenoise": "Odszumianie AI",
         "chromaticAberration": "Aberracja chromatyczna",
         "clarityDehaze": "Przejrzystość i Usuwanie mgły",
         "colorCalibration": "Kalibracja kolorów",
@@ -1427,15 +1481,19 @@
         "cropAspectRatio": "Kadrowanie i Proporcje",
         "curves": "Krzywe",
         "exposureToneMapper": "Ekspozycja i Mapowanie tonów",
+        "fog": "Mgła",
         "grain": "Ziarno",
         "guidedPerspective": "Perspektywa z przewodnikiem",
         "halationGlow": "Halacja i Poświata",
         "hueShift": "Globalne przesunięcie odcienia",
+        "lensBlur": "Rozmycie obiektywu",
         "lensCorrection": "Korekcja obiektywu",
         "lut": "LUT",
         "masks": "Maski",
+        "negativeConversion": "Konwersja negatywu",
         "noiseReduction": "Redukcja szumu",
         "presence": "Prezencja",
+        "relight": "Ponowne oświetlenie",
         "sharpness": "Ostrość",
         "tone": "Tony",
         "transformRotation": "Przekształcanie i Obrót",
@@ -1746,6 +1804,9 @@
       "zoomDesc": "Dostosuj, jak szybko płótno się powiększa i pomniejsza przy użyciu kółka myszy lub gestu szczypania."
     },
     "data": {
+      "clearAiDenoise": "Wyczyść pamięć podręczną odszumiania AI",
+      "clearAiDenoiseButton": "Wyczyść",
+      "clearAiDenoiseDesc": "Usuwa zapisane wyniki odszumiania AI ({{size}}). Zdjęcia z włączonym odszumianiem AI przeliczą je przy następnym otwarciu.",
       "clearSidecars": "Wyczyść wszystkie pliki poboczne (Sidecar)",
       "clearSidecarsButton": "Wyczyść",
       "clearSidecarsDesc": "Ta opcja usunie wszystkie pliki .rrdata (zawierające twoje zmiany) wewnątrz twoich folderów głównych:",
@@ -1757,6 +1818,7 @@
       "logsButton": "Otwórz",
       "logsDesc": "Zobacz plik dziennika aplikacji w celu rozwiązywania problemów. Plik znajduje się w:",
       "modals": {
+        "aiDenoiseMessage": "Czy na pewno chcesz wyczyścić pamięć podręczną odszumiania AI?\n\nZdjęcia z włączonym odszumianiem AI trzeba będzie odszumić ponownie, co może zająć kilka minut na zdjęcie.",
         "aiMessage": "Czy na pewno chcesz usunąć wszystkie tagi generowane przez AI z wszystkich obrazów we wszystkich aktywnych folderach głównych?\n\nTo nie wpłynie na tagi dodane przez użytkownika. Tej akcji nie można cofnąć.",
         "allMessage": "Czy na pewno chcesz usunąć wszystkie tagi generowane przez AI i dodane przez użytkownika z wszystkich obrazów we wszystkich aktywnych folderach głównych?\n\nTej akcji nie można cofnąć.",
         "cacheMessage": "Czy na pewno chcesz wyczyścić pamięć podręczną miniatur?\n\nWszystkie miniatury będą musiały zostać wygenerowane ponownie, co może zająć dużo czasu przy dużych folderach.",
@@ -1779,6 +1841,7 @@
       "resetLayoutDesc": "Przywraca domyślny układ paneli, podziałów bocznych, wysokości oraz przełączników paneli.",
       "resetLayoutTitle": "Zresetuj układ obszaru roboczego",
       "statuses": {
+        "aiDenoiseSuccess": "Pamięć podręczna odszumiania AI została wyczyszczona.",
         "aiSuccess": "Zaktualizowano {{count}} plików. Tagi AI usunięte.",
         "aiSuccess_few": "Zaktualizowano {{count}} pliki. Tagi AI usunięte.",
         "aiSuccess_many": "Zaktualizowano {{count}} plików. Tagi AI usunięte.",
@@ -1791,6 +1854,7 @@
         "allSuccess_other": "Zaktualizowano {{count}} plików. Wszystkie tagi bezkolorowe usunięte.",
         "cacheSuccess": "Pamięć podręczna miniatur została wyczyszczona pomyślnie.",
         "clearingAi": "Usuwanie tagów AI ze wszystkich plików sidecar...",
+        "clearingAiDenoise": "Czyszczenie pamięci podręcznej odszumiania AI...",
         "clearingAll": "Usuwanie wszystkich tagów z plików sidecar...",
         "clearingCache": "Czyszczenie pamięci podręcznej miniatur...",
         "deleting": "Usuwanie plików sidecar, proszę czekać...",
@@ -1921,6 +1985,16 @@
       "title": "Moje obiektywy"
     },
     "processing": {
+      "advanced": {
+        "heading": "Zaawansowane",
+        "headingDesc": "Dostrajanie wydajności miniatur, pamięci podręcznej i eksportu. Wartości domyślne sprawdzą się u większości użytkowników.",
+        "title": "Ustawienia zaawansowane",
+        "auto": "Automatycznie",
+        "exportThreads": "Eksporty równoległe",
+        "exportThreadsDesc": "Liczba obrazów eksportowanych jednocześnie. Automatycznie dobiera wartość do procesora. Zmniejsz ją, jeśli duże eksporty się nie udają lub karta graficzna ma mało pamięci.",
+        "exportMemoryLimit": "Limit pamięci eksportu",
+        "exportMemoryLimitDesc": "Część wolnej pamięci RAM, z której mogą korzystać eksporty wsadowe. Zmniejsz ją, aby inne aplikacje działały płynnie podczas dużych eksportów."
+      },
       "ai": {
         "cloud": {
           "description": "Dla osób szukających prostego rozwiązania, opcjonalna subskrypcja dostarcza tych samych wysokiej jakości wyników co własny serwer bez żadnych problemów. To najwygodniejsza opcja i najlepszy sposób na wsparcie projektu.",
@@ -1965,8 +2039,11 @@
           "description": "Zintegrowane bezpośrednio z RapidRAW, te funkcje działają całkowicie na Twoim komputerze. Są szybkie, bezpłatne i nie wymagają konfiguracji, stanowiąc idealne usprawnienie dla codziennej pracy.",
           "feature1": "Maskowanie AI (Temat, Niebo, Pierwszy plan)",
           "feature2": "Automatyczne tagowanie obrazów",
-          "feature3": "Proste zastępowanie generatywne oparte na CPU",
-          "title": "Wbudowane AI (CPU)"
+          "feature3": "Proste zastępowanie generatywne na urządzeniu",
+          "gpuAcceleration": "Akceleracja GPU",
+          "gpuAccelerationDesc": "Uruchamia wbudowane funkcje AI, takie jak odszumianie, maski, mapy głębi i normalnych oraz tagowanie, na karcie graficznej, aby uzyskać znacznie szybsze wyniki. Wyłącz, jeśli występują awarie lub nieprawidłowe wyniki AI.",
+          "gpuAccelerationLabel": "Używaj GPU dla modeli AI",
+          "title": "Wbudowane AI"
         },
         "aiFree": {
           "description": "Wyłącza wszystkie funkcje AI. Wszystkie elementy sterujące związane z AI są ukryte w interfejsie, dzięki czemu RapidRAW działa jak czysto tradycyjny edytor RAW.",
@@ -1980,7 +2057,7 @@
           "aiConnector": "Złącze AI",
           "aiFree": "Bez AI",
           "cloud": "Chmura",
-          "cpu": "CPU"
+          "cpu": "Wbudowane"
         },
         "title": "Generatywne AI"
       },
@@ -2064,7 +2141,6 @@
       "previewResDesc": "Ogranicza maksymalną rozdzielczość podglądu. Niższe wartości zauważalnie poprawiają wydajność.",
       "previewStrategy": "Strategia renderowania podglądu",
       "qualities": {
-        "full": "Pełna rozdzielczość",
         "high": "Wysoka jakość",
         "performance": "Wydajność"
       },
@@ -2120,8 +2196,10 @@
     "thanks": {
       "description": "Ogromne podziękowania dla następujących projektów, które były niezwykle ważne przy tworzeniu RapidRAW:",
       "list": {
+        "birefnet": "Za model segmentacji w wysokiej rozdzielczości, który napędza wykrywanie pierwszego planu przez AI.",
         "darktable": "Za kilka referencyjnych implementacji, które posłużyły za wskazówki.",
         "depth": "Za zaawansowany model szacowania głębi, który włącza maskowanie oparte na głębi za pomocą AI.",
+        "efficientsam3": "Za wydajny model segmentacji sterowany tekstem, wydestylowany z SAM 3, który napędza maski nieba i tekstu AI.",
         "lama": "Za niesamowity model do inpaintingu obrazu, umożliwiający usuwanie obiektów z uwzględnieniem kontekstu.",
         "lensfun": "Za nieocenioną bibliotekę open-source z bogatą bazą obiektywów do automatycznej korekcji.",
         "libgphoto2": "Za kompleksową bibliotekę komunikacji z aparatami, napędzającą tethering i zdalne wyzwalanie w RapidRAW.",
@@ -2130,7 +2208,6 @@
         "rawler": "Za świetną bibliotekę w Rust, dostarczającą fundament dla przetwarzania plików RAW w tym projekcie.",
         "sam2": "Za dostarczenie bazowego modelu do wykrywania i wycinania obiektów za pomocą AI.",
         "spektrafilm": "Za oparte na danych spektralnych LUT-y emulacji filmu autorstwa Andrei Volpato, napędzające wbudowane emulacje filmowe RapidRAW. Licencja CC BY-SA 4.0.",
-        "u2net": "Za świetną architekturę używaną przez nasze modele wykrywania nieba i pierwszego planu.",
         "you": "Za to, że używasz i wspierasz RapidRAW. Twoje zainteresowanie sprawia, że ten projekt nadal ewoluuje.",
         "youLabel": "Ty"
       },

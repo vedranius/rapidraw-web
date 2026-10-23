@@ -9,6 +9,8 @@ import {
   SlidersHorizontal,
   CloudOff,
   Layers,
+  Loader2,
+  Pause,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
@@ -23,6 +25,9 @@ import { useProcessStore } from '../../../store/useProcessStore';
 import { useSettingsStore } from '../../../store/useSettingsStore';
 import { useLibraryStore } from '../../../store/useLibraryStore';
 import { IconAperture, IconFocalLength, IconIso, IconShutter } from '../editor/ExifIcons';
+
+const LIST_DATE_FORMAT = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+const LIST_TIME_FORMAT = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit' });
 
 interface ImageLayer {
   id: string;
@@ -52,6 +57,8 @@ const ThumbnailComponent = ({
 }: any) => {
   const { t } = useTranslation();
   const data = useProcessStore((s) => s.thumbnails[path]);
+  const isAiPending = useProcessStore((s) => !!s.aiPendingPaths[path]);
+  const isAiPaused = useProcessStore((s) => s.aiJobs.paused);
   const exifOverlay = useSettingsStore((s) => s.appSettings?.exifOverlay || ExifOverlay.Off);
   const displayEditIcon = useSettingsStore((s) => s.appSettings?.displayEditIcon ?? true);
   const showEditIcon = isEdited && displayEditIcon;
@@ -168,7 +175,8 @@ const ThumbnailComponent = ({
   const isRejected = flag === ImageFlag.Reject;
   const hasRating = rating > 0 && !isRejected;
   const hasGroupBadge = !!groupBadgeLabel;
-  const hasAnyOverlay = hasEditIcon || hasColorLabel || hasRating || !!flag || hasGroupBadge;
+  const hasOtherBadge = hasEditIcon || hasColorLabel || hasRating || !!flag || hasGroupBadge;
+  const hasAnyOverlay = hasOtherBadge || isAiPending;
 
   return (
     <div
@@ -344,6 +352,21 @@ const ThumbnailComponent = ({
             data-tooltip={groupBadgeLabel}
           >
             <Layers size={12} className="text-white" />
+          </div>
+
+          <div
+            className={clsx(
+              'flex items-center shrink-0 transition-all duration-200 ease-out overflow-hidden',
+              isAiPending ? 'max-w-4 opacity-100 scale-100' : 'max-w-0 opacity-0 scale-75 pointer-events-none',
+              isAiPending && hasOtherBadge ? 'ml-1.5' : 'ml-0',
+            )}
+            data-tooltip={t(isAiPaused ? 'library.aiJobs.thumbnailPaused' : 'library.aiJobs.thumbnailPending')}
+          >
+            {isAiPaused ? (
+              <Pause size={12} className="text-white" />
+            ) : (
+              <Loader2 size={12} className="text-white animate-spin" />
+            )}
           </div>
         </div>
       </div>
@@ -639,10 +662,11 @@ const ListItemComponent = ({
   const isRejected = flag === ImageFlag.Reject;
 
   const dateObj = new Date(modified > 1e11 ? modified : modified * 1000);
-  const dateStr =
-    dateObj.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) +
-    ' ' +
-    dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const dateStr = Number.isNaN(dateObj.getTime())
+    ? dateObj.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) +
+      ' ' +
+      dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : LIST_DATE_FORMAT.format(dateObj) + ' ' + LIST_TIME_FORMAT.format(dateObj);
 
   let roundingClass = 'rounded-md';
   if (isSelected || isActive) {
@@ -896,18 +920,26 @@ const RowComponent = ({
     row.images.forEach((img: ImageFile) => {
       queueThumbnailRequest(img.path);
     });
+  }, [row, queueThumbnailRequest]);
 
-    const cloudPaths = row.images
-      .filter((img: ImageFile) => img.is_cloud_placeholder)
-      .map((img: ImageFile) => img.path);
-    if (cloudPaths.length === 0) return;
+  const cloudPathsKey =
+    row && row.type === 'images'
+      ? row.images
+          .filter((img: ImageFile) => img.is_cloud_placeholder)
+          .map((img: ImageFile) => img.path)
+          .join('\n')
+      : '';
+
+  useEffect(() => {
+    if (!cloudPathsKey) return;
+    const cloudPaths = cloudPathsKey.split('\n');
 
     const interval = setInterval(() => {
       cloudPaths.forEach((path: string) => queueThumbnailRequest(path));
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [row, queueThumbnailRequest]);
+  }, [cloudPathsKey, queueThumbnailRequest]);
 
   if (row.type === 'footer') return null;
   const shiftedStyle = {

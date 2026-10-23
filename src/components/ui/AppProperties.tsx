@@ -46,6 +46,7 @@ export enum Invokes {
   ClearAllSidecars = 'clear_all_sidecars',
   ClearAiTags = 'clear_ai_tags',
   ClearAllTags = 'clear_all_tags',
+  ClearAiDenoiseCache = 'clear_ai_denoise_cache',
   ClearThumbnailCache = 'clear_thumbnail_cache',
   RegenerateThumbnails = 'regenerate_thumbnails',
   CopyFiles = 'copy_files',
@@ -68,21 +69,26 @@ export enum Invokes {
   AutoStylePathsWithAi = 'auto_style_paths_with_ai',
   AssignArtistToPaths = 'assign_artist_to_paths',
   DeleteFolder = 'delete_folder',
+  DiscardAiJobs = 'discard_ai_jobs',
   DuplicateFile = 'duplicate_file',
   EstimateExportSizes = 'estimate_export_sizes',
   ExportImages = 'export_images',
   FrontendLog = 'frontend_log',
   GenerateAiForegroundMask = 'generate_ai_foreground_mask',
   GenerateAiSkyMask = 'generate_ai_sky_mask',
+  GenerateAiTextMask = 'generate_ai_text_mask',
   GenerateAiSubjectMask = 'generate_ai_subject_mask',
   GeneratePreviewForPath = 'generate_preview_for_path',
   GenerateMaskOverlay = 'generate_mask_overlay',
   GeneratePresetPreview = 'generate_preset_preview',
   GenerateUncroppedPreview = 'generate_uncropped_preview',
+  GetAiDenoiseCacheSize = 'get_ai_denoise_cache_size',
+  GetAiJobsStatus = 'get_ai_jobs_status',
   GetFolderTree = 'get_folder_tree',
   GetFolderChildren = 'get_folder_children',
   GetLogFilePath = 'get_log_file_path',
   GetOrCreateInternalLibraryRoot = 'get_or_create_internal_library_root',
+  GetPendingAiPaths = 'get_pending_ai_paths',
   GetPinnedFolderTrees = 'get_pinned_folder_trees',
   GetSupportedFileTypes = 'get_supported_file_types',
   HandleExportPresetsToFile = 'handle_export_presets_to_file',
@@ -104,7 +110,11 @@ export enum Invokes {
   RemoveTagForPaths = 'remove_tag_for_paths',
   RenameFiles = 'rename_files',
   RenameFolder = 'rename_folder',
+  PauseAiJobs = 'pause_ai_jobs',
+  QueueAiJobs = 'queue_ai_jobs',
   ResetAdjustmentsForPaths = 'reset_adjustments_for_paths',
+  ResumeAiJobs = 'resume_ai_jobs',
+  RetryFailedAiJobs = 'retry_failed_ai_jobs',
   SaveMetadataAndUpdateThumbnail = 'save_metadata_and_update_thumbnail',
   SaveCollage = 'save_collage',
   SaveDenoisedImage = 'save_denoised_image',
@@ -215,6 +225,7 @@ export type GroupingMode = 'off' | GroupPreference;
 
 export interface AppSettings {
   aiConnectorAddress?: string;
+  aiGpuAcceleration?: boolean;
   aiProvider?: string;
   promptAi?: PromptAiConfig;
   decorations?: any;
@@ -226,6 +237,8 @@ export interface AppSettings {
   highResZoomMultiplier?: number;
   enableLivePreviews?: boolean;
   livePreviewQuality?: string;
+  exportWorkerThreads?: number;
+  exportMemoryLimit?: number;
   enableAiTagging?: boolean;
   aiTagCount?: number;
   customAiTags?: string[];
@@ -373,6 +386,7 @@ export interface ImageFile {
   is_cloud_placeholder: boolean;
   is_raw: boolean;
   group_id: string | null;
+  needs_ai: boolean;
 }
 
 export interface Option {

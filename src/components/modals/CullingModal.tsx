@@ -10,6 +10,9 @@ import Slider from '../ui/Slider';
 import Dropdown from '../ui/Dropdown';
 import Text from '../ui/Text';
 import { TextColors, TextVariants } from '../../types/typography';
+import { useProcessStore } from '../../store/useProcessStore';
+
+const EMPTY_THUMBNAILS: Record<string, string> = {};
 
 interface CullingModalProps {
   isOpen: boolean;
@@ -18,7 +21,6 @@ interface CullingModalProps {
   suggestions: CullingSuggestions | null;
   error: string | null;
   imagePaths: string[];
-  thumbnails: Record<string, string>;
   onApply(action: 'reject' | 'rate_zero' | 'delete', paths: string[]): void;
   onStyleKeepers?(keepers: string[]): void;
   onError(error: string): void;
@@ -86,7 +88,6 @@ export default function CullingModal({
   suggestions,
   error,
   imagePaths,
-  thumbnails,
   onApply,
   onStyleKeepers,
   onError,
@@ -94,6 +95,7 @@ export default function CullingModal({
   const { t } = useTranslation();
   const [isMounted, setIsMounted] = useState(false);
   const [show, setShow] = useState(false);
+  const thumbnails = useProcessStore((s) => (isMounted ? s.thumbnails : EMPTY_THUMBNAILS));
   const [stage, setStage] = useState<'settings' | 'progress' | 'results'>('settings');
 
   const [settings, setSettings] = useState<CullingSettings>({

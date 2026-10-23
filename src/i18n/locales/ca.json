@@ -96,13 +96,22 @@
       "resetPoint": "Restablir corba de punts de {{channel}}"
     },
     "details": {
+      "aiDenoise": "Reducció de soroll IA",
+      "aiDenoiseDetail": "Detall",
       "blueYellow": "Blau/Groc",
       "centre": "Centre",
       "chromaticAberration": "Aberració cromàtica",
       "clarity": "Claredat",
       "color": "Color",
+      "convertNegative": "Convertir negatiu",
       "dehaze": "Eliminar boira",
       "luminance": "Luminància",
+      "negativeBlue": "Blau",
+      "negativeContrast": "Grau del paper",
+      "negativeConversion": "Conversió de negatiu",
+      "negativeExposure": "Exposició de còpia",
+      "negativeGreen": "Verd",
+      "negativeRed": "Vermell",
       "noiseReduction": "Reducció de soroll",
       "presence": "Presència",
       "redCyan": "Vermell/Cian",
@@ -140,6 +149,7 @@
       "relightColor": "Color de la llum",
       "relightCone": "Con",
       "relightDepth": "Profunditat",
+      "relightDuplicateLight": "Duplica la llum",
       "relightElevation": "Elevació",
       "relightFalloff": "Atenuació",
       "relightHint": "Afegeix o selecciona una llum i fes clic o arrossega a la imatge per col·locar-la.",
@@ -216,14 +226,14 @@
       "confirmReset": "Confirmar restabliment",
       "convertNegative": "Convertir negatiu",
       "copyAdjustments": "Copiar ajustaments",
-      "cullImage": "Cribrar imatge",
-      "denoise": "Reduir soroll de la imatge",
+      "cullImage": "Cribratge automàtic",
+      "denoise": "Reduir soroll",
       "editImage": "Editar imatge",
       "exportImage": "Exportar imatge",
       "flag": "Marca",
       "flagPick": "Seleccionada",
       "flagReject": "Rebutjada",
-      "frameImage": "Emmarcar imatge",
+      "frameImage": "Editor de marcs",
       "mergeHdr": "Fusionar a HDR",
       "noLabel": "Sense etiqueta",
       "noRating": "Sense puntuació",
@@ -277,14 +287,14 @@
     "thumbnail": {
       "addToAlbum": "Afegir a l'àlbum",
       "aiStyle": "AI Style (auto-edit)",
-      "autoAdjust_one": "Ajustament automàtic de la imatge",
-      "autoAdjust_other": "Ajustament automàtic de les imatges",
+      "autoAdjust_one": "Ajustament automàtic",
+      "autoAdjust_other": "Ajustament automàtic",
       "autoLensCorrection_one": "Correcció d'objectiu automàtica",
       "autoLensCorrection_other": "Correcció d'objectiu automàtica",
-      "autoStraighten_many": "Redreçar automàticament les imatges",
-      "autoStraighten_one": "Redreçar automàticament la imatge",
-      "autoStraighten_other": "Redreçar automàticament les imatges",
-      "collage_one": "Emmarcar imatge",
+      "autoStraighten_many": "Redreçar automàticament",
+      "autoStraighten_one": "Redreçar automàticament",
+      "autoStraighten_other": "Redreçar automàticament",
+      "collage_one": "Editor de marcs",
       "collage_other": "Crear collage",
       "confirmDelete": "Confirmar eliminació",
       "confirmDeleteVc": "Confirmar eliminació + Còpies virtuals",
@@ -292,14 +302,14 @@
       "convertNegative_other": "Convertir negatius",
       "copyImage_one": "Copiar imatge",
       "copyImage_other": "Copiar {{count}} imatges",
-      "cullImage_one": "Cribrar imatge",
-      "cullImage_other": "Cribrar imatges",
+      "cullImage_one": "Cribratge automàtic",
+      "cullImage_other": "Cribratge automàtic",
       "deleteAssociated": "Eliminar + Associades",
       "deleteImage_one": "Eliminar imatge",
       "deleteImage_other": "Eliminar {{count}} imatges",
       "deleteSelected": "Eliminar només seleccionades",
-      "denoise_one": "Reduir soroll de la imatge",
-      "denoise_other": "Reduir soroll de les imatges",
+      "denoise_one": "Reduir soroll",
+      "denoise_other": "Reduir soroll",
       "duplicateImage": "Duplicar imatge",
       "exportImage_one": "Exportar imatge",
       "exportImage_other": "Exportar {{count}} imatges",
@@ -331,6 +341,11 @@
       "failedMoveError": "No s'ha pogut moure: {{err}}",
       "failedMoveInvalid": "No s'ha pogut moure: el grup de destinació no s'ha trobat o no és vàlid.",
       "failedRemoveImages": "No s'han pogut treure les imatges: {{err}}"
+    },
+    "autoAdjustModes": {
+      "normal": "Normal",
+      "strong": "Intens",
+      "subtle": "Subtil"
     }
   },
   "editor": {
@@ -392,7 +407,7 @@
       "comingSoon": "Aviat disponible",
       "connection": {
         "backendLabel": "Rerefons d'IA:",
-        "builtinDesc": "Ús de CPU local bàsica. Seleccioneu Cloud o AI Connector a Configuració per a la substitució generativa.",
+        "builtinDesc": "Ús de la IA integrada bàsica. Seleccioneu Cloud o AI Connector a Configuració per a la substitució generativa.",
         "builtinLabel": "IA integrada:",
         "cloudLabel": "IA al núvol:",
         "connectorConnectedDesc": "Connectat al rerefons generatiu local.",
@@ -408,6 +423,7 @@
       },
       "createNewTitle": "Crear nova edició generativa",
       "createNewTooltip": "Crear nova edició {{name}}",
+      "denoising": "Executant la reducció de soroll IA...",
       "dropzoneText": "Deixeu anar aquí per crear una edició nova",
       "editSettingsTitle": "Configuració d'edició",
       "editsTitle": "Edicions",
@@ -681,6 +697,7 @@
         "applyPreset": "Aplicar ajust preestablert",
         "componentPropertiesTitle": "Propietats de {{name}}",
         "copySectionSettings": "Copiar ajustaments de {{section}}",
+        "generateTextMask": "Generar màscara",
         "invertComponent": "Invertir component",
         "invertMask": "Invertir màscara",
         "maskPropertiesTitle": "Propietats de la màscara",
@@ -690,7 +707,8 @@
         "pasteSettings": "Enganxar ajustaments",
         "resetSectionSettings": "Restablir ajustaments de {{section}}",
         "select": "Seleccionar",
-        "selectPresetTooltip": "Seleccioneu un ajust preestablert per aplicar"
+        "selectPresetTooltip": "Seleccioneu un ajust preestablert per aplicar",
+        "textPromptPlaceholder": "p. ex., persona, cotxe, aigua"
       },
       "toggleAnalyticsInAdjustments": "Commutar l'anàlisi al panell d'ajustos",
       "toggleAnalyticsTooltip": "Alternar visualització d'anàlisi",
@@ -958,6 +976,39 @@
     }
   },
   "library": {
+    "aiJobs": {
+      "discard": "Descarta el processament amb IA restant",
+      "failed": "Fallits ({{failedCount}})",
+      "kinds": {
+        "denoise": "Reduint soroll amb IA",
+        "depthMap": "Analitzant la profunditat",
+        "depthMask": "Generant la màscara de profunditat",
+        "foregroundMask": "Generant la màscara de primer pla",
+        "normalMap": "Analitzant les superfícies",
+        "skyMask": "Generant la màscara del cel",
+        "subjectMask": "Generant la màscara del subjecte",
+        "textMask": "Generant la màscara de text"
+      },
+      "more": "+{{moreCount}} més",
+      "pause": "Pausa el processament amb IA",
+      "paused": "En pausa · {{remaining}} restants",
+      "pausedItem": "En pausa",
+      "pausing": "Es posarà en pausa després del pas actual…",
+      "process": "Processa les imatges",
+      "progress": "{{current}}/{{total}}",
+      "queue": "Cua",
+      "queuedItem": "A la cua",
+      "resume": "Reprèn el processament amb IA",
+      "retry": "Torna-ho a provar",
+      "taskWithMask": "{{task}} «{{mask}}»",
+      "thumbnailPaused": "Processament amb IA en pausa",
+      "thumbnailPending": "Processament amb IA pendent",
+      "title": "Processament amb IA",
+      "unprocessed_many": "{{count}} imatges necessiten processament amb IA",
+      "unprocessed_one": "{{count}} imatge necessita processament amb IA",
+      "unprocessed_other": "{{count}} imatges necessiten processament amb IA",
+      "waiting": "Preparant el processament amb IA…"
+    },
     "community": {
       "actionSave": "Desar",
       "actionSaved": "Desat",
@@ -1234,7 +1285,8 @@
       "radial": "Radial",
       "retouch": "Retoc",
       "sky": "Cel",
-      "subject": "Subjecte"
+      "subject": "Subjecte",
+      "text": "Text"
     }
   },
   "menus": {
@@ -1368,6 +1420,7 @@
       "descMerge": "Afegeix els canvis copiats, deixant la resta de paràmetres intactes.",
       "descReplace": "Sobreescriu tota la configuració seleccionada, restablint la resta als seus valors predeterminats.",
       "groups": {
+        "aiDenoise": "Reducció de soroll amb IA",
         "chromaticAberration": "Aberració cromàtica",
         "clarityDehaze": "Claredat i Eliminar boira",
         "colorCalibration": "Calibratge de color",
@@ -1376,15 +1429,19 @@
         "cropAspectRatio": "Retall i Relació d'aspecte",
         "curves": "Corbes",
         "exposureToneMapper": "Exposició i Mapejador de tons",
+        "fog": "Boira",
         "grain": "Gra",
         "guidedPerspective": "Perspectiva guiada",
         "halationGlow": "Halació i Resplendor",
         "hueShift": "Canvi de to global",
+        "lensBlur": "Desenfocament d'objectiu",
         "lensCorrection": "Correcció de l'objectiu",
         "lut": "LUT",
         "masks": "Màscares",
+        "negativeConversion": "Conversió de negatiu",
         "noiseReduction": "Reducció de soroll",
         "presence": "Presència",
+        "relight": "Reil·luminació",
         "sharpness": "Nitidesa",
         "tone": "Tons",
         "transformRotation": "Transformació i Rotació",
@@ -1681,6 +1738,9 @@
       "zoomDesc": "Ajusteu la velocitat a la qual s'apropa o s'allunya el llenç en utilitzar la roda de desplaçament o el gest de pessigar."
     },
     "data": {
+      "clearAiDenoise": "Esborra la memòria cau de reducció de soroll IA",
+      "clearAiDenoiseButton": "Esborra",
+      "clearAiDenoiseDesc": "Elimina els resultats desats de la reducció de soroll IA ({{size}}). Les imatges amb la reducció de soroll IA activada la tornaran a calcular la propera vegada que s'obrin.",
       "clearSidecars": "Esborrar tots els fitxers sidecar",
       "clearSidecarsButton": "Esborrar",
       "clearSidecarsDesc": "Això suprimirà tots els fitxers .rrdata (que contenen les vostres edicions) dins de les carpetes arrel:",
@@ -1692,6 +1752,7 @@
       "logsButton": "Obrir",
       "logsDesc": "Consulteu el fitxer de registre de l'aplicació per solucionar problemes. El registre es troba a:",
       "modals": {
+        "aiDenoiseMessage": "Segur que vols esborrar la memòria cau de reducció de soroll IA?\n\nLes imatges amb la reducció de soroll IA activada s'hauran de tornar a processar, cosa que pot trigar diversos minuts per imatge.",
         "aiMessage": "Esteu segur que voleu eliminar totes les etiquetes generades per IA de totes les imatges a totes les carpetes arrel actives?\n\nAixò no afectarà les etiquetes afegides pels usuaris. Aquesta acció no es pot desfer.",
         "allMessage": "Esteu segur que voleu eliminar totes les etiquetes generades per IA i les afegides pels usuaris de totes les imatges a totes les carpetes arrel actives?\n\nAquesta acció no es pot desfer.",
         "cacheMessage": "Esteu segur que voleu esborrar la memòria cau de miniatures?\n\nTotes les miniatures s'hauran de tornar a generar, la qual cosa pot ser lent en carpetes grans.",
@@ -1714,6 +1775,7 @@
       "resetLayoutDesc": "Restaura els acoblaments de panells, els separadors laterals, les alçades i els commutadors de panells a la seva disposició predeterminada.",
       "resetLayoutTitle": "Restablir el disseny de l'espai de treball",
       "statuses": {
+        "aiDenoiseSuccess": "Memòria cau de reducció de soroll IA esborrada correctament.",
         "aiSuccess": "{{count}} fitxers actualitzats. S'han eliminat les etiquetes d'IA.",
         "aiSuccess_one": "{{count}} fitxer actualitzat. S'han eliminat les etiquetes d'IA.",
         "aiSuccess_other": "{{count}} fitxers actualitzats. S'han eliminat les etiquetes d'IA.",
@@ -1722,6 +1784,7 @@
         "allSuccess_other": "{{count}} fitxers actualitzats. S'han eliminat totes les etiquetes no relacionades amb el color.",
         "cacheSuccess": "La memòria cau de miniatures s'ha esborrat correctament.",
         "clearingAi": "S'estan esborrant les etiquetes d'IA de tots els fitxers sidecar...",
+        "clearingAiDenoise": "Esborrant la memòria cau de reducció de soroll IA...",
         "clearingAll": "S'estan esborrant totes les etiquetes dels fitxers sidecar...",
         "clearingCache": "S'està esborrant la memòria cau de miniatures...",
         "deleting": "S'estan suprimint els fitxers sidecar, espereu si us plau...",
@@ -1850,6 +1913,16 @@
       "title": "Els meus objectius"
     },
     "processing": {
+      "advanced": {
+        "heading": "Avançat",
+        "headingDesc": "Ajustos de rendiment per a miniatures, memòria cau i exportacions. Els valors predeterminats funcionen bé per a la majoria.",
+        "title": "Configuració avançada",
+        "auto": "Automàtic",
+        "exportThreads": "Exportacions en paral·lel",
+        "exportThreadsDesc": "Nombre d'imatges que s'exporten alhora. Automàtic tria un valor segons la CPU. Redueix-lo si les exportacions grans fallen o la GPU té poca memòria.",
+        "exportMemoryLimit": "Límit de memòria d'exportació",
+        "exportMemoryLimitDesc": "Part de la RAM lliure que poden fer servir les exportacions per lots. Redueix-la perquè les altres aplicacions continuïn responent durant exportacions grans."
+      },
       "ai": {
         "cloud": {
           "description": "Per a aquells que desitgin una solució més senzilla, una subscripció opcional ofereix els mateixos resultats d'alta qualitat que l'autoallotjament sense cap molèstia. Aquesta és l'opció més convenient i la millor manera de donar suport al projecte.",
@@ -1894,8 +1967,11 @@
           "description": "Integrades directament a RapidRAW, aquestes funcions s'executen completament al vostre ordinador. Són ràpides, gratuïtes i no requereixen cap configuració, cosa que les fa ideals per accelerar el flux de treball diari.",
           "feature1": "Emmascarament d'IA (Subjecte, Cel, Primer pla)",
           "feature2": "Etiquetatge automàtic d'imatges",
-          "feature3": "Substitució generativa simple per CPU",
-          "title": "IA integrada (CPU)"
+          "feature3": "Substitució generativa simple al dispositiu",
+          "gpuAcceleration": "Acceleració per GPU",
+          "gpuAccelerationDesc": "Executa les funcions d'IA integrades, com la reducció de soroll, les màscares, els mapes de profunditat i de normals i l'etiquetatge, a la targeta gràfica per obtenir resultats molt més ràpids. Desactiva-ho si tens bloquejos o resultats d'IA incorrectes.",
+          "gpuAccelerationLabel": "Utilitza la GPU per als models d'IA",
+          "title": "IA integrada"
         },
         "aiFree": {
           "description": "Desactiva totes les funcions d'IA. Tots els controls relacionats amb la IA s'oculten de la interfície perquè RapidRAW funcioni com un editor RAW purament tradicional.",
@@ -1909,7 +1985,7 @@
           "aiConnector": "AI Connector",
           "aiFree": "Sense IA",
           "cloud": "Núvol",
-          "cpu": "CPU"
+          "cpu": "Integrada"
         },
         "title": "IA Generativa"
       },
@@ -1993,7 +2069,6 @@
       "previewResDesc": "Determina la resolució màxima de la vista prèvia. Valors inferiors milloren significativament el rendiment.",
       "previewStrategy": "Estratègia de renderització de la vista prèvia",
       "qualities": {
-        "full": "Resolució completa",
         "high": "Alta qualitat",
         "performance": "Rendiment"
       },
@@ -2049,8 +2124,10 @@
     "thanks": {
       "description": "Un enorme agraïment als projectes següents que van ser molt importants per al desenvolupament de RapidRAW:",
       "list": {
+        "birefnet": "Pel model de segmentació d'alta resolució que impulsa la detecció de primer pla per IA.",
         "darktable": "Per algunes implementacions de referència que van guiar certes parts d'aquest treball.",
         "depth": "Per al potent model d'estimació de profunditat monocular que permet les capacitats d'emmascarament de profunditat d'IA.",
+        "efficientsam3": "Pel model de segmentació eficient basat en indicacions, destil·lat de SAM 3, que impulsa les màscares de cel i de text per IA.",
         "lama": "Per al potent i senzill model d'inpainting d'imatges, que permet el farciment i l'eliminació d'objectes segons el contingut.",
         "lensfun": "Per la seva inestimable biblioteca de codi obert i la completa base de dades per a la correcció automàtica d'objectius.",
         "libgphoto2": "Per la completa biblioteca de comunicació amb càmeres que impulsa el sistema de tethering i captura remota de RapidRAW.",
@@ -2059,7 +2136,6 @@
         "rawler": "Per l'excel·lent component de Rust que proporciona la base per al processament de fitxers RAW en aquest projecte.",
         "sam2": "Per proporcionar el model de base utilitzat per a les capacitats de detecció de subjectes per IA.",
         "spektrafilm": "Per les LUTs d'emulació de pel·lícula basades en espectres, d'Andrea Volpato, que impulsen les emulacions integrades de RapidRAW. Amb llicència CC BY-SA 4.0.",
-        "u2net": "Per proporcionar la robusta arquitectura utilitzada per a les capacitats de detecció de cel i primer pla per IA.",
         "you": "A vosaltres, per utilitzar i donar suport a RapidRAW. El vostre interès manté aquest projecte viu i en evolució.",
         "youLabel": "Vosaltres"
       },
