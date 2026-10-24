@@ -1493,7 +1493,104 @@ pub fn is_cloud_placeholder(_path: &Path) -> bool {
     false
 }
 
-pub fn read_file_mapped(path: &Path) -> Result<Mmap, ReadFileError> {
+/// File contents used by the RAW/image parsers.
+///
+/// Local files stay memory-mapped. Remote/FUSE files are read into memory:
+/// a transient page-fault failure on an mmap raises SIGBUS in the kernel, which
+/// kills the whole process instead of returning an ordinary I/O error.
+pub enum FileBytes {
+    Mapped(Mmap),
+    Owned(Vec<u8>),
+}
+
+impl std::ops::Deref for FileBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            FileBytes::Mapped(mmap) => mmap,
+            FileBytes::Owned(bytes) => bytes,
+        }
+    }
+}
+
+impl AsRef<[u8]> for FileBytes {
+    fn as_ref(&self) -> &[u8] {
+        self
+    }
+}
+
+impl FileBytes {
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.as_ref().to_vec()
+    }
+}
+
+fn is_remote_mount_path(path: &Path) -> bool {
+    let path = path.to_string_lossy();
+    path.contains("/remote/mnt/") || path.contains("\\remote\\mnt\\")
+}
+
+#[cfg(target_os = "linux")]
+fn is_fuse_or_network_fs(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+
+    let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    let mut stat: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statfs(c_path.as_ptr(), &mut stat) } != 0 {
+        return false;
+    }
+
+    // FUSE, NFS, SMB/CIFS, SMB2 and 9p all turn an mmap page fault into SIGBUS
+    // when the connection or remote file disappears.
+    matches!(
+        stat.f_type as u64,
+        0x6573_5546 // FUSE
+            | 0x0000_6969 // NFS
+            | 0x0000_517B // SMB
+            | 0xFF53_4D42 // CIFS
+            | 0xFE53_4D42 // SMB2
+            | 0x0102_1997 // 9p
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_fuse_or_network_fs(_path: &Path) -> bool {
+    false
+}
+
+fn should_read_into_memory(path: &Path) -> bool {
+    is_remote_mount_path(path) || is_fuse_or_network_fs(path)
+}
+
+fn read_file_into_memory(mut file: fs::File, expected_len: usize) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut bytes = Vec::with_capacity(expected_len);
+    for attempt in 0..3 {
+        if attempt > 0 {
+            file.seek(SeekFrom::Start(0))?;
+            bytes.clear();
+            std::thread::sleep(std::time::Duration::from_millis(100 * attempt as u64));
+        }
+
+        match file.read_to_end(&mut bytes) {
+            Ok(_) => return Ok(bytes),
+            Err(error) if attempt < 2 => log::warn!(
+                "Buffered read failed (attempt {}): {}; retrying",
+                attempt + 1,
+                error
+            ),
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("the retry loop always returns")
+}
+
+pub fn read_file_mapped(path: &Path) -> Result<FileBytes, ReadFileError> {
     if !path.is_file() {
         return Err(ReadFileError::Invalid);
     }
@@ -1504,17 +1601,30 @@ pub fn read_file_mapped(path: &Path) -> Result<Mmap, ReadFileError> {
         return Err(ReadFileError::Empty);
     }
     let file = fs::File::open(path).map_err(ReadFileError::Io)?;
-    // Filesystems that cannot lock, such as the Flatpak document portal, are mapped unlocked.
+    // Filesystems that cannot lock, such as the Flatpak document portal, are read unlocked.
     if let Err(fs::TryLockError::WouldBlock) = file.try_lock_shared() {
         return Err(ReadFileError::Locked);
     }
+    let len = file.metadata().map_err(ReadFileError::Io)?.len();
+    if len == 0 {
+        return Err(ReadFileError::Empty);
+    }
+
+    if should_read_into_memory(path) {
+        let bytes = read_file_into_memory(file, len as usize).map_err(ReadFileError::Io)?;
+        if bytes.is_empty() {
+            return Err(ReadFileError::Empty);
+        }
+        return Ok(FileBytes::Owned(bytes));
+    }
+
     let mmap = unsafe {
         MmapOptions::new()
-            .len(file.metadata().map_err(ReadFileError::Io)?.len() as usize)
+            .len(len as usize)
             .map(&file)
             .map_err(ReadFileError::Io)?
     };
-    Ok(mmap)
+    Ok(FileBytes::Mapped(mmap))
 }
 
 pub fn write_file_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
@@ -4934,6 +5044,49 @@ mod thumbnail_queue_tests {
 
         assert_eq!(queue.len(), 2);
         assert_eq!(incoming, vec!["new-1".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod file_bytes_tests {
+    use super::*;
+
+    #[test]
+    fn local_file_bytes_are_returned_exactly() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sample.bin");
+        fs::write(&path, b"rapidraw-bytes").unwrap();
+
+        let bytes = read_file_mapped(&path).unwrap();
+
+        assert_eq!(&*bytes, b"rapidraw-bytes");
+    }
+
+    #[test]
+    fn remote_mount_paths_prefer_buffered_reads() {
+        assert!(is_remote_mount_path(Path::new(
+            "/home/user/.cache/io.github.vedranius.rapidrawweb/remote/mnt/abc/photo.RAF"
+        )));
+        assert!(is_remote_mount_path(Path::new(
+            r"C:\Users\user\AppData\Local\rapidraw\remote\mnt\abc\photo.RAF"
+        )));
+        assert!(!is_remote_mount_path(Path::new(
+            "/home/user/Pictures/photo.RAF"
+        )));
+    }
+
+    #[test]
+    fn remote_mount_files_do_not_return_a_mmap() {
+        let dir = tempfile::tempdir().unwrap();
+        let remote_dir = dir.path().join("remote/mnt/abc");
+        fs::create_dir_all(&remote_dir).unwrap();
+        let path = remote_dir.join("photo.RAF");
+        fs::write(&path, b"remote-raw-bytes").unwrap();
+
+        match read_file_mapped(&path).unwrap() {
+            FileBytes::Owned(bytes) => assert_eq!(bytes, b"remote-raw-bytes"),
+            FileBytes::Mapped(_) => panic!("remote/FUSE files must not be mmap'ed"),
+        }
     }
 }
 
