@@ -694,7 +694,19 @@ fn update_rotational_disk_flag(path: &str, app_handle: &AppHandle) {
 }
 
 #[tauri::command]
-pub fn list_images_in_dir(path: String, app_handle: AppHandle) -> Result<Vec<ImageFile>, String> {
+pub async fn list_images_in_dir(
+    path: String,
+    app_handle: AppHandle,
+) -> Result<Vec<ImageFile>, String> {
+    match tauri::async_runtime::spawn_blocking(move || list_images_in_dir_impl(path, app_handle))
+        .await
+    {
+        Ok(result) => result,
+        Err(error) => Err(format!("Failed to list images in directory: {error}")),
+    }
+}
+
+fn list_images_in_dir_impl(path: String, app_handle: AppHandle) -> Result<Vec<ImageFile>, String> {
     let settings = load_settings(app_handle.clone()).unwrap_or_default();
     let enable_xmp_sync = settings.enable_xmp_sync.unwrap_or(false);
 
@@ -808,7 +820,19 @@ pub fn list_images_in_dir(path: String, app_handle: AppHandle) -> Result<Vec<Ima
 }
 
 #[tauri::command]
-pub fn list_images_recursive(
+pub async fn list_images_recursive(
+    path: String,
+    app_handle: AppHandle,
+) -> Result<Vec<ImageFile>, String> {
+    match tauri::async_runtime::spawn_blocking(move || list_images_recursive_impl(path, app_handle))
+        .await
+    {
+        Ok(result) => result,
+        Err(error) => Err(format!("Failed to list images recursively: {error}")),
+    }
+}
+
+fn list_images_recursive_impl(
     path: String,
     app_handle: AppHandle,
 ) -> Result<Vec<ImageFile>, String> {

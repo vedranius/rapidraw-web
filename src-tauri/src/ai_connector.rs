@@ -127,7 +127,9 @@ fn composite_full_res(
 }
 
 pub async fn check_status(address: &str) -> Result<bool> {
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()?;
     let res = client
         .get(format!("http://{}/health", address))
         .send()
