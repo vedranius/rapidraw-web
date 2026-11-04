@@ -1,9 +1,9 @@
-# Release tagovi: rapidraw-v<RapidRAW>-web-v<web>, npr. rapidraw-v1.6.4-web-v1.1.0 (tag pokreće rrweb-release.yml).
-#  - push na main koji mijenja rrweb/VERSION  → nova web verzija, sloj s tog commita, na zadnjem RapidRAW releaseu
+# Release tagovi: rapidraw-v<RapidRAW>-web-v<web>, npr. rapidraw-v1.6.6-web-v1.15.0 (tag pokreće rrweb-release.yml).
+#  - push na main koji mijenja rrweb/VERSION  → nova web verzija, tag na tom commitu
 #  - svaki dan (i ručno)                     → merge upstream main → main; ako RapidRAW ima novi release,
-#                                              tag sa zadnjom OBJAVLJENOM web verzijom (neobjavljene izmjene s main-a ne idu van)
-# Tag = točno upstream release + jedan commit sa slojem (rrweb/, .github/README.md, rrweb workflowi);
-# u poruci taga je izvorni commit sloja (main@<sha>), iz njega rrweb/release-notes.mjs radi popis promjena.
+#                                              tag na spojenom main commitu s trenutnom web verzijom
+# Tag pokazuje na stvarni main commit (RapidRAW + rrweb sloj + AI sloj), ne na sintetički web-only commit.
+# U poruci taga je izvorni commit (main@<sha>), iz njega rrweb/release-notes.mjs radi popis promjena.
 # Treba secret RRWEB_PAT (fine-grained PAT: ovaj repo, Contents + Workflows: read/write),
 # jer GITHUB_TOKEN ne smije pushati commitove s workflow datotekama niti pokretati druge workflowe.
 name: rapidraw-web upstream sync
@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       upstream_tag:
-        description: 'Ručno: upstream RapidRAW tag (npr. v1.6.4). Prazno = zadnji release.'
+        description: 'Ručno: RapidRAW tag (npr. v1.6.6). Prazno = verzija iz src-tauri/tauri.conf.json.'
         required: false
 
 permissions:
@@ -58,28 +58,27 @@ jobs:
       - name: Plan release
         id: plan
         run: |
+          # The tag names the RapidRAW version actually present in this commit.
           UP="${{ github.event.inputs.upstream_tag }}"
-          [ -n "$UP" ] || UP=$(gh api repos/CyberTimon/RapidRAW/releases/latest --jq .tag_name)
-          # zadnja objavljena web verzija i commit s kojeg je njen sloj
+          [ -n "$UP" ] || UP="v$(jq -r .version src-tauri/tauri.conf.json)"
+          # Latest published web version; a new VERSION must be higher.
           LATEST=$(git tag -l 'rapidraw-v*-web-v*' | sed 's/.*-web-v//' | sort -V | tail -1)
           if [ "${{ github.event_name }}" = push ] || [ -z "$LATEST" ]; then
             WEB=$(tr -d '[:space:]' < rrweb/VERSION)
-            SRC=$(git rev-parse HEAD)
             if [ -n "$LATEST" ] && [ "$(printf '%s\n%s\n' "$LATEST" "$WEB" | sort -V | tail -1)" != "$WEB" -o "$LATEST" = "$WEB" ]; then
               echo "::error::rrweb/VERSION ($WEB) mora biti veći od zadnje objavljene web verzije ($LATEST)"
               exit 1
             fi
           else
             WEB="$LATEST"
-            SRC=$(git tag -l "rapidraw-v*-web-v$WEB" --format='%(contents)' | sed -n 's/.*main@\([0-9a-f]\{7,40\}\).*/\1/p' | head -1)
-            [ -n "$SRC" ] || SRC=$(git tag -l "rapidraw-v*-web-v$WEB" | head -1)
           fi
+          SRC=$(git rev-parse HEAD)
           TAG="rapidraw-$UP-web-v$WEB"
           echo "up=$UP" "web=$WEB" "src=$SRC" "tag=$TAG" | tr ' ' '\n' >> "$GITHUB_OUTPUT"
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
             echo "new=false" >> "$GITHUB_OUTPUT"; echo "$TAG već postoji"
           else
-            echo "new=true" >> "$GITHUB_OUTPUT"; echo "Novi release: $TAG (sloj s $SRC)"
+            echo "new=true" >> "$GITHUB_OUTPUT"; echo "Novi release: $TAG (source $SRC)"
           fi
         env: { GH_TOKEN: '${{ github.token }}' }
 
@@ -88,9 +87,5 @@ jobs:
         run: |
           UP="${{ steps.plan.outputs.up }}"; WEB="${{ steps.plan.outputs.web }}"
           SRC="${{ steps.plan.outputs.src }}"; TAG="${{ steps.plan.outputs.tag }}"
-          git checkout --quiet --detach "refs/tags/$UP"
-          git checkout "$SRC" -- rrweb .github/README.md \
-            .github/workflows/rrweb-release.yml .github/workflows/rrweb-sync.yml
-          git commit --quiet -m "rapidraw-web v$WEB on RapidRAW $UP"
-          git tag -a "$TAG" -m "RapidRAW $UP + rapidraw-web v$WEB (rrweb layer from main@$(git rev-parse "$SRC^{commit}"))"
+          git tag -a "$TAG" -m "RapidRAW $UP + rapidraw-web v$WEB (source from main@$(git rev-parse "$SRC^{commit}"))" "$SRC"
           git push origin "refs/tags/$TAG"

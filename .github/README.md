@@ -17,7 +17,7 @@ Browser (original RapidRAW UI + shim)
 Relay (Node.js)  ─ serves the UI, thumbnails, routes calls
     │  WebSocket /bridge (loopback only)
     ▼
-RapidRAW Web Bridge  ─ the real RapidRAW backend, unmodified, rendering on the server GPU (wgpu)
+RapidRAW Web Bridge  ─ the RapidRAW backend (plus this fork's AI layer), rendering on the server GPU (wgpu)
     │
     ▼
 GPU + photo storage
@@ -25,12 +25,13 @@ GPU + photo storage
 
 - **The browser shows the real RapidRAW UI.** Same React code, same panels, same sliders. Only the `@tauri-apps/*` imports are swapped for small shims at build time, so every feature that exists in RapidRAW exists here.
 - **Rendering happens in RapidRAW on the server.** Moving a slider sends the adjustment; the server's GPU renders it and sends back a compressed preview — a few hundred KB, a few milliseconds on a gigabit LAN.
-- **Zero changes to RapidRAW's code.** Everything lives in new files (`rrweb/`, `.github/`). The bridge is the regular RapidRAW backend that loads a 3 KB relay page instead of its UI. Upstream updates merge cleanly.
+- **The web layer stays separate; the AI layer is part of this fork.** The relay and browser shims live in new files (`rrweb/`, `.github/`). The bridge is the regular RapidRAW backend that loads a 3 KB relay page instead of its UI. This fork additionally changes RapidRAW's UI and backend for the AI features below, so upstream updates are tested rather than assumed conflict-free.
 
 ## What you get
 
 - **The full RapidRAW editor in a browser**, on any laptop, tablet or mini PC in your network (or anywhere, through a VPN or tunnel). Nothing to install on that device.
 - **All processing on the server**: RAW decoding, every slider, masks, AI tools and exports run on the server's CPU and GPU. The browser only shows the previews.
+- **AI layer in this fork**: content-aware **culling** (composition, light, scene and subject), **AI Style** profiles with per-image adaptation and histogram protection, and an **AI Editor** that turns natural-language requests into auditable plans across 37 RapidRAW commands. Use Ollama, any OpenAI-compatible endpoint or Anthropic Claude; the deterministic local planner stays available. See [`AI_EDITOR.md`](../AI_EDITOR.md).
 - **One-file installers**: Windows (`setup.exe`), Linux (`.deb`, `.rpm`, `.AppImage`, with a service for headless servers) and macOS (experimental). Each contains RapidRAW, the web UI and Node.js.
 - **Photo library and folder pickers** for the server's folders, so you never type server paths.
 - **[Files tab](#files-tab)**: download exports (also as `.zip`), upload, rename, copy, move and delete in the photo folders. RapidRAW's edit files go along.
@@ -252,15 +253,15 @@ src-tauri/target/release/rapidraw-web-bridge      # start it (or, with the relay
 
 ## Versioning and staying in sync with RapidRAW
 
-This repository is a GitHub fork of [CyberTimon/RapidRAW](https://github.com/CyberTimon/RapidRAW). A release carries two versions: **`rapidraw-v<RapidRAW>-web-v<rapidraw-web>`**, e.g. `rapidraw-v1.6.4-web-v1.1.0` is the unmodified RapidRAW `v1.6.4` with version `1.1.0` of this web layer. The web layer has its own version in [`rrweb/VERSION`](../rrweb/VERSION), so it can ship several updates for the same RapidRAW release.
+This repository is a GitHub fork of [CyberTimon/RapidRAW](https://github.com/CyberTimon/RapidRAW). A release carries two versions: **`rapidraw-v<RapidRAW>-web-v<rapidraw-web>`**, e.g. `rapidraw-v1.6.6-web-v1.15.0` is based on RapidRAW `v1.6.6` with version `1.15.0` of this web layer. The web layer has its own version in [`rrweb/VERSION`](../rrweb/VERSION), so it can ship several updates for the same RapidRAW release.
 
-Every release is **exactly an upstream release's code** plus one commit with the `rrweb/` layer, built and published by `rrweb-release.yml`. Releases come from two places (`rrweb-sync.yml`):
-- **A new web version**: raising `rrweb/VERSION` on `main` (e.g. `1.1.0` → `1.1.1`) releases the current web layer on the latest RapidRAW release right away. The release notes list the web-layer commits since the previous web version.
-- **A new RapidRAW release**: a daily job merges upstream `main` and, when RapidRAW publishes a release, releases it with the latest *published* web version (unreleased work on `main` waits for the next version bump).
+Every release is built from the current `main` commit, including RapidRAW, the `rrweb/` layer and this fork's AI layer, and published by `rrweb-release.yml`. Releases come from two places (`rrweb-sync.yml`):
+- **A new web version**: raising `rrweb/VERSION` on `main` (e.g. `1.15.0` → `1.15.1`) tags and releases that commit right away. The release notes use the matching section from the changelog.
+- **A new RapidRAW release**: a daily job merges upstream `main` and tags the merged `main` with the current web version.
 
-What changed in each web version: [CHANGELOG](../rrweb/CHANGELOG.md).
+What changed in each web version: [CHANGELOG](../rrweb/CHANGELOG.md). What the AI layer adds: [`AI_EDITOR.md`](../AI_EDITOR.md).
 
-Because rapidraw-web only adds files, upstream changes merge without conflicts. Before every build, `rrweb/check-shims.mjs` verifies that every Tauri API the RapidRAW UI imports is covered by the browser shims, and the list of forwarded backend events is regenerated from RapidRAW's source. If something new appears upstream, the build fails loudly and opens an issue instead of shipping a broken release.
+Before every build, `rrweb/check-shims.mjs` verifies that every Tauri API the RapidRAW UI imports is covered by the browser shims, and the list of forwarded backend events is regenerated from RapidRAW's source. If something new appears upstream, the build fails loudly and opens an issue instead of shipping a broken release.
 
 ## Thank you, Timon
 

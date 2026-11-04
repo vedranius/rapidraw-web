@@ -6,7 +6,7 @@
 
 RapidRAW Web runs the regular RapidRAW backend on one machine, a PC or a server with a GPU and your photos, and shows the **exact same RapidRAW interface** in a browser on any other device: a laptop, a tablet, a mini PC. It is not a remote desktop or a video stream, and not a reimplemented web version. It is RapidRAW's own React UI, talking to RapidRAW's own backend over the network.
 
-Everything lives in this folder. **No RapidRAW file is changed**: the desktop app builds and works exactly as before, and the web build is a separate target.
+The web layer lives in this folder and keeps its files separate from RapidRAW. This fork also includes an AI layer that changes parts of RapidRAW's UI and backend (AI culling, AI Style and the AI Editor; see [`../AI_EDITOR.md`](../AI_EDITOR.md)). The desktop build is unaffected, and the web build remains a separate target.
 
 ## How it works
 
@@ -34,6 +34,7 @@ GPU + photo storage
 
 - **The full RapidRAW editor in a browser**, on any device in your network (or anywhere, through a VPN or tunnel). Nothing to install on that device.
 - **All processing on the server**: RAW decoding, every slider, masks, AI tools and exports.
+- **AI layer in this fork**: content-aware culling, AI Style profiles with per-image adaptation, and an AI Editor that plans natural-language edits across 37 RapidRAW commands (Ollama, OpenAI-compatible or Claude). See [`../AI_EDITOR.md`](../AI_EDITOR.md).
 - **Photo library and folder pickers.** The photo library is the top folder of your photos on the server, chosen in the bridge window. Wherever RapidRAW asks for a folder or file (*Add Folder*, export destination, import, LUTs, presets), the browser shows a picker of the server's photo folders instead of a native dialog. *Type a path…* accepts any path.
 - **Files tab** (next to *Editor*, top centre): a file manager for the photo folders on the server, to get exports out and organise shoots. Download (several items as a `.zip`), upload (button or drag & drop), new folder, rename, copy/cut/paste, delete to the trash. A photo's edit files (`.rrdata`, virtual copies, `.rrexif`) go along with it. It only reaches inside the photo folders.
 - **Folders from the browsing computer** (Files tab → *This computer*, Chrome or Edge): edit photos that stay on your laptop. The browser acts as the storage over a WebSocket (File System Access API):

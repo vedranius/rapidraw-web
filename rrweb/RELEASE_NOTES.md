@@ -1,4 +1,4 @@
-**[{{UPSTREAM_TITLE}}](https://github.com/CyberTimon/RapidRAW/releases/tag/{{UPSTREAM_TAG}})**, unmodified, with **rapidraw-web v{{WEB_VERSION}}**: it runs on a machine on your network and you use it from your browser. For what's new in the editor itself, see the RapidRAW release linked above.
+**[{{UPSTREAM_TITLE}}](https://github.com/CyberTimon/RapidRAW/releases/tag/{{UPSTREAM_TAG}})**, with **rapidraw-web v{{WEB_VERSION}}** and this fork's AI layer: it runs on a machine on your network and you use it from your browser. For what's new in the editor itself, see the RapidRAW release linked above.
 
 ### What's new in rapidraw-web v{{WEB_VERSION}}
 {{RRWEB_CHANGES}}
@@ -17,10 +17,12 @@ Install on the computer that has your photos and the GPU; open it from any brows
 
 Package version: `{{PKG_VERSION}}`, so installing a newer web release over an older one upgrades it, also on the same RapidRAW version.
 
-Setup: [README → Quick start](https://github.com/vedranius/rapidraw-web#quick-start)
+Setup: [README → Quick start](https://github.com/vedranius/rapidraw-web/blob/main/.github/README.md#quick-start)
 
 ### Features
 **Editor**: the real RapidRAW interface, every slider rendered by the server's GPU. **Photo library**: chosen once on the server; folder and file pickers in the browser start there. **This computer**: edit photos that stay in a folder on the computer you browse from (copied in the background, or on demand with a Linux or Windows server; Chrome/Edge over HTTPS). **Connection badge**: recommends the preview quality for your connection. **Files**: download exports (several files as .zip), upload, create folders, rename, copy, move and delete (to the trash) inside your photo folders; RapidRAW edits travel with their photos.
+
+**AI layer in this fork**: content-aware AI culling (composition, light, scene and subject), AI Style profiles with per-image adaptation and histogram protection, and an AI Editor that turns natural-language requests into auditable plans across 37 RapidRAW commands. Use a local Ollama model, any OpenAI-compatible endpoint or Anthropic Claude; the deterministic local planner stays available. See [AI_EDITOR.md](https://github.com/vedranius/rapidraw-web/blob/main/AI_EDITOR.md).
 
 ### Known limitations
 One active editing session at a time · pickers only browse the photo folders (other paths can be typed) · desktop-only window features and tethering are not available.

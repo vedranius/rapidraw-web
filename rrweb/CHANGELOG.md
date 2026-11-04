@@ -1,6 +1,20 @@
 # rapidraw-web changelog
 
-Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the unmodified RapidRAW inside it: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the editor itself is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
+Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
+
+## 1.15.0
+
+- **AI Editor: natural-language control of the whole editor.** Describe the result in plain language and RapidRAW builds an auditable tool plan for the current photo or selection. The catalog covers 37 commands: tone, curves, HSL, color grading, masks and AI masks, RAW denoise, HDR merge, panorama, focus stacking, crop, lens correction, LUTs, grain, halation, depth blur, relight, fog, metadata, culling and export.
+  - The model only plans; RapidRAW executes locally and checks the result. Unknown command IDs are rejected, high-impact steps such as export or reset wait for a manual **Run**, and sidecars are snapshotted before a plan so **Undo plan** can restore them.
+  - Works with **Ollama**, any **OpenAI-compatible** endpoint or **Anthropic Claude**. The deterministic local planner remains available, and every failure reports which planner produced the plan instead of silently swapping models.
+  - Includes a live selection/EXIF/histogram context, ten built-in photographic skills, custom skill import, per-step progress and a complete command reference.
+- **AI Style: rich looks with per-image adaptation.** 15 built-in profiles, film LUTs, tag/CLIP matching, learned profiles and calibration, plus eight generated variants: Balanced, Soft, Bold, Film, Airy, Noir, Vivid and Editorial. The histogram guard pulls back exposure, highlights and saturation when a look would clip; previews support intensity, Before/After, a Recommended badge and undo.
+- **AI culling that judges the photograph.** Composition, lighting, scene, subject and technical quality are considered together, with a review dialog, reasons and a keepers hand-off to AI Style. Rejects are never applied automatically.
+- **AI commands cover the practical workflow**, including noise reduction, HDR, panorama, focus stack, export verification and folder creation, sidecar-safe metadata edits and an export-only scope guard.
+- **Fixed: remote/on-demand RAW files could crash the whole server with `SIGBUS`.** Files on remote, FUSE and network mounts are now read into memory with retries, so a transient connection failure becomes an ordinary I/O error. Local files remain memory-mapped.
+- **Fixed: the web UI could stay gray for minutes while a remote folder was listed.** Folder scans now run off the IPC thread, so opening a large remote library no longer blocks settings, previews and every other command. AI connector health checks now time out after 3 seconds.
+- **Docs:** see [`AI_EDITOR.md`](https://github.com/vedranius/rapidraw-web/blob/main/AI_EDITOR.md) for the command catalog, skills, providers and safety rules.
+- This release is based on **RapidRAW v1.6.6**. Upstream v1.6.7 is not included yet.
 
 ## 1.14.1
 
