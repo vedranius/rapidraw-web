@@ -61,16 +61,20 @@ jobs:
           # The tag names the RapidRAW version actually present in this commit.
           UP="${{ github.event.inputs.upstream_tag }}"
           [ -n "$UP" ] || UP="v$(jq -r .version src-tauri/tauri.conf.json)"
-          # Latest published web version; a new VERSION must be higher.
+          # Latest published web version and the version in this commit's rrweb/VERSION.
           LATEST=$(git tag -l 'rapidraw-v*-web-v*' | sed 's/.*-web-v//' | sort -V | tail -1)
-          if [ "${{ github.event_name }}" = push ] || [ -z "$LATEST" ]; then
-            WEB=$(tr -d '[:space:]' < rrweb/VERSION)
-            if [ -n "$LATEST" ] && [ "$(printf '%s\n%s\n' "$LATEST" "$WEB" | sort -V | tail -1)" != "$WEB" -o "$LATEST" = "$WEB" ]; then
+          WEB=$(tr -d '[:space:]' < rrweb/VERSION)
+          if [ -n "$LATEST" ] && [ "$(printf '%s\n%s\n' "$LATEST" "$WEB" | sort -V | tail -1)" != "$WEB" ]; then
+            # A web version lower than the latest published one is never released; a push that tries it is an error.
+            if [ "${{ github.event_name }}" = push ]; then
               echo "::error::rrweb/VERSION ($WEB) mora biti veći od zadnje objavljene web verzije ($LATEST)"
               exit 1
             fi
-          else
             WEB="$LATEST"
+          fi
+          if [ "${{ github.event_name }}" = push ] && [ -n "$LATEST" ] && [ "$LATEST" = "$WEB" ]; then
+            echo "::error::rrweb/VERSION ($WEB) mora biti veći od zadnje objavljene web verzije ($LATEST)"
+            exit 1
           fi
           SRC=$(git rev-parse HEAD)
           TAG="rapidraw-$UP-web-v$WEB"
