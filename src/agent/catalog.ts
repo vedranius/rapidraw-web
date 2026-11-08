@@ -218,8 +218,8 @@ export const AGENT_TOOL_CATALOG: AgentToolDefinition[] = [
     label: 'RAW denoise',
     category: 'operations',
     description:
-      'Run RapidRAW denoise and save a new TIFF/PNG beside the source. Use AI for high-ISO RAW, bm3d for a cleaner low-noise result, raw9 where available. Do this before sharpening/grading; do not denoise a clean low-ISO file.',
-    params: '{ intensity: 0..100, method: "ai"|"bm3d"|"raw9", paths?: string[] }',
+      'Enable RapidRAW non-destructive denoise on the photo and set its amount. Use AI for high-ISO RAW or bm3d for a faster CPU result. Do this before sharpening/grading; do not denoise a clean low-ISO file. No new file is created.',
+    params: '{ intensity: 0..100, method: "ai"|"bm3d", paths?: string[] }',
     examples: ['{"tool":"photo.denoise","params":{"intensity":45,"method":"ai"}}'],
     requiresImage: true,
   },

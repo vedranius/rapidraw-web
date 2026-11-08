@@ -2,6 +2,11 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.15.2
+
+- **Fixed AI Editor denoise failing with `Command batch_denoise_images not found`.** RapidRAW 1.6.9 removed the command that wrote denoised TIFF/PNG copies. The `photo.denoise` step now enables RapidRAW's non-destructive AI/BM3D denoise on the same photo and sets its amount, so it works with the new render pipeline and `Undo plan` restores the sidecar.
+- The plan preview no longer treats denoise as a file-producing step; HDR, panorama, focus stack and negative conversion still redirect later steps to their saved result.
+
 ## 1.15.1
 
 - **RapidRAW 1.6.9** is included (upstream v1.6.7 through v1.6.9: improved ORF white balance, the new render-source pipeline, Immich, storage management, viewer windows, edit-in-place and more). The AI layer remains on top of it: AI culling, AI Style and the 37-command AI Editor.

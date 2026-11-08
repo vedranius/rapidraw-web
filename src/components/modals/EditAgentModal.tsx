@@ -325,9 +325,7 @@ export default function EditAgentModal({
         const lastCreated = [...collected]
           .reverse()
           .find((result) =>
-            ['photo.denoise', 'photo.hdr', 'photo.panorama', 'photo.focus-stack', 'photo.negative'].includes(
-              result.tool,
-            ),
+            ['photo.hdr', 'photo.panorama', 'photo.focus-stack', 'photo.negative'].includes(result.tool),
           );
         if (lastCreated) {
           const data = (lastCreated.data || {}) as { saved?: unknown };
@@ -1105,8 +1103,8 @@ export default function EditAgentModal({
                     </Button>
                   </div>
                   <p className="text-[9px] leading-snug text-text-secondary/70">
-                    Undo restores sidecars captured before the plan. Files created by denoise, merge, stack or export
-                    are not deleted.
+                    Undo restores sidecars captured before the plan. Files created by merge, stack or export are not
+                    deleted.
                   </p>
                 </div>
               )}

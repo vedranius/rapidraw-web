@@ -69,7 +69,7 @@ Rules:
 Tool parameter conventions:
 - `settings.patch`: {"patch": { ...any RapidRAW adjustment keys... }}. Nested objects are merged; arrays replace. All adjustment keys are valid, including `masks`, `curves`, `hsl`, `colorGrading`, `lens*`, `transform*`, `fog*`, `relight*`, `lensBlur*`.
 - `photo.ai-mask`: {"type":"subject|sky|foreground|depth","patch":{...mask adjustments...},"name":"optional"}.
-- `photo.denoise`: {"intensity":0-100,"method":"ai|bm3d|raw9"}.
+- `photo.denoise`: {"intensity":0-100,"method":"ai|bm3d"}. Enables non-destructive denoise on the same photo; no new file.
 - `photo.auto-tone`, `photo.auto-straighten`, `photo.auto-lens`: omit paths for the selection.
 - `photo.hdr`, `photo.panorama`, `photo.focus-stack`: optional {"paths":[...]} source frames; the saved output becomes available for later steps.
 - `library.rate`: {"rating":0-5}. `library.flag`: {"flag":"pick|reject|null"}.

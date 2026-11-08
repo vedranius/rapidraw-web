@@ -45,12 +45,12 @@ topli koncertni look bez plastike.`
    **Run**. Tako prompt injection iz EXIF-a ili naziva datoteke ne može sam
    pokrenuti izvoz ili reset.
 7. **Undo plan** vraća sidecare na stanje prije plana. Datoteke koje su nastale
-   operacijama (denoise/HDR/panorama/stack/export) ostaju na disku i to je
-   jasno napisano u UI-u.
+   operacijama (HDR/panorama/stack/export) ostaju na disku i to je jasno
+   napisano u UI-u. Denoise je nedestruktivna korekcija, pa nema nove datoteke.
 
-Nakon denoisea, HDR-a, panorame, focus stackinga ili negativa, sljedeći koraci
-automatski rade na **novonastalom rezultatu**, ne na izvornim kadrovima. Ako
-model ponovno navede izvorne putanje, izvršni sloj ih preusmjeri na rezultat.
+Nakon HDR-a, panorame, focus stackinga ili negativa, sljedeći koraci automatski
+rade na **novonastalom rezultatu**, ne na izvornim kadrovima. Ako model ponovno
+navede izvorne putanje, izvršni sloj ih preusmjeri na rezultat.
 Isto vrijedi i za `photo.select`: nakon ručnog odabira fotografije sljedeći
 koraci rade na toj fotografiji, ne na staroj selekciji.
 
@@ -104,7 +104,7 @@ zanemari; kod `texture` poruka upućuje na ispravni `structure`.
 
 ### RAW operacije
 
-- `photo.denoise` — AI/BM3D/RAW9 denoise, sprema novi TIFF/PNG
+- `photo.denoise` — uključuje nedestruktivni AI/BM3D denoise s količinom (bez nove datoteke)
 - `photo.hdr` — spajanje exposure bracketa
 - `photo.panorama` — spajanje preklapajućih kadrova
 - `photo.focus-stack` — spajanje focus bracketa

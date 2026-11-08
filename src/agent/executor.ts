@@ -631,24 +631,21 @@ export async function executeAgentStep(
     case 'photo.denoise': {
       const paths = pathsFrom(params, hooks);
       const rawIntensity = Number(params.intensity ?? 45);
-      const intensity = rawIntensity > 1 ? rawIntensity / 100 : rawIntensity;
-      const method = String(params.method || 'ai').toLowerCase();
-      // `batch_denoise_images` writes the new TIFF/PNG copies and returns their
-      // paths, so the agent does not need to drive the interactive modal.
-      const saved: string[] = await invoke('batch_denoise_images', { paths, intensity, method });
-      if (saved.length === 0 && paths.length > 0) {
-        throw new Error('Denoising did not produce a file. Check the AI model status and the log.');
-      }
-      await hooks.refreshLibrary();
-      if (saved[0]) {
-        hooks.selectImage(saved[0]);
-        await waitForSelectedSoft(saved[0]);
-      }
+      const amount = Math.min(100, Math.max(0, rawIntensity <= 1 ? rawIntensity * 100 : rawIntensity));
+      const method = String(params.method || 'ai').toLowerCase() === 'bm3d' ? 'bm3d' : 'ai';
+      // RapidRAW 1.6.9 denoises non-destructively during rendering; enabling the
+      // adjustment is the operation. There is no separate denoised copy anymore.
+      const patch = {
+        aiDenoiseEnabled: true,
+        aiDenoiseMethod: method,
+        aiDenoiseAmount: Math.round(amount),
+      };
+      const message = await applySettingsPatch(patch, paths);
       return {
         tool,
         ok: true,
-        message: `Denoised ${saved.length}/${paths.length} photo(s)${saved[0] ? `; saved ${saved[0].split(/[\\/]/).pop()}` : ''}.`,
-        data: { saved },
+        message: `Denoise enabled (${method === 'bm3d' ? 'BM3D' : 'AI'}, ${Math.round(amount)}%). ${message}`,
+        data: { paths },
       };
     }
 
@@ -1080,22 +1077,22 @@ export async function executePlan(
   onStart?: (index: number) => void,
 ): Promise<AgentStepResult[]> {
   const results: AgentStepResult[] = [];
-  // File-producing operations (RAW denoise, HDR, panorama, focus stack,
-  // negative conversion) change the working file. Subsequent steps that do not
-  // name paths must edit the new result, not the original source frames.
+  // File-producing operations (HDR, panorama, focus stack, negative conversion)
+  // change the working file. Subsequent steps that do not name paths must edit
+  // the new result, not the original source frames. Denoise is an adjustment on
+  // the same file in RapidRAW 1.6.9 and does not redirect.
   const activeHooks: AgentExecutionHooks = { ...hooks, targetPaths: [...hooks.targetPaths] };
   const redirectedFrom = new Set<string>();
   for (let index = 0; index < steps.length; index++) {
     if (shouldAbort?.()) break;
     const step = steps[index];
     const effectiveParams = { ...(step.params || {}) };
-    // A new file (denoise/HDR/stack) becomes the working photo. If a later
+    // A new file (HDR/stack/negative) becomes the working photo. If a later
     // edit still names the original sources, redirect it to the new result.
     const requestedPaths = Array.isArray(effectiveParams.paths)
       ? (effectiveParams.paths as unknown[]).filter((path): path is string => typeof path === 'string')
       : [];
     const isSourceOperation = [
-      'photo.denoise',
       'photo.hdr',
       'photo.panorama',
       'photo.focus-stack',
@@ -1127,10 +1124,6 @@ export async function executePlan(
       if (step.tool === 'photo.select' && typeof (step.params || {}).path === 'string') {
         activeHooks.targetPaths = [String((step.params || {}).path)];
         redirectedFrom.clear();
-      }
-      if (step.tool === 'photo.denoise' && Array.isArray(data.saved) && data.saved.length > 0) {
-        activeHooks.targetPaths.forEach((path) => redirectedFrom.add(path));
-        activeHooks.targetPaths = data.saved.map(String);
       }
       if (['photo.hdr', 'photo.panorama', 'photo.focus-stack'].includes(step.tool) && typeof data.saved === 'string') {
         activeHooks.targetPaths.forEach((path) => redirectedFrom.add(path));
@@ -1175,10 +1168,6 @@ export async function restoreSnapshots(snapshots: unknown, paths: string[], hook
 export async function openGeneratedFile(path: string, hooks: AgentExecutionHooks): Promise<void> {
   await hooks.refreshLibrary();
   hooks.selectImage(path);
-}
-
-export function showAgentProgress(message: string): void {
-  useProcessStore.getState().setProcess({ aiModelDownloadStatus: message });
 }
 
 export function closeAgentModal(): void {
