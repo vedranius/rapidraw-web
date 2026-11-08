@@ -1,7 +1,7 @@
 // Runs INSIDE the real RapidRAW (Tauri) process, instead of its UI.
 // Receives calls from the relay, calls the real invoke(), returns the result; forwards every event.
 // If no relay is running (e.g. started from the menu), it starts the bundled one (all-in-one package) and opens a browser.
-import { invoke } from '@tauri-apps/api/core';
+import { Channel as TauriChannel, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { appCacheDir, appDataDir, delimiter, join, resourceDir } from '@tauri-apps/api/path';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -26,6 +26,37 @@ let library: string | null | undefined; // undefined = the relay hasn't reported
 const urls = new Set<string>(); // "[relay] url …" lines of the bundled relay
 
 const send = (o: unknown) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o)); };
+
+const CHANNEL_PREFIX = '__RR_CHANNEL__:';
+function forwardChannel(channel: number, data: unknown) {
+  const raw = data instanceof ArrayBuffer
+    ? new Uint8Array(data)
+    : ArrayBuffer.isView(data)
+      ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+      : null;
+  if (!raw) { send({ channel, data }); return; }
+  const frame = new Uint8Array(8 + raw.byteLength);
+  const view = new DataView(frame.buffer);
+  view.setUint32(0, 0, true);
+  view.setUint32(4, channel, true);
+  frame.set(raw, 8);
+  if (ws?.readyState === WebSocket.OPEN) ws.send(frame);
+}
+// The browser sent a marker string; turn it into a real Tauri Channel so Rust can stream data back.
+function hydrateChannels(value: any): any {
+  if (typeof value === 'string' && value.startsWith(CHANNEL_PREFIX)) {
+    const channel = Number(value.slice(CHANNEL_PREFIX.length));
+    if (!Number.isInteger(channel) || channel <= 0) return value;
+    const live = new TauriChannel<unknown>();
+    live.onmessage = (data) => forwardChannel(channel, data);
+    return live;
+  }
+  if (Array.isArray(value)) return value.map(hydrateChannels);
+  if (value && typeof value === 'object' && !(value instanceof ArrayBuffer) && !ArrayBuffer.isView(value)) {
+    for (const key of Object.keys(value)) value[key] = hydrateChannels(value[key]);
+  }
+  return value;
+}
 EVENTS.forEach((ev) => listen(ev, (e) => send({ event: ev, payload: e.payload })));
 
 // On Windows/macOS RapidRAW by default draws the preview straight into the native window (wgpu surface) and returns
@@ -123,7 +154,7 @@ function connect() {
     const { id, cmd, args } = msg;
     if (cmd === 'save_settings' && args?.settings) args.settings.useWgpuRenderer = false;
     try {
-      const result: unknown = await invoke(cmd, args);
+      const result: unknown = await invoke(cmd, hydrateChannels(args));
       const bytes = result instanceof ArrayBuffer ? new Uint8Array(result)
         : result instanceof Uint8Array ? result : null;
       if (bytes) {

@@ -2,6 +2,12 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.15.1
+
+- **RapidRAW 1.6.9** is included (upstream v1.6.7 through v1.6.9: improved ORF white balance, the new render-source pipeline, Immich, storage management, viewer windows, edit-in-place and more). The AI layer remains on top of it: AI culling, AI Style and the 37-command AI Editor.
+- **The web layer follows RapidRAW 1.6.9's Tauri Channels.** Live analytics (histogram and waveform) and community preset previews are streamed through the relay with a small binary framing, so they keep working in the browser instead of being silently dropped.
+- The browser shim now provides `Channel`; `rrweb/check-shims.mjs` also follows the new `read_exif_for_paths` call shape. The RAF EXIF fast path is unchanged.
+
 ## 1.15.0
 
 - **AI Editor: natural-language control of the whole editor.** Describe the result in plain language and RapidRAW builds an auditable tool plan for the current photo or selection. The catalog covers 37 commands: tone, curves, HSL, color grading, masks and AI masks, RAW denoise, HDR merge, panorama, focus stacking, crop, lens correction, LUTs, grain, halation, depth blur, relight, fog, metadata, culling and export.

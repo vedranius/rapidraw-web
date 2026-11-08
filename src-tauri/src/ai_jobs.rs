@@ -12,12 +12,12 @@ use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::ai_commands::{self, MaskTransform};
+use crate::ai_denoise::DenoiseMethod;
 use crate::ai_processing::{AiDepthMaskParameters, AiMaskModel, get_or_init_ai_models};
 use crate::app_state::AppState;
 use crate::cache_utils::GEOMETRY_KEYS;
 use crate::effect_maps::{EffectMapKind, is_map_reference, is_map_valid_for};
 use crate::file_management::{parse_virtual_path, read_file_mapped};
-use crate::image_processing::is_effect_enabled;
 
 const JOURNAL_FILE: &str = "ai_jobs.json";
 const MAX_ATTEMPTS: u32 = 3;
@@ -25,6 +25,7 @@ const SOURCE_ID_SAMPLE_BYTES: u64 = 64 * 1024;
 const MASK_DATA_KEYS: [&str; 2] = ["maskDataBase64", "mask_data_base64"];
 const AI_SOURCE_KEY: &str = "aiSource";
 const TEXT_PROMPT_KEY: &str = "prompt";
+const FACE_PARTS_KEY: &str = "parts";
 const SUBJECT_BOX_KEYS: [&str; 4] = ["startX", "startY", "endX", "endY"];
 const MASK_RESULT_KEYS: [&str; 6] = [
     "maskDataBase64",
@@ -99,6 +100,7 @@ enum MaskKind {
     Foreground,
     Sky,
     Text,
+    Face,
     Depth,
     Subject,
 }
@@ -109,6 +111,7 @@ impl MaskKind {
             "ai-foreground" => Some(MaskKind::Foreground),
             "ai-sky" => Some(MaskKind::Sky),
             "ai-text" => Some(MaskKind::Text),
+            "ai-face" => Some(MaskKind::Face),
             "ai-depth" => Some(MaskKind::Depth),
             "ai-subject" => Some(MaskKind::Subject),
             _ => None,
@@ -117,7 +120,7 @@ impl MaskKind {
 }
 
 enum Job {
-    Denoise,
+    Denoise(DenoiseMethod),
     EffectMap(EffectMapKind),
     Mask {
         sub_mask_id: String,
@@ -129,13 +132,14 @@ enum Job {
 impl Job {
     fn kind_label(&self) -> &'static str {
         match self {
-            Job::Denoise => "denoise",
+            Job::Denoise(_) => "denoise",
             Job::EffectMap(EffectMapKind::Depth) => "depthMap",
             Job::EffectMap(EffectMapKind::Normal) => "normalMap",
             Job::Mask { kind, .. } => match kind {
                 MaskKind::Foreground => "foregroundMask",
                 MaskKind::Sky => "skyMask",
                 MaskKind::Text => "textMask",
+                MaskKind::Face => "faceMask",
                 MaskKind::Depth => "depthMask",
                 MaskKind::Subject => "subjectMask",
             },
@@ -156,6 +160,16 @@ fn text_prompt(params: &Value) -> Option<&str> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|prompt| !prompt.is_empty())
+}
+
+fn face_parts(params: &Value) -> Vec<String> {
+    params
+        .get(FACE_PARTS_KEY)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part.as_str().map(str::to_string))
+        .collect()
 }
 
 fn has_subject_box(params: &Value) -> bool {
@@ -179,6 +193,7 @@ fn needs_mask_generation(kind: MaskKind, params: &Value, source_id: &str) -> boo
         && match kind {
             MaskKind::Subject => has_subject_box(params),
             MaskKind::Text => text_prompt(params).is_some(),
+            MaskKind::Face => !face_parts(params).is_empty(),
             _ => true,
         }
 }
@@ -211,8 +226,8 @@ pub fn has_ai_results(adjustments: &Value) -> bool {
         || adjustments["aiDenoiseEnabled"].as_bool().unwrap_or(false)
         || EffectMapKind::ALL
             .iter()
-            .flat_map(|map| map.adjustment_keys())
-            .any(|(_, enabled_key, _)| adjustments[*enabled_key].as_bool().unwrap_or(false))
+            .flat_map(|map| map.uses())
+            .any(|map_use| map_use.is_requested(adjustments))
 }
 
 fn sub_mask_id(sub_mask: &Value) -> Option<&str> {
@@ -222,18 +237,18 @@ fn sub_mask_id(sub_mask: &Value) -> Option<&str> {
 fn plan(adjustments: &Value, path: &str, source_id: &str) -> Vec<Job> {
     let mut jobs = Vec::new();
 
-    if crate::ai_denoise::is_enabled(adjustments) && !crate::ai_denoise::has_cached_entry(path) {
-        jobs.push(Job::Denoise);
+    let denoise_method = DenoiseMethod::from_adjustments(adjustments);
+    if crate::ai_denoise::is_enabled(adjustments)
+        && !crate::ai_denoise::has_cached_entry(path, denoise_method)
+    {
+        jobs.push(Job::Denoise(denoise_method));
     }
 
     for map in EffectMapKind::ALL {
-        let needed = map
-            .adjustment_keys()
-            .iter()
-            .any(|(tool, enabled_key, map_key)| {
-                is_effect_enabled(adjustments, tool, enabled_key)
-                    && !is_map_valid_for(&adjustments[*map_key], map, source_id)
-            });
+        let needed = map.uses().iter().any(|map_use| {
+            map_use.is_enabled(adjustments)
+                && !is_map_valid_for(&adjustments[map_use.map_key], map, source_id)
+        });
         if needed {
             jobs.push(Job::EffectMap(map));
         }
@@ -272,6 +287,13 @@ fn strip_mask_result(params: &mut Value) {
             params.remove(*key);
         }
     }
+}
+
+fn same_mask_inputs(a: &Value, b: &Value) -> bool {
+    let (mut a, mut b) = (a.clone(), b.clone());
+    strip_mask_result(&mut a);
+    strip_mask_result(&mut b);
+    a == b
 }
 
 fn box_space(params: &Value) -> Option<(f64, f64)> {
@@ -351,6 +373,7 @@ pub fn reconcile_ai_results(
                 && match kind {
                     MaskKind::Subject => same_subject_box(params, existing),
                     MaskKind::Text => text_prompt(params) == text_prompt(existing),
+                    MaskKind::Face => face_parts(params) == face_parts(existing),
                     _ => true,
                 }
         });
@@ -368,18 +391,18 @@ pub fn reconcile_ai_results(
     }
 
     for map in EffectMapKind::ALL {
-        for (_, _, map_key) in map.adjustment_keys() {
-            let Some(value) = incoming.get(*map_key) else {
+        for map_key in map.uses().iter().map(|map_use| map_use.map_key) {
+            let Some(value) = incoming.get(map_key) else {
                 continue;
             };
             let trusted = trust_unstamped || is_map_reference(value);
             if trusted && is_map_valid_for(value, map, source_id) {
                 continue;
             }
-            if is_map_valid_for(&existing[*map_key], map, source_id) {
-                incoming[*map_key] = existing[*map_key].clone();
+            if is_map_valid_for(&existing[map_key], map, source_id) {
+                incoming[map_key] = existing[map_key].clone();
             } else if !value.is_null() {
-                incoming[*map_key] = Value::Null;
+                incoming[map_key] = Value::Null;
                 stripped = true;
             }
         }
@@ -439,6 +462,12 @@ enum Outcome {
 }
 
 impl Queue {
+    fn clear_current(&mut self, path: &str) {
+        if self.status.current.as_ref().is_some_and(|c| c.path == path) {
+            self.status.current = None;
+        }
+    }
+
     fn next_path(&self, open_path: Option<String>) -> Option<String> {
         let mut ready = self
             .pending
@@ -631,14 +660,7 @@ fn finish_path(app_handle: &AppHandle, path: &str, result: Result<Outcome, Strin
         queue.processing = None;
         requeue = std::mem::take(&mut queue.requeue_processing);
     }
-    if queue
-        .status
-        .current
-        .as_ref()
-        .is_some_and(|c| c.path == path)
-    {
-        queue.status.current = None;
-    }
+    queue.clear_current(path);
     let Some(pos) = queue.pending.iter().position(|p| p == path) else {
         emit_status(app_handle, &mut queue);
         return;
@@ -754,22 +776,25 @@ pub fn ensure_ready(app_handle: &AppHandle, path: &str) -> Result<(), String> {
 #[derive(Default)]
 struct JobResults {
     sub_masks: HashMap<String, (Value, Value)>,
+    no_results: HashMap<String, String>,
     maps: Vec<(EffectMapKind, String)>,
 }
 
 fn decode_source(app_handle: &AppHandle, source_path: &Path) -> Result<Arc<DynamicImage>, String> {
     let state = app_handle.state::<AppState>();
     let source_path_str = source_path.to_string_lossy().to_string();
-    if let Some((image, _)) = state
-        .decoded_image_cache
-        .lock()
-        .unwrap()
-        .get(&source_path_str)
+    let settings = crate::app_settings::load_settings(app_handle.clone()).unwrap_or_default();
+    if let Some(fingerprint) =
+        crate::cache_utils::DecodeFingerprint::for_file(source_path, &settings)
+        && let Some((image, _)) = state
+            .decoded_image_cache
+            .lock()
+            .unwrap()
+            .get(&source_path_str, &fingerprint)
     {
         return Ok(image);
     }
 
-    let settings = crate::app_settings::load_settings(app_handle.clone()).unwrap_or_default();
     let image = match read_file_mapped(source_path) {
         Ok(mmap) => crate::image_loader::load_base_image_from_bytes(
             &mmap,
@@ -803,6 +828,13 @@ fn open_image_path(app_handle: &AppHandle) -> Option<String> {
         .map(|loaded| loaded.path.clone())
 }
 
+struct JobRun {
+    outcome: Outcome,
+    results: JobResults,
+    generated_any: bool,
+    error: Option<String>,
+}
+
 fn process_path(
     app_handle: &AppHandle,
     path: &str,
@@ -815,15 +847,95 @@ fn process_path(
     let source_id = source_id(&source_path).ok_or("Unable to read the source image")?;
     let adjustments = crate::exif_processing::load_sidecar(&sidecar_path).adjustments;
 
-    let jobs = plan(&adjustments, path, &source_id);
-    if jobs.is_empty() {
-        return Ok(Outcome::Finished);
+    let run = run_jobs(
+        app_handle,
+        path,
+        &adjustments,
+        &source_id,
+        interrupt_generation,
+    )?;
+
+    if !run.results.sub_masks.is_empty() || !run.results.maps.is_empty() {
+        commit_results(app_handle, path, &source_id, run.results)?;
     }
 
+    if run.generated_any {
+        let state = app_handle.state::<AppState>();
+        crate::file_management::add_to_thumbnail_queue(&state, 1, app_handle);
+        let settings = crate::app_settings::load_settings(app_handle.clone()).unwrap_or_default();
+        crate::file_management::regenerate_thumbnails_for_paths(
+            std::iter::once(path.to_string()),
+            app_handle,
+            &settings,
+            true,
+        );
+    }
+
+    match run.error {
+        Some(error) => Err(error),
+        None => Ok(run.outcome),
+    }
+}
+
+pub fn resolve_detached(
+    app_handle: &AppHandle,
+    path: &str,
+    adjustments: &mut Value,
+) -> Result<(), String> {
+    let (source_path, sidecar_path) = parse_virtual_path(path);
+    if !has_ai_results(adjustments) || !source_path.exists() {
+        return Ok(());
+    }
+    let source_id = source_id(&source_path).ok_or("Unable to read the source image")?;
+    let existing = crate::exif_processing::load_sidecar(&sidecar_path).adjustments;
+    reconcile_ai_results(adjustments, &existing, &source_id, false);
+
+    let result = {
+        let _lane = JOBS.lane.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            let run = match run_jobs(app_handle, path, adjustments, &source_id, None) {
+                Ok(run) => run,
+                Err(error) => break Err(error),
+            };
+            apply_results(adjustments, &source_id, &run.results);
+            if let Some(error) = run.error {
+                break Err(error);
+            }
+            if !matches!(run.outcome, Outcome::Deferred) {
+                break Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    };
+
+    let mut queue = queue();
+    queue.clear_current(path);
+    emit_status(app_handle, &mut queue);
+    result
+}
+
+fn run_jobs(
+    app_handle: &AppHandle,
+    path: &str,
+    adjustments: &Value,
+    source_id: &str,
+    interrupt_generation: Option<u64>,
+) -> Result<JobRun, String> {
+    let mut results = JobResults::default();
+    let jobs = plan(adjustments, path, source_id);
+    if jobs.is_empty() {
+        return Ok(JobRun {
+            outcome: Outcome::Finished,
+            results,
+            generated_any: false,
+            error: None,
+        });
+    }
+
+    let source_path = parse_virtual_path(path).0;
     let base = decode_source(app_handle, &source_path)?;
     let is_raw = crate::formats::is_raw_file(&source_path);
     let mut warped_image: Option<DynamicImage> = None;
-    let mut results = JobResults::default();
     let mut errors = Vec::new();
     let mut generated_any = false;
     let mut outcome = Outcome::Finished;
@@ -849,24 +961,26 @@ fn process_path(
         }
 
         let job_result = match &job {
-            Job::Denoise => match crate::ai_denoise::generate_for_base(app_handle, path, &base) {
-                Ok(false) => {
-                    outcome = Outcome::Deferred;
-                    continue;
+            Job::Denoise(method) => {
+                match crate::ai_denoise::generate_for_base(app_handle, path, &base, *method) {
+                    Ok(false) => {
+                        outcome = Outcome::Deferred;
+                        continue;
+                    }
+                    result => result.map(|_| ()),
                 }
-                result => result.map(|_| ()),
-            },
+            }
             Job::EffectMap(map) => {
                 let source_image = crate::mask_generation::build_converted_source_image(
                     &base,
                     is_raw,
-                    &adjustments,
+                    adjustments,
                 );
                 tauri::async_runtime::block_on(ai_commands::generate_effect_map(
                     app_handle,
                     *map,
                     &source_image,
-                    &source_id,
+                    source_id,
                 ))
                 .map(|reference| results.maps.push((*map, reference)))
             }
@@ -874,18 +988,26 @@ fn process_path(
                 sub_mask_id, kind, ..
             } => {
                 let warped = warped_image.get_or_insert_with(|| {
-                    crate::build_ai_source_image(&base, is_raw, &geometry_adjustments(&adjustments))
+                    crate::build_ai_source_image(
+                        &base,
+                        is_raw,
+                        path,
+                        &geometry_adjustments(adjustments),
+                    )
                 });
                 generate_mask(
                     app_handle,
                     path,
-                    &adjustments,
+                    adjustments,
                     sub_mask_id,
                     *kind,
                     warped,
-                    &source_id,
+                    source_id,
                 )
-                .map(|(original, result)| {
+                .map(|(original, result, no_result)| {
+                    if let Some(no_result) = no_result {
+                        results.no_results.insert(sub_mask_id.clone(), no_result);
+                    }
                     results
                         .sub_masks
                         .insert(sub_mask_id.clone(), (original, result));
@@ -900,26 +1022,12 @@ fn process_path(
     drop(warped_image);
     drop(base);
 
-    if !results.sub_masks.is_empty() || !results.maps.is_empty() {
-        commit_results(app_handle, path, &source_id, results)?;
-    }
-
-    if generated_any {
-        let state = app_handle.state::<AppState>();
-        crate::file_management::add_to_thumbnail_queue(&state, 1, app_handle);
-        let settings = crate::app_settings::load_settings(app_handle.clone()).unwrap_or_default();
-        crate::file_management::regenerate_thumbnails_for_paths(
-            std::iter::once(path.to_string()),
-            app_handle,
-            &settings,
-            true,
-        );
-    }
-
-    match errors.into_iter().next() {
-        Some(error) => Err(error),
-        None => Ok(outcome),
-    }
+    Ok(JobRun {
+        outcome,
+        results,
+        generated_any,
+        error: errors.into_iter().next(),
+    })
 }
 
 fn generate_mask(
@@ -930,7 +1038,7 @@ fn generate_mask(
     kind: MaskKind,
     warped_image: &DynamicImage,
     source_id: &str,
-) -> Result<(Value, Value), String> {
+) -> Result<(Value, Value, Option<String>), String> {
     let state = app_handle.state::<AppState>();
     let original = ai_sub_masks(adjustments)
         .find(|(_, sub_mask)| sub_mask_id(sub_mask) == Some(id))
@@ -941,6 +1049,7 @@ fn generate_mask(
         MaskKind::Foreground => AiMaskModel::Foreground,
         MaskKind::Sky => AiMaskModel::Sky,
         MaskKind::Text => AiMaskModel::Text,
+        MaskKind::Face => AiMaskModel::Face,
         MaskKind::Depth => AiMaskModel::Depth,
         MaskKind::Subject => AiMaskModel::Subject,
     };
@@ -959,48 +1068,62 @@ fn generate_mask(
     );
 
     let result = match kind {
-        MaskKind::Foreground => serde_json::to_value(ai_commands::generate_foreground_mask(
+        MaskKind::Foreground => ai_commands::generate_foreground_mask(
             &models,
             warped_image,
             transform,
-            ai_source,
-        )?),
-        MaskKind::Sky => serde_json::to_value(ai_commands::generate_sky_mask(
+            ai_source.clone(),
+        )
+        .and_then(ai_commands::to_json),
+        MaskKind::Sky => ai_commands::generate_sky_mask(
             &state.ai_state,
             &models,
             &cache_key,
             warped_image,
             transform,
-            ai_source,
-        )?),
-        MaskKind::Text => serde_json::to_value(ai_commands::generate_text_mask(
+            ai_source.clone(),
+        )
+        .and_then(ai_commands::to_json),
+        MaskKind::Text => ai_commands::generate_text_mask(
             &state.ai_state,
             &models,
             &cache_key,
             warped_image,
             text_prompt(&original).ok_or("Text prompt missing")?,
             transform,
-            ai_source,
-        )?),
+            ai_source.clone(),
+        )
+        .and_then(ai_commands::to_json),
+        MaskKind::Face => ai_commands::generate_face_mask(
+            &state.ai_state,
+            &models,
+            &cache_key,
+            warped_image,
+            &face_parts(&original),
+            transform,
+            ai_source.clone(),
+        )
+        .and_then(ai_commands::to_json),
         MaskKind::Depth => {
             let params: AiDepthMaskParameters =
                 serde_json::from_value(original.clone()).unwrap_or_default();
-            serde_json::to_value(ai_commands::generate_depth_mask(
+            ai_commands::generate_depth_mask(
                 &state.ai_state,
                 &models,
                 &cache_key,
                 warped_image,
                 params,
                 transform,
-                ai_source,
-            )?)
+                ai_source.clone(),
+            )
+            .and_then(ai_commands::to_json)
         }
         MaskKind::Subject => {
             let (width, height) = transform.box_space(warped_image.dimensions());
             let [start_x, start_y, end_x, end_y] =
                 scaled_subject_box(&original, Some((width as f64, height as f64)))
                     .ok_or("Subject box missing")?;
-            serde_json::to_value(ai_commands::generate_subject_mask(
+            ai_commands::generate_subject_mask(
                 &state.ai_state,
                 &models,
                 &cache_key,
@@ -1009,13 +1132,14 @@ fn generate_mask(
                 (end_x, end_y),
                 false,
                 transform,
-                ai_source,
-            )?)
+                ai_source.clone(),
+            )
+            .and_then(ai_commands::to_json)
         }
-    }
-    .map_err(|e| e.to_string())?;
+    };
+    let (result, no_result) = ai_commands::or_empty_mask(result, transform, ai_source)?;
 
-    Ok((original, result))
+    Ok((original, result, no_result))
 }
 
 fn geometry_adjustments(adjustments: &Value) -> Value {
@@ -1038,12 +1162,12 @@ fn apply_results(
     let mut committed_maps = serde_json::Map::new();
 
     for (map, reference) in &results.maps {
-        for (tool, enabled_key, map_key) in map.adjustment_keys() {
-            if is_effect_enabled(adjustments, tool, enabled_key)
-                && !is_map_valid_for(&adjustments[*map_key], *map, source_id)
+        for map_use in map.uses() {
+            if map_use.is_enabled(adjustments)
+                && !is_map_valid_for(&adjustments[map_use.map_key], *map, source_id)
             {
-                adjustments[*map_key] = json!(reference);
-                committed_maps.insert(map_key.to_string(), json!(reference));
+                adjustments[map_use.map_key] = json!(reference);
+                committed_maps.insert(map_use.map_key.to_string(), json!(reference));
             }
         }
     }
@@ -1053,7 +1177,8 @@ fn apply_results(
             continue;
         };
         if let Some((original, result)) = results.sub_masks.get(&id)
-            && sub_mask["parameters"] == *original
+            && !is_mask_valid_for(&sub_mask["parameters"], source_id, true)
+            && same_mask_inputs(&sub_mask["parameters"], original)
         {
             copy_mask_result(kind, &mut sub_mask["parameters"], result);
             let mut committed = json!({});
@@ -1079,9 +1204,15 @@ fn commit_results(
     .map_err(|e| e.to_string())?;
 
     let (sub_masks, maps) = committed;
+    let no_results: Vec<&String> = results
+        .no_results
+        .iter()
+        .filter(|(id, _)| sub_masks.contains_key(*id))
+        .map(|(_, no_result)| no_result)
+        .collect();
     let _ = app_handle.emit(
         "ai-job-result",
-        json!({ "path": path, "subMasks": sub_masks, "maps": maps }),
+        json!({ "path": path, "subMasks": sub_masks, "maps": maps, "noResults": no_results }),
     );
     Ok(())
 }

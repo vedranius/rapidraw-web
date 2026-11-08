@@ -4178,8 +4178,11 @@ mod real_photos {
             let raf_str = raf.to_string_lossy().into_owned();
             // Mirror the production lookup: prefer the untouched render, then
             // fall back to the camera preview for graded files.
+            let settings = crate::app_settings::AppSettings::default();
             let find_small = |bytes: &[u8]| -> Option<PathBuf> {
-                let hash = crate::file_management::compute_thumbnail_cache_hash(&raf_str, bytes)?;
+                let hash = crate::file_management::compute_thumbnail_cache_hash(
+                    &raf_str, bytes, &settings,
+                )?;
                 thumb_dirs
                     .iter()
                     .map(|dir| dir.join(format!("{hash}_small.jpg")))
@@ -4567,7 +4570,12 @@ mod real_edit_targets {
         let metadata = serde_json::from_str::<ImageMetadata>(&content).ok()?;
         let adjustments = serde_json::to_vec(&metadata.adjustments).unwrap_or_default();
         let raf_str = raf.to_string_lossy().into_owned();
-        let hash = crate::file_management::compute_thumbnail_cache_hash(&raf_str, &adjustments)?;
+        let settings = crate::app_settings::AppSettings::default();
+        let hash = crate::file_management::compute_thumbnail_cache_hash(
+            &raf_str,
+            &adjustments,
+            &settings,
+        )?;
         thumb_cache_dirs()
             .iter()
             .map(|dir| dir.join(format!("{hash}_small.jpg")))

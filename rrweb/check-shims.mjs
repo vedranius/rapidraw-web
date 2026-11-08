@@ -17,7 +17,7 @@ const walk = (d) => readdirSync(d).flatMap((f) => {
 });
 const exportsOf = (mod) => {
   const src = readFileSync(`rrweb/shim/${SHIMS[mod]}.ts`, 'utf8');
-  return new Set([...src.matchAll(/export\s+(?:async\s+)?(?:const|function|let|type)\s+(\w+)/g)].map((m) => m[1]));
+  return new Set([...src.matchAll(/export\s+(?:async\s+)?(?:const|function|let|type|class)\s+(\w+)/g)].map((m) => m[1]));
 };
 
 const problems = [];
@@ -54,7 +54,7 @@ const checks = {
   ],
   // rrweb/relay/exif.mjs lets RapidRAW parse the embedded JPEG's EXIF header saved as a temporary .raf
   'rrweb/relay/exif.mjs': [
-    ['the UI reads EXIF with read_exif_for_paths({ paths })', nav.includes('invoke(Invokes.ReadExifForPaths, { paths: chunk })')],
+    ['the UI reads EXIF with read_exif_for_paths({ paths })', /invoke\(Invokes\.ReadExifForPaths,\s*\{\s*paths:\s*chunk\s*,?\s*\}\)/.test(nav)],
     ['EXIF of a RAW: kamadak-exif (extract_metadata) first, then rawler', /if is_raw_file\(path\)\s*&& let Some\(map\) = extract_metadata\(file_bytes\)/.test(ex)
       && /if !map\.is_empty\(\) \{(?:(?!\n    \}\n)[\s\S]){0,600}?return Some\(map\);\s*\}\s*let metadata = read_raw_metadata\(file_bytes\)\?;/.test(ex)],
   ],

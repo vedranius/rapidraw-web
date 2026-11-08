@@ -5,6 +5,7 @@ type Handler = (payload: unknown) => void;
 const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ipc`;
 const pending = new Map<number, Pending>();
 const handlers = new Map<string, Set<Handler>>();
+const channelHandlers = new Map<number, Handler>();
 const queue: number[] = []; // ids of calls waiting for the connection
 // duration and size of answers (rrweb/files/network.ts watches previews: apply_adjustments)
 const timings = new Set<(cmd: string, ms: number, bytes: number) => void>();
@@ -87,12 +88,23 @@ function connect() {
     setOnline(true);
     if (m.data instanceof ArrayBuffer) {
       const id = new DataView(m.data).getUint32(0, true);
+      if (id === 0) {
+        if (m.data.byteLength >= 8) {
+          const channel = new DataView(m.data).getUint32(4, true);
+          channelHandlers.get(channel)?.(m.data.slice(8));
+        }
+        return;
+      }
       const p = pending.get(id);
       pending.delete(id);
       if (p) { done(p, m.data.byteLength - 4); p.res(m.data.slice(4)); }
       return;
     }
     const msg = JSON.parse(m.data);
+    if (msg.channel !== undefined) {
+      channelHandlers.get(msg.channel)?.(msg.data);
+      return;
+    }
     if (msg.event !== undefined) {
       if (typeof msg.seq === 'number') { lastSeq = msg.seq; lastBoot = msg.boot ?? ''; }
       handlers.get(msg.event)?.forEach((h) => h(msg.payload));
@@ -136,4 +148,10 @@ export function on(event: string, h: Handler): () => void {
   if (!handlers.has(event)) handlers.set(event, new Set());
   handlers.get(event)!.add(h);
   return () => { handlers.get(event)?.delete(h); };
+}
+
+// Messages sent by a Rust `Channel` argument; the relay maps the browser-side id to the bridge-side one.
+export function onChannel(id: number, h: Handler): () => void {
+  channelHandlers.set(id, h);
+  return () => { if (channelHandlers.get(id) === h) channelHandlers.delete(id); };
 }

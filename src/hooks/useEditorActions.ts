@@ -5,7 +5,7 @@ import { toast } from 'react-toastify';
 import { useTranslation } from 'react-i18next';
 import { TFunction } from 'i18next';
 import { SignalHigh, SignalLow, SignalMedium } from 'lucide-react';
-import { useEditorStore } from '../store/useEditorStore';
+import { useEditorStore, debouncedSetHistory } from '../store/useEditorStore';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useProcessStore } from '../store/useProcessStore';
@@ -13,22 +13,22 @@ import { useUIStore } from '../store/useUIStore';
 import {
   Adjustments,
   AutoAdjustMode,
+  CROP_GEOMETRY_KEYS,
   INITIAL_ADJUSTMENTS,
   COPYABLE_ADJUSTMENT_KEYS,
   PasteMode,
-  LensAdjustment,
   getActiveTools,
   mergeActiveTools,
   normalizeLoadedAdjustments,
   setToolActive,
 } from '../utils/adjustments';
 import { calculateAutoCropForRotation, calculateCenteredCrop } from '../utils/cropUtils';
-import { Invokes, Option, SelectedImage } from '../components/ui/AppProperties';
+import originalAdjustmentKeys from '../utils/originalAdjustmentKeys.json';
+import { CompareMode, Invokes, Option, Panel, SelectedImage } from '../components/ui/AppProperties';
 import { globalImageCache } from '../utils/ImageLRUCache';
+import { getDevicePixelRatio } from '../utils/displayScale';
 
-export const debouncedSetHistory = debounce((newAdj: Adjustments) => {
-  useEditorStore.getState().pushHistory(newAdj);
-}, 500);
+export { debouncedSetHistory };
 
 export const debouncedSave = debounce((path: string, adjustmentsToSave: Adjustments) => {
   invoke(Invokes.SaveMetadataAndUpdateThumbnail, { path, adjustments: adjustmentsToSave }).catch((err) => {
@@ -80,6 +80,23 @@ export const withRotation = (adjustments: Adjustments, image: SelectedImage | nu
       : adjustments.crop,
 });
 
+const ORIGINAL_PRESERVED_KEYS = [...originalAdjustmentKeys.preserved, ...originalAdjustmentKeys.crop] as Array<
+  keyof Adjustments
+>;
+
+export const getOriginalAdjustments = (adjustments: Adjustments): Adjustments => {
+  const original = { ...INITIAL_ADJUSTMENTS };
+  ORIGINAL_PRESERVED_KEYS.forEach((key) => {
+    (original as any)[key] = adjustments[key];
+  });
+  return original;
+};
+
+const getCompareState = (mode: CompareMode, adjustments: Adjustments) =>
+  mode === 'toggle'
+    ? { showOriginal: true, previewOverride: getOriginalAdjustments(adjustments), compareView: 'off' as const }
+    : { showOriginal: false, previewOverride: null, compareView: mode };
+
 export const reloadAdjustmentsForPaths = async (paths: string[]) => {
   const { selectedImage, setEditor, resetHistory } = useEditorStore.getState();
   const { libraryActivePath, setLibrary } = useLibraryStore.getState();
@@ -99,22 +116,51 @@ export const reloadAdjustmentsForPaths = async (paths: string[]) => {
   }
 };
 
-export function useEditorActions() {
-  const { t } = useTranslation();
-  const setEditor = useEditorStore((s) => s.setEditor);
+export const applyCrop = () => {
+  useEditorStore.getState().setEditor({ isStraightenActive: false, liveRotation: null });
+  useUIStore.getState().setPanel(Panel.Adjustments);
+};
 
-  const setAdjustments = useCallback(
-    (value: Partial<Adjustments> | ((prev: Adjustments) => Adjustments)) => {
+export const cancelCrop = () => {
+  const { cropSessionSnapshot, selectedImage, adjustments, setEditor } = useEditorStore.getState();
+  applyCrop();
+  if (cropSessionSnapshot && cropSessionSnapshot.path === (selectedImage?.path ?? null)) {
+    const { geometry } = cropSessionSnapshot;
+    const hasChanged = CROP_GEOMETRY_KEYS.some(
+      (key) => JSON.stringify(adjustments[key]) !== JSON.stringify(geometry[key]),
+    );
+    if (hasChanged) {
       setEditor((state) => {
-        const prev = state.adjustments;
-        const newAdjustments = typeof value === 'function' ? value(prev) : { ...prev, ...value };
-        if (newAdjustments === prev) return state;
+        const newAdjustments = { ...state.adjustments, ...geometry };
         debouncedSetHistory(newAdjustments);
         return {
           adjustments: newAdjustments,
           ...(state.showOriginal ? { showOriginal: false, previewOverride: null } : {}),
         };
       });
+    }
+  }
+};
+
+export function useEditorActions() {
+  const { t } = useTranslation();
+  const setEditor = useEditorStore((s) => s.setEditor);
+
+  const setAdjustments = useCallback(
+    (value: Partial<Adjustments> | ((prev: Adjustments) => Adjustments), label?: string) => {
+      // A labelled action gets its own history step instead of merging with pending slider edits.
+      if (label) debouncedSetHistory.flush();
+      setEditor((state) => {
+        const prev = state.adjustments;
+        const newAdjustments = typeof value === 'function' ? value(prev) : { ...prev, ...value };
+        if (newAdjustments === prev) return state;
+        debouncedSetHistory(newAdjustments, label);
+        return {
+          adjustments: newAdjustments,
+          ...(state.showOriginal ? { showOriginal: false, previewOverride: null } : {}),
+        };
+      });
+      if (label) debouncedSetHistory.flush();
     },
     [setEditor],
   );
@@ -150,16 +196,19 @@ export function useEditorActions() {
           jsAdjustments: useEditorStore.getState().adjustments,
           mode,
         });
-        setAdjustments((prev: Adjustments) => ({
-          ...prev,
-          ...autoAdjustments,
-          activeTools: mergeActiveTools(prev, autoAdjustments),
-        }));
+        setAdjustments(
+          (prev: Adjustments) => ({
+            ...prev,
+            ...autoAdjustments,
+            activeTools: mergeActiveTools(prev, autoAdjustments),
+          }),
+          t('contextMenus.editor.autoAdjust'),
+        );
       } catch (err) {
         toast.error(`Failed to apply auto adjustments: ${err}`);
       }
     },
-    [setAdjustments],
+    [setAdjustments, t],
   );
 
   const handleAutoStraighten = useCallback(async () => {
@@ -186,49 +235,23 @@ export function useEditorActions() {
     }
   }, [setAdjustments, setEditor, t]);
 
-  const toggleShowOriginal = useCallback(() => {
-    setEditor((state) => {
-      const isShowing = !state.showOriginal;
-
-      if (isShowing) {
-        const override = { ...INITIAL_ADJUSTMENTS };
-        const preservedKeys: Array<keyof Adjustments> = [
-          'baselineExposure',
-          'crop',
-          'rotation',
-          'flipHorizontal',
-          'flipVertical',
-          'orientationSteps',
-          'aspectRatio',
-          'transformDistortion',
-          'transformVertical',
-          'transformHorizontal',
-          'transformRotate',
-          'transformAspect',
-          'transformScale',
-          'transformXOffset',
-          'transformYOffset',
-          'lensDistortionAmount',
-          'lensVignetteAmount',
-          'lensTcaAmount',
-          'lensDistortionParams',
-          'lensMaker',
-          'lensModel',
-          'lensDistortionEnabled',
-          'lensTcaEnabled',
-          'lensVignetteEnabled',
-        ];
-
-        preservedKeys.forEach((key) => {
-          (override as any)[key] = state.adjustments[key];
-        });
-
-        return { showOriginal: true, previewOverride: override };
-      } else {
-        return { showOriginal: false, previewOverride: null };
-      }
-    });
+  const toggleCompare = useCallback(() => {
+    const mode = useSettingsStore.getState().appSettings?.compareMode ?? 'toggle';
+    setEditor((state) =>
+      state.showOriginal || state.compareView !== 'off'
+        ? { showOriginal: false, previewOverride: null, compareView: 'off' }
+        : getCompareState(mode, state.adjustments),
+    );
   }, [setEditor]);
+
+  const selectCompareMode = useCallback(
+    (mode: CompareMode) => {
+      const { appSettings, handleSettingsChange } = useSettingsStore.getState();
+      if (appSettings) handleSettingsChange({ ...appSettings, compareMode: mode });
+      setEditor((state) => getCompareState(mode, state.adjustments));
+    },
+    [setEditor],
+  );
 
   const handleLutSelect = useCallback(
     async (path: string, isBuiltIn: boolean = false) => {
@@ -338,19 +361,19 @@ export function useEditorActions() {
     [handleAutoStraighten, t],
   );
 
-  const handleConvertNegatives = useCallback(
-    (paths: string[]) => {
+  const handleEnableAdjustments = useCallback(
+    (paths: string[], patch: Partial<Adjustments>) => {
       const { selectedImage } = useEditorStore.getState();
       const editingPath = useUIStore.getState().activeView === 'editor' ? selectedImage?.path : undefined;
       const batchPaths = paths.filter((path) => path !== editingPath);
       if (batchPaths.length < paths.length) {
-        setAdjustments((prev: Adjustments) => ({ ...prev, negativeConversionEnabled: true }));
+        setAdjustments((prev: Adjustments) => ({ ...prev, ...patch }));
       }
       if (batchPaths.length === 0) return;
       batchPaths.forEach((p) => globalImageCache.delete(p));
-      invoke(Invokes.ApplyAdjustmentsToPaths, { paths: batchPaths, adjustments: { negativeConversionEnabled: true } })
+      invoke(Invokes.ApplyAdjustmentsToPaths, { paths: batchPaths, adjustments: patch })
         .then(() => reloadAdjustmentsForPaths(batchPaths))
-        .catch((err) => toast.error(`Failed to convert negatives: ${err}`));
+        .catch((err) => toast.error(`Failed to apply adjustments: ${err}`));
     },
     [setAdjustments],
   );
@@ -361,8 +384,9 @@ export function useEditorActions() {
     const { libraryActivePath, multiSelectedPaths } = useLibraryStore.getState();
     let sourceAdjustments: any = null;
 
+    const editingPath = useUIStore.getState().activeView === 'editor' ? selectedImage?.path : undefined;
     const pathToCopyFrom =
-      pathOverride || (selectedImage ? selectedImage.path : libraryActivePath || multiSelectedPaths[0]);
+      pathOverride || editingPath || libraryActivePath || multiSelectedPaths[0] || selectedImage?.path;
 
     if (selectedImage && pathToCopyFrom === selectedImage.path) {
       sourceAdjustments = adjustments;
@@ -418,12 +442,6 @@ export function useEditorActions() {
         }
       }
 
-      if (includedAdjustments.includes(LensAdjustment.LensMaker)) {
-        if (!adjustmentsToApply.lensMaker) {
-          adjustmentsToApply.lensDistortionParams = null;
-        }
-      }
-
       if (Object.keys(adjustmentsToApply).length === 0) {
         setProcess({ isPasted: true });
         return;
@@ -446,20 +464,19 @@ export function useEditorActions() {
           const meta: any = await invoke(Invokes.LoadMetadata, { path: openPath });
           if (!meta.adjustments || useEditorStore.getState().selectedImage?.path !== openPath) return;
 
-          const pastedKeys = [...Object.keys(adjustmentsToApply), 'lensMaker', 'lensModel', 'lensDistortionParams'];
-          const pasted = Object.fromEntries(pastedKeys.map((key) => [key, meta.adjustments[key]]));
-          setAdjustments((prev: any) => ({ ...prev, ...pasted }));
+          const pasted = Object.fromEntries(Object.keys(adjustmentsToApply).map((key) => [key, meta.adjustments[key]]));
+          setAdjustments((prev: any) => ({ ...prev, ...pasted }), t('contextMenus.editor.pasteAdjustments'));
         })
         .catch((err) => toast.error(`Failed to paste adjustments: ${err}`));
 
       setProcess({ isPasted: true });
     },
-    [setAdjustments],
+    [setAdjustments, t],
   );
 
   const handleZoomChange = useCallback((zoomValue: number, fitToWindow: boolean = false) => {
     const { originalSize, baseRenderSize, adjustments } = useEditorStore.getState();
-    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const dpr = getDevicePixelRatio();
     let targetZoomPercent: number;
 
     const orientationSteps = adjustments.orientationSteps || 0;
@@ -517,10 +534,11 @@ export function useEditorActions() {
     setLutPreviewOverride,
     handleResetAdjustments,
     handleAutoLensCorrection,
-    handleConvertNegatives,
+    handleEnableAdjustments,
     handleCopyAdjustments,
     handlePasteAdjustments,
     handleZoomChange,
-    toggleShowOriginal,
+    toggleCompare,
+    selectCompareMode,
   };
 }

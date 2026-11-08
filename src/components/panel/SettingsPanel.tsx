@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
+import { Fragment, useEffect, useMemo, useReducer, useState } from 'react';
 import {
   ArrowLeft,
   Cloud,
@@ -22,6 +22,9 @@ import {
   ChevronDown,
   ChevronRight,
   Settings as SettingsIcon,
+  Move,
+  MousePointerClick,
+  ArrowBigUp,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -48,15 +51,17 @@ import {
   KEYBIND_SECTIONS,
   normalizeCombo,
 } from '../../utils/keyboardUtils';
+import { DEFAULT_SPEED_EDIT_ADJUSTMENTS, SPEED_EDIT_ADJUSTMENTS } from '../../utils/adjustments';
 import Text from '../ui/Text';
 import { TextColors, TextVariants, TextWeights } from '../../types/typography';
 import { useOsPlatform } from '../../hooks/useOsPlatform';
 import { useCloudUsage } from '../../hooks/useCloudUsage';
 import { open } from '@tauri-apps/plugin-shell';
-import { RotateCcw } from 'lucide-react';
-import { useUIStore } from '../../store/useUIStore';
 import { useLibraryStore } from '../../store/useLibraryStore';
-import { formatBytes } from '../../utils/formatBytes';
+import ImmichSettings from '../immich/ImmichSettings';
+import DataManagementSettings from './settings/DataManagementSettings';
+import EditInAppsSettings from './settings/EditInAppsSettings';
+import { applyUiScale, clampUiScale, getDevicePixelRatio, UI_SCALE_PRESETS } from '../../utils/displayScale';
 
 interface ConfirmModalState {
   confirmText: string;
@@ -64,17 +69,6 @@ interface ConfirmModalState {
   isOpen: boolean;
   message: string;
   onConfirm(): void;
-  title: string;
-}
-
-interface DataActionItemProps {
-  buttonAction(): void;
-  buttonText: string;
-  description: any;
-  disabled?: boolean;
-  icon: any;
-  isProcessing: boolean;
-  message: string;
   title: string;
 }
 
@@ -239,38 +233,85 @@ const SettingItem = ({ children, description, label }: SettingItemProps) => (
   </div>
 );
 
-const DataActionItem = ({
-  buttonAction,
-  buttonText,
-  description,
-  disabled = false,
-  icon,
-  isProcessing,
-  message,
-  title,
-}: DataActionItemProps) => {
-  const { t } = useTranslation();
+const SPEED_EDIT_KEY_ROWS = [
+  {
+    offset: '',
+    keys: [
+      { code: 'KeyQ', label: 'settings.controls.speedEdit.keys.previousImage' },
+      { code: 'KeyW', label: 'settings.controls.speedEdit.keys.hold' },
+      { code: 'KeyE', label: 'settings.controls.speedEdit.keys.nextImage' },
+      { code: 'KeyR', label: 'settings.controls.speedEdit.keys.reset' },
+    ],
+  },
+  {
+    offset: 'ml-4',
+    keys: [
+      { code: 'KeyA', label: 'settings.controls.speedEdit.keys.previousAdjustment' },
+      { code: 'KeyS', label: null },
+      { code: 'KeyD', label: 'settings.controls.speedEdit.keys.nextAdjustment' },
+    ],
+  },
+  {
+    offset: 'ml-12',
+    keys: [
+      { code: 'KeyZ', label: null },
+      { code: 'KeyX', label: null },
+      { code: 'KeyC', label: 'settings.controls.speedEdit.keys.copy' },
+      { code: 'KeyV', label: 'settings.controls.speedEdit.keys.paste' },
+    ],
+  },
+] as const;
 
+const SPEED_EDIT_ARROW_ROWS = [
+  { offset: 'ml-[70px]', keys: [{ code: 'ArrowUp', label: null }] },
+  {
+    offset: '',
+    keys: [
+      { code: 'ArrowLeft', label: 'settings.controls.speedEdit.keys.stepDown' },
+      { code: 'ArrowDown', label: null },
+      { code: 'ArrowRight', label: 'settings.controls.speedEdit.keys.stepUp' },
+    ],
+  },
+] as const;
+
+const SPEED_EDIT_GESTURES = [
+  { icon: Move, label: 'settings.controls.speedEdit.gestures.drag', isPrimary: true },
+  { icon: ArrowBigUp, label: 'settings.controls.speedEdit.gestures.fine', isPrimary: false },
+  { icon: MousePointerClick, label: 'settings.controls.speedEdit.gestures.doubleClick', isPrimary: false },
+] as const;
+
+interface SpeedEditKeyProps {
+  code: string;
+  label: string | null;
+  osPlatform: string;
+}
+
+const SpeedEditKey = ({ code, label, osPlatform }: SpeedEditKeyProps) => {
+  const isHold = code === 'KeyW';
   return (
-    <div className="pb-8 border-b border-border-color last:border-b-0 last:pb-0">
-      <Text variant={TextVariants.heading} className="mb-2">
-        {title}
-      </Text>
-      <Text variant={TextVariants.small} className="mb-3">
-        {description}
-      </Text>
-      <Button variant="destructive" onClick={buttonAction} disabled={isProcessing || disabled}>
-        {icon}
-        {isProcessing ? t('settings.data.statuses.processing') : buttonText}
-      </Button>
-      {message && (
-        <Text color={TextColors.accent} className="mt-3">
-          {message}
-        </Text>
+    <kbd
+      className={clsx(
+        'flex flex-col items-center justify-center gap-1 w-16 h-14 px-1 rounded-lg border font-sans text-center',
+        isHold && 'bg-accent border-accent text-button-text',
+        !isHold && label && 'bg-bg-primary border-border-color shadow-[inset_0_-2px_0_rgba(0,0,0,0.25)]',
+        !label && 'border-dashed border-border-color text-text-secondary opacity-40',
       )}
-    </div>
+    >
+      <span className="text-sm font-semibold leading-none">{formatKeyCode(code, osPlatform)}</span>
+      {label && (
+        <span className={clsx('text-[9px] leading-tight', isHold ? 'text-button-text/80' : 'text-text-secondary')}>
+          {label}
+        </span>
+      )}
+    </kbd>
   );
 };
+
+const MiniKey = ({ code, osPlatform }: { code: string; osPlatform: string }) => (
+  <kbd className="px-1.5 py-0.5 rounded-sm border border-border-color bg-bg-primary font-sans text-[10px] font-semibold">
+    {formatKeyCode(code, osPlatform)}
+  </kbd>
+);
 
 interface AiProviderSwitchProps {
   selectedProvider: string;
@@ -558,17 +599,6 @@ export default function SettingsPanel({
     useShallow((s) => ({ authStatus: s.authStatus, clerk: s.clerk, user: s.user, initAuth: s.initAuth })),
   );
   const { t } = useTranslation();
-  const [isClearing, setIsClearing] = useState(false);
-  const [clearMessage, setClearMessage] = useState('');
-  const [isClearingCache, setIsClearingCache] = useState(false);
-  const [cacheClearMessage, setCacheClearMessage] = useState('');
-  const [aiDenoiseCacheSize, setAiDenoiseCacheSize] = useState<number | null>(null);
-  const [isClearingAiDenoiseCache, setIsClearingAiDenoiseCache] = useState(false);
-  const [aiDenoiseCacheMessage, setAiDenoiseCacheMessage] = useState('');
-  const [isClearingAiTags, setIsClearingAiTags] = useState(false);
-  const [aiTagsClearMessage, setAiTagsClearMessage] = useState('');
-  const [isClearingTags, setIsClearingTags] = useState(false);
-  const [tagsClearMessage, setTagsClearMessage] = useState('');
   const [confirmModalState, setConfirmModalState] = useState<ConfirmModalState>({
     confirmText: t('settings.data.modals.confirmClear'),
     confirmVariant: 'primary',
@@ -592,10 +622,13 @@ export default function SettingsPanel({
   const [tempLensMaker, setTempLensMaker] = useState<string>('');
   const [tempLensModel, setTempLensModel] = useState<string>('');
 
-  const [isResettingLayout, setIsResettingLayout] = useState(false);
-  const [layoutResetMessage, setLayoutResetMessage] = useState('');
-
   const osPlatform = useOsPlatform();
+  const [isWgpuSupported, setIsWgpuSupported] = useState(true);
+  useEffect(() => {
+    invoke<boolean>(Invokes.IsWgpuRendererSupported)
+      .then(setIsWgpuSupported)
+      .catch(() => setIsWgpuSupported(false));
+  }, []);
   const [processingSettings, setProcessingSettings] = useState({
     editorPreviewResolution: appSettings?.editorPreviewResolution || 1920,
     smallThumbnailResolution: appSettings?.smallThumbnailResolution || 480,
@@ -617,10 +650,7 @@ export default function SettingsPanel({
   });
   const [restartRequired, setRestartRequired] = useState(false);
   const [activeCategory, setActiveCategory] = useState('general');
-  const [logPath, setLogPath] = useState<string | null>(null);
-  const [logPathLoading, setLogPathLoading] = useState(true);
-  const [logPathError, setLogPathError] = useState(false);
-  const [dpr, setDpr] = useState(() => (typeof window !== 'undefined' ? window.devicePixelRatio : 1));
+  const [dpr, setDpr] = useState(() => getDevicePixelRatio());
 
   const settingCategories = useMemo(
     () => [
@@ -688,10 +718,22 @@ export default function SettingsPanel({
     [t],
   );
 
+  const uiScaleOptions = useMemo<OptionItem<number>[]>(() => {
+    const presetNames: Record<number, string> = {
+      0.8: t('settings.general.uiScaleCompact'),
+      1: t('settings.general.uiScaleDefault'),
+      1.25: t('settings.general.uiScaleLarge'),
+    };
+    return UI_SCALE_PRESETS.map((scale) => {
+      const percent = `${Math.round(scale * 100)}%`;
+      return { value: scale, label: presetNames[scale] ? `${percent} · ${presetNames[scale]}` : percent };
+    });
+  }, [t]);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const updateDpr = () => setDpr(window.devicePixelRatio);
+    const updateDpr = () => setDpr(getDevicePixelRatio());
 
     const mediaQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
     mediaQuery.addEventListener('change', updateDpr);
@@ -706,6 +748,7 @@ export default function SettingsPanel({
 
   const customAiTags = Array.from(new Set<string>(appSettings?.customAiTags || []));
   const taggingShortcuts = Array.from(new Set<string>(appSettings?.taggingShortcuts || []));
+  const speedEditAdjustments: string[] = appSettings?.speedEditAdjustments ?? DEFAULT_SPEED_EDIT_ADJUSTMENTS;
 
   useEffect(() => {
     if (appSettings?.aiConnectorAddress !== aiConnectorAddress) {
@@ -724,7 +767,8 @@ export default function SettingsPanel({
       linuxGpuOptimization: appSettings?.linuxGpuOptimization ?? false,
       highResZoomMultiplier: appSettings?.highResZoomMultiplier || 1.0,
       useFullDpiRendering: appSettings?.useFullDpiRendering ?? false,
-      useWgpuRenderer: appSettings?.useWgpuRenderer ?? true,
+      useWgpuRenderer:
+        appSettings?.useWgpuRenderer ?? (osPlatform === 'linux' || osPlatform === 'android' ? false : true),
       thumbnailWorkerThreads: appSettings?.thumbnailWorkerThreads ?? 4,
       imageCacheSize: appSettings?.imageCacheSize ?? 5,
       rawPreprocessingColorNr: appSettings?.rawPreprocessingColorNr ?? 0.5,
@@ -736,31 +780,8 @@ export default function SettingsPanel({
   }, [appSettings]);
 
   useEffect(() => {
-    const fetchLogPath = async () => {
-      try {
-        const path: string = await invoke(Invokes.GetLogFilePath);
-        setLogPath(path);
-      } catch (error) {
-        console.error('Failed to get log file path:', error);
-        setLogPathError(true);
-      } finally {
-        setLogPathLoading(false);
-      }
-    };
-    fetchLogPath();
-  }, []);
-
-  useEffect(() => {
     invoke<string[]>('get_lensfun_makers').then(setLensMakers).catch(console.error);
   }, []);
-
-  const refreshAiDenoiseCacheSize = useCallback(() => {
-    invoke<number>(Invokes.GetAiDenoiseCacheSize).then(setAiDenoiseCacheSize).catch(console.error);
-  }, []);
-
-  useEffect(() => {
-    if (activeCategory === 'processing') refreshAiDenoiseCacheSize();
-  }, [activeCategory, refreshAiDenoiseCacheSize]);
 
   const handleProcessingSettingChange = async (key: string, value: any) => {
     setProcessingSettings((prev) => ({ ...prev, [key]: value }));
@@ -847,201 +868,9 @@ export default function SettingsPanel({
 
   const effectiveRootPaths = rootPaths?.length > 0 ? rootPaths : appSettings?.rootFolders || [];
 
-  const executeClearSidecars = async () => {
-    setIsClearing(true);
-    setClearMessage(t('settings.data.statuses.deleting'));
-    try {
-      let totalCount = 0;
-      for (const root of effectiveRootPaths) {
-        const count: number = await invoke(Invokes.ClearAllSidecars, { rootPath: root });
-        totalCount += count;
-      }
-      setClearMessage(t('settings.data.statuses.sidecarSuccess', { count: totalCount }));
-      onLibraryRefresh();
-    } catch (err: any) {
-      console.error('Failed to clear sidecars:', err);
-      setClearMessage(`Error: ${err}`);
-    } finally {
-      setTimeout(() => {
-        setIsClearing(false);
-        setClearMessage('');
-      }, EXECUTE_TIMEOUT);
-    }
-  };
-
-  const executeResetLayout = async () => {
-    setIsResettingLayout(true);
-    setLayoutResetMessage(t('settings.data.statuses.resettingLayout'));
-    try {
-      const resetWorkspaceLayout = useUIStore.getState().resetWorkspaceLayout;
-      const defaultWorkspace = resetWorkspaceLayout(false);
-
-      await onSettingsChange({
-        ...appSettings,
-        workspace: defaultWorkspace,
-      });
-
-      setLayoutResetMessage(t('settings.data.statuses.layoutResetSuccess'));
-    } catch (err: any) {
-      console.error('Failed to reset workspace layout:', err);
-      setLayoutResetMessage(`Error: ${err}`);
-    } finally {
-      setTimeout(() => {
-        setIsResettingLayout(false);
-        setLayoutResetMessage('');
-      }, EXECUTE_TIMEOUT);
-    }
-  };
-
-  const handleResetLayout = () => {
-    setConfirmModalState({
-      confirmText: t('settings.data.modals.confirmResetLayout'),
-      confirmVariant: 'destructive',
-      isOpen: true,
-      message: t('settings.data.modals.resetLayoutMessage'),
-      onConfirm: executeResetLayout,
-      title: t('settings.data.modals.confirmResetLayoutTitle'),
-    });
-  };
-
-  const handleClearSidecars = () => {
-    setConfirmModalState({
-      confirmText: t('settings.data.modals.confirmDeleteAllEdits'),
-      confirmVariant: 'destructive',
-      isOpen: true,
-      message: t('settings.data.modals.sidecarMessage'),
-      onConfirm: executeClearSidecars,
-      title: t('settings.data.modals.confirmTitle'),
-    });
-  };
-
-  const executeClearAiTags = async () => {
-    setIsClearingAiTags(true);
-    setAiTagsClearMessage(t('settings.data.statuses.clearingAi'));
-    try {
-      let totalCount = 0;
-      for (const root of effectiveRootPaths) {
-        const count: number = await invoke(Invokes.ClearAiTags, { rootPath: root });
-        totalCount += count;
-      }
-      setAiTagsClearMessage(t('settings.data.statuses.aiSuccess', { count: totalCount }));
-      onLibraryRefresh();
-    } catch (err: any) {
-      console.error('Failed to clear AI tags:', err);
-      setAiTagsClearMessage(`Error: ${err}`);
-    } finally {
-      setTimeout(() => {
-        setIsClearingAiTags(false);
-        setAiTagsClearMessage('');
-      }, EXECUTE_TIMEOUT);
-    }
-  };
-
-  const handleClearAiTags = () => {
-    setConfirmModalState({
-      confirmText: t('settings.data.modals.confirmClearAi'),
-      confirmVariant: 'destructive',
-      isOpen: true,
-      message: t('settings.data.modals.aiMessage'),
-      onConfirm: executeClearAiTags,
-      title: t('settings.data.modals.confirmAiTitle'),
-    });
-  };
-
-  const executeClearTags = async () => {
-    setIsClearingTags(true);
-    setTagsClearMessage(t('settings.data.statuses.clearingAll'));
-    try {
-      let totalCount = 0;
-      for (const root of effectiveRootPaths) {
-        const count: number = await invoke(Invokes.ClearAllTags, { rootPath: root });
-        totalCount += count;
-      }
-      setTagsClearMessage(t('settings.data.statuses.allSuccess', { count: totalCount }));
-      onLibraryRefresh();
-    } catch (err: any) {
-      console.error('Failed to clear tags:', err);
-      setTagsClearMessage(`Error: ${err}`);
-    } finally {
-      setTimeout(() => {
-        setIsClearingTags(false);
-        setTagsClearMessage('');
-      }, EXECUTE_TIMEOUT);
-    }
-  };
-
-  const handleClearTags = () => {
-    setConfirmModalState({
-      confirmText: t('settings.data.modals.confirmClearAll'),
-      confirmVariant: 'destructive',
-      isOpen: true,
-      message: t('settings.data.modals.allMessage'),
-      onConfirm: executeClearTags,
-      title: t('settings.data.modals.confirmAllTitle'),
-    });
-  };
-
   const shortcutTagVariants = {
     visible: { opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 500, damping: 30 } },
     exit: { opacity: 0, scale: 0.8, transition: { duration: 0.15 } },
-  };
-
-  const executeClearCache = async () => {
-    setIsClearingCache(true);
-    setCacheClearMessage(t('settings.data.statuses.clearingCache'));
-    try {
-      await invoke(Invokes.ClearThumbnailCache);
-      setCacheClearMessage(t('settings.data.statuses.cacheSuccess'));
-      onLibraryRefresh();
-    } catch (err: any) {
-      console.error('Failed to clear thumbnail cache:', err);
-      setCacheClearMessage(`Error: ${err}`);
-    } finally {
-      setTimeout(() => {
-        setIsClearingCache(false);
-        setCacheClearMessage('');
-      }, EXECUTE_TIMEOUT);
-    }
-  };
-
-  const handleClearCache = () => {
-    setConfirmModalState({
-      confirmText: t('settings.data.modals.confirmClearCache'),
-      confirmVariant: 'destructive',
-      isOpen: true,
-      message: t('settings.data.modals.cacheMessage'),
-      onConfirm: executeClearCache,
-      title: t('settings.data.modals.confirmCacheTitle'),
-    });
-  };
-
-  const executeClearAiDenoiseCache = async () => {
-    setIsClearingAiDenoiseCache(true);
-    setAiDenoiseCacheMessage(t('settings.data.statuses.clearingAiDenoise'));
-    try {
-      await invoke(Invokes.ClearAiDenoiseCache);
-      setAiDenoiseCacheMessage(t('settings.data.statuses.aiDenoiseSuccess'));
-    } catch (err: any) {
-      console.error('Failed to clear AI denoise cache:', err);
-      setAiDenoiseCacheMessage(`Error: ${err}`);
-    } finally {
-      refreshAiDenoiseCacheSize();
-      setTimeout(() => {
-        setIsClearingAiDenoiseCache(false);
-        setAiDenoiseCacheMessage('');
-      }, EXECUTE_TIMEOUT);
-    }
-  };
-
-  const handleClearAiDenoiseCache = () => {
-    setConfirmModalState({
-      confirmText: t('settings.data.modals.confirmClearCache'),
-      confirmVariant: 'destructive',
-      isOpen: true,
-      message: t('settings.data.modals.aiDenoiseMessage'),
-      onConfirm: executeClearAiDenoiseCache,
-      title: t('settings.data.modals.confirmCacheTitle'),
-    });
   };
 
   const handleTestConnection = async () => {
@@ -1205,7 +1034,7 @@ export default function SettingsPanel({
                   className="space-y-10"
                 >
                   <div className="p-6 bg-surface rounded-xl shadow-md">
-                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
+                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-5">
                       {t('settings.general.title')}
                     </Text>
                     <div className="space-y-8">
@@ -1235,9 +1064,11 @@ export default function SettingsPanel({
                             { value: 'pl', label: 'Polski' },
                             { value: 'pt', label: 'Português' },
                             { value: 'ru', label: 'Русский' },
+                            { value: 'uk', label: 'Українська' },
                             { value: 'ja', label: '日本語' },
                             { value: 'ko', label: '한국어' },
                             { value: 'cs', label: 'Čeština' },
+                            { value: 'lt', label: 'Lietuvių' },
                             { value: 'zh-CN', label: '简体中文' },
                             { value: 'zh-TW', label: '繁體中文' },
                           ]}
@@ -1354,11 +1185,38 @@ export default function SettingsPanel({
                         />
                       </SettingItem>
 
+                      <SettingItem
+                        label={t('settings.general.hideCollapsedPanels')}
+                        description={t('settings.general.hideCollapsedPanelsDesc')}
+                      >
+                        <Switch
+                          checked={appSettings?.hideCollapsedPanels ?? false}
+                          id="hide-collapsed-panels-toggle"
+                          label={t('settings.general.hideCollapsedPanels')}
+                          onChange={(checked) => onSettingsChange({ ...appSettings, hideCollapsedPanels: checked })}
+                        />
+                      </SettingItem>
+
                       <SettingItem label={t('settings.general.font')} description={t('settings.general.fontDesc')}>
                         <Dropdown
                           onChange={(value: any) => onSettingsChange({ ...appSettings, fontFamily: value })}
                           options={fontOptions}
                           value={appSettings?.fontFamily || 'poppins'}
+                          triggerClassName="bg-bg-primary"
+                        />
+                      </SettingItem>
+
+                      <SettingItem
+                        label={t('settings.general.uiScale')}
+                        description={t('settings.general.uiScaleDesc')}
+                      >
+                        <Dropdown
+                          onChange={(value: number) => {
+                            onSettingsChange({ ...appSettings, uiScale: value });
+                            applyUiScale(value);
+                          }}
+                          options={uiScaleOptions}
+                          value={clampUiScale(appSettings?.uiScale)}
                           triggerClassName="bg-bg-primary"
                         />
                       </SettingItem>
@@ -1383,7 +1241,7 @@ export default function SettingsPanel({
                   </div>
 
                   <div className="p-6 bg-surface rounded-xl shadow-md">
-                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
+                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-5">
                       {t('settings.processing.ai.title')}
                     </Text>
                     <Text className="mb-4">{t('settings.processing.ai.description')}</Text>
@@ -1578,7 +1436,7 @@ export default function SettingsPanel({
                   </div>
 
                   <div className="p-6 bg-surface rounded-xl shadow-md">
-                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
+                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-5">
                       {t('settings.lenses.title')}
                     </Text>
                     <Text className="mb-6">{t('settings.lenses.description')}</Text>
@@ -1651,8 +1509,10 @@ export default function SettingsPanel({
                     </div>
                   </div>
 
+                  <ImmichSettings />
+
                   <div className="p-6 bg-surface rounded-xl shadow-md">
-                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
+                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-5">
                       {t('settings.tagging.title')}
                     </Text>
                     <div className="space-y-8">
@@ -1857,36 +1717,11 @@ export default function SettingsPanel({
                           </div>
                         </div>
                       </SettingItem>
-
-                      <div className="pt-8 border-t border-border-color">
-                        <div className="space-y-8">
-                          <DataActionItem
-                            buttonAction={handleClearAiTags}
-                            buttonText={t('settings.tagging.clearAiTagsButton')}
-                            description={t('settings.tagging.clearAiTagsDesc')}
-                            disabled={effectiveRootPaths.length === 0}
-                            icon={<Trash2 size={16} className="mr-2" />}
-                            isProcessing={isClearingAiTags}
-                            message={aiTagsClearMessage}
-                            title={t('settings.tagging.clearAiTagsTitle')}
-                          />
-                          <DataActionItem
-                            buttonAction={handleClearTags}
-                            buttonText={t('settings.tagging.clearAiTagsButton')}
-                            description={t('settings.tagging.clearAllTagsDesc')}
-                            disabled={effectiveRootPaths.length === 0}
-                            icon={<Trash2 size={16} className="mr-2" />}
-                            isProcessing={isClearingTags}
-                            message={tagsClearMessage}
-                            title={t('settings.tagging.clearAllTagsTitle')}
-                          />
-                        </div>
-                      </div>
                     </div>
                   </div>
 
                   <div className="p-6 bg-surface rounded-xl shadow-md">
-                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-6">
+                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-4">
                       {t('settings.thanks.title')}
                     </Text>
                     <Text className="mb-4">{t('settings.thanks.description')}</Text>
@@ -1948,12 +1783,12 @@ export default function SettingsPanel({
                       </li>
                       <li>
                         <a
-                          href="https://github.com/facebookresearch/sam2"
+                          href="https://github.com/facebookresearch/segment-anything"
                           target="_blank"
                           rel="noopener noreferrer"
                           className="font-semibold text-accent hover:underline"
                         >
-                          SAM 2
+                          Segment Anything
                         </a>
                         : {t('settings.thanks.list.sam2')}
                       </li>
@@ -1978,6 +1813,17 @@ export default function SettingsPanel({
                           BiRefNet
                         </a>
                         : {t('settings.thanks.list.birefnet')}
+                      </li>
+                      <li>
+                        <a
+                          href="https://github.com/google-ai-edge/mediapipe"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-semibold text-accent hover:underline"
+                        >
+                          MediaPipe
+                        </a>
+                        : {t('settings.thanks.list.mediapipe')}
                       </li>
                       <li>
                         <a
@@ -2041,7 +1887,7 @@ export default function SettingsPanel({
                   className="space-y-10"
                 >
                   <div className="p-6 bg-surface rounded-xl shadow-md">
-                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
+                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-5">
                       {t('settings.processing.title')}
                     </Text>
                     <div className="space-y-8">
@@ -2095,20 +1941,6 @@ export default function SettingsPanel({
                                   {t('settings.processing.dynamicDesc')}
                                 </Text>
                                 <div className="pl-4 border-l-2 border-border-color ml-1 space-y-3">
-                                  <SettingItem
-                                    description={t('settings.processing.staticPreviewResDesc')}
-                                    label={t('settings.processing.staticPreviewRes')}
-                                  >
-                                    <Dropdown
-                                      onChange={(value: any) =>
-                                        handleProcessingSettingChange('editorPreviewResolution', value)
-                                      }
-                                      options={resolutions}
-                                      value={processingSettings.editorPreviewResolution}
-                                      triggerClassName="bg-bg-primary"
-                                    />
-                                  </SettingItem>
-
                                   <SettingItem
                                     label={t('settings.processing.renderScale')}
                                     description={t('settings.processing.renderScaleDesc')}
@@ -2233,16 +2065,18 @@ export default function SettingsPanel({
                       <SettingItem
                         label={t('settings.processing.wgpu')}
                         description={
-                          osPlatform === 'linux'
-                            ? t('settings.processing.wgpuDescLinux')
-                            : osPlatform === 'android'
-                              ? t('settings.processing.wgpuDescAndroid')
+                          osPlatform === 'android'
+                            ? t('settings.processing.wgpuDescAndroid')
+                            : osPlatform === 'linux'
+                              ? isWgpuSupported
+                                ? t('settings.processing.wgpuDescLinuxExperimental')
+                                : t('settings.processing.wgpuDescLinuxX11')
                               : t('settings.processing.wgpuDescRecommended')
                         }
                       >
                         <Switch
                           checked={processingSettings.useWgpuRenderer}
-                          disabled={osPlatform === 'linux' || osPlatform === 'android'}
+                          disabled={osPlatform === 'android' || !isWgpuSupported}
                           id="wgpu-renderer-toggle"
                           label={t('settings.processing.wgpuLabel')}
                           onChange={(checked) => handleProcessingSettingChange('useWgpuRenderer', checked)}
@@ -2404,7 +2238,7 @@ export default function SettingsPanel({
                   </div>
 
                   <div className="p-6 bg-surface rounded-xl shadow-md">
-                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
+                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-5">
                       {t('settings.processing.preprocessing.title')}
                     </Text>
                     <div className="space-y-8">
@@ -2624,91 +2458,25 @@ export default function SettingsPanel({
                   </div>
 
                   <div className="p-6 bg-surface rounded-xl shadow-md">
-                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
+                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-5">
+                      {t('settings.processing.editIn.title')}
+                    </Text>
+                    <EditInAppsSettings appSettings={appSettings} onSettingsChange={onSettingsChange} />
+                  </div>
+
+                  <div className="p-6 bg-surface rounded-xl shadow-md">
+                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-5">
                       {t('settings.data.title')}
                     </Text>
-                    <div className="space-y-8">
-                      <DataActionItem
-                        buttonAction={handleClearSidecars}
-                        buttonText={t('settings.data.clearSidecarsButton')}
-                        description={
-                          <Text as="span" variant={TextVariants.small}>
-                            {t('settings.data.clearSidecarsDesc')}{' '}
-                            <code className="bg-bg-primary px-1 rounded-sm text-text-primary">.rrdata</code> files
-                            (containing your edits) within your root folders:
-                            <span className="block font-mono bg-bg-primary p-2 rounded-sm mt-2 break-all border border-border-color whitespace-pre-wrap">
-                              {effectiveRootPaths.length > 0
-                                ? effectiveRootPaths.join('\n')
-                                : t('settings.data.noFolders')}
-                            </span>
-                          </Text>
-                        }
-                        disabled={effectiveRootPaths.length === 0}
-                        icon={<Trash2 size={16} className="mr-2" />}
-                        isProcessing={isClearing}
-                        message={clearMessage}
-                        title={t('settings.data.clearSidecars')}
-                      />
-
-                      <DataActionItem
-                        buttonAction={handleResetLayout}
-                        buttonText={t('settings.data.resetLayoutButton')}
-                        description={t('settings.data.resetLayoutDesc')}
-                        icon={<RotateCcw size={16} className="mr-2" />}
-                        isProcessing={isResettingLayout}
-                        message={layoutResetMessage}
-                        title={t('settings.data.resetLayoutTitle')}
-                      />
-
-                      <DataActionItem
-                        buttonAction={handleClearCache}
-                        buttonText={t('settings.data.clearThumbnailButton')}
-                        description={t('settings.data.clearThumbnailDesc')}
-                        icon={<Trash2 size={16} className="mr-2" />}
-                        isProcessing={isClearingCache}
-                        message={cacheClearMessage}
-                        title={t('settings.data.clearThumbnail')}
-                      />
-
-                      <DataActionItem
-                        buttonAction={handleClearAiDenoiseCache}
-                        buttonText={t('settings.data.clearAiDenoiseButton')}
-                        description={t('settings.data.clearAiDenoiseDesc', {
-                          size: aiDenoiseCacheSize === null ? '…' : formatBytes(aiDenoiseCacheSize, t),
-                        })}
-                        disabled={!aiDenoiseCacheSize}
-                        icon={<Trash2 size={16} className="mr-2" />}
-                        isProcessing={isClearingAiDenoiseCache}
-                        message={aiDenoiseCacheMessage}
-                        title={t('settings.data.clearAiDenoise')}
-                      />
-
-                      <DataActionItem
-                        buttonAction={async () => {
-                          if (logPath && !logPathLoading && !logPathError) {
-                            await invoke(Invokes.ShowInFinder, { path: logPath });
-                          }
-                        }}
-                        buttonText={t('settings.data.logsButton')}
-                        description={
-                          <Text as="span" variant={TextVariants.small}>
-                            {t('settings.data.logsDesc')}
-                            <span className="block font-mono bg-bg-primary p-2 rounded-sm mt-2 break-all border border-border-color">
-                              {logPathLoading
-                                ? t('settings.data.loading')
-                                : logPathError
-                                  ? t('settings.data.statuses.failedToGetPath')
-                                  : logPath}
-                            </span>
-                          </Text>
-                        }
-                        disabled={logPathLoading || logPathError || !logPath}
-                        icon={<ExternalLinkIcon size={16} className="mr-2" />}
-                        isProcessing={false}
-                        message=""
-                        title={t('settings.data.logs')}
-                      />
-                    </div>
+                    <DataManagementSettings
+                      appSettings={appSettings}
+                      onLibraryRefresh={onLibraryRefresh}
+                      onRequestConfirm={(request) =>
+                        setConfirmModalState({ ...request, confirmVariant: 'destructive', isOpen: true })
+                      }
+                      onSettingsChange={onSettingsChange}
+                      rootPaths={effectiveRootPaths}
+                    />
                   </div>
                 </motion.div>
               )}
@@ -2723,7 +2491,7 @@ export default function SettingsPanel({
                   className="space-y-10"
                 >
                   <div className="p-6 bg-surface rounded-xl shadow-md">
-                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
+                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-5">
                       {t('settings.controls.title')}
                     </Text>
                     <div className="space-y-8">
@@ -2771,7 +2539,83 @@ export default function SettingsPanel({
                   </div>
 
                   <div className="p-6 bg-surface rounded-xl shadow-md">
-                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
+                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-5">
+                      {t('settings.controls.speedEdit.title')}
+                    </Text>
+                    <div className="space-y-8">
+                      <div>
+                        <div className="flex items-end gap-6">
+                          {[SPEED_EDIT_KEY_ROWS, SPEED_EDIT_ARROW_ROWS].map((rows) => (
+                            <div className="space-y-1.5" key={rows[0].keys[0].code}>
+                              {rows.map(({ offset, keys }) => (
+                                <div className={clsx('flex gap-1.5', offset)} key={keys[0].code}>
+                                  {keys.map(({ code, label }) => (
+                                    <SpeedEditKey
+                                      code={code}
+                                      key={code}
+                                      label={label && t(label)}
+                                      osPlatform={osPlatform}
+                                    />
+                                  ))}
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex flex-wrap gap-2 mt-5">
+                          {SPEED_EDIT_GESTURES.map(({ icon: Icon, label, isPrimary }) => (
+                            <span
+                              className={clsx(
+                                'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs',
+                                isPrimary
+                                  ? 'bg-accent text-button-text font-semibold'
+                                  : 'bg-bg-primary text-text-secondary',
+                              )}
+                              key={label}
+                            >
+                              <Icon size={14} />
+                              {t(label)}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <SettingItem label={t('settings.controls.speedEdit.adjustments')}>
+                        <div className="flex flex-wrap items-center gap-1.5 mb-4 text-xs">
+                          <MiniKey code="KeyA" osPlatform={osPlatform} />
+                          {SPEED_EDIT_ADJUSTMENTS.filter(({ id }) => speedEditAdjustments.includes(id)).map(
+                            ({ id, label }, index) => (
+                              <Fragment key={id}>
+                                {index > 0 && <ChevronRight size={12} className="text-text-secondary" />}
+                                <span className="px-2 py-0.5 rounded-full bg-bg-primary">{t(label)}</span>
+                              </Fragment>
+                            ),
+                          )}
+                          <MiniKey code="KeyD" osPlatform={osPlatform} />
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+                          {SPEED_EDIT_ADJUSTMENTS.map(({ id, label }) => (
+                            <Switch
+                              checked={speedEditAdjustments.includes(id)}
+                              id={`speed-edit-${id}`}
+                              key={id}
+                              label={t(label)}
+                              onChange={(checked) =>
+                                onSettingsChange({
+                                  ...appSettings,
+                                  speedEditAdjustments: checked
+                                    ? [...speedEditAdjustments, id]
+                                    : speedEditAdjustments.filter((item) => item !== id),
+                                })
+                              }
+                            />
+                          ))}
+                        </div>
+                      </SettingItem>
+                    </div>
+                  </div>
+
+                  <div className="p-6 bg-surface rounded-xl shadow-md">
+                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-5">
                       {t('settings.controls.keyboardTitle')}
                     </Text>
                     <div className="space-y-8">

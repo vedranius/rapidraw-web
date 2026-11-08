@@ -1,13 +1,14 @@
 use crate::Cursor;
 use crate::app_settings::{AppSettings, load_settings};
-use crate::app_state::{AppState, LoadedImage};
+use crate::app_state::{AppState, LoadedImage, PreviewTarget};
 use crate::baseline_exposure::BaselineOptions;
+use crate::cache_utils::{DecodeFingerprint, FlightRole, clear_preview_slot};
 use crate::exif_processing;
 use crate::file_management::{parse_virtual_path, read_file_mapped};
 use crate::formats::is_raw_file;
 use crate::image_processing::ImageMetadata;
 use crate::image_processing::{
-    apply_orientation, apply_srgb_to_linear, effective_baseline_exposure,
+    apply_orientation, apply_srgb_to_linear, effective_baseline_exposure, linear_channel_to_srgb,
     remove_raw_artifacts_and_enhance,
 };
 use crate::mask_generation::{MaskDefinition, SubMask, generate_mask_bitmap};
@@ -15,7 +16,11 @@ use crate::white_balance::WhiteBalance;
 use anyhow::{Context, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose};
 use exif::{Reader as ExifReader, Tag};
-use image::{DynamicImage, GenericImageView, ImageReader, imageops};
+use glam::{DMat3, Mat3, Vec3};
+use image::{DynamicImage, GenericImageView, ImageDecoder, ImageReader, Rgb32FImage, imageops};
+use moxcms::{
+    ColorProfile, DataColorSpace, Layout, RenderingIntent, ToneReprCurve, TransformOptions,
+};
 use rawler::Orientation;
 use rayon::prelude::*;
 use serde::Deserialize;
@@ -31,6 +36,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 use std::time::Instant;
+use tauri::Manager;
 
 #[derive(serde::Serialize)]
 pub struct LoadImageResult {
@@ -123,7 +129,7 @@ pub fn prepare_base_image_cow<'a>(
     let denoised = crate::ai_denoise::apply_ai_denoise(base_image, path, adjustments);
     match crate::negative_conversion::apply_negative_conversion(denoised, adjustments) {
         Cow::Owned(prepared) if !has_patches => Ok(Cow::Owned(prepared)),
-        prepared => composite_patches_cow(prepared, adjustments),
+        prepared => composite_patches_cow(prepared, path, adjustments),
     }
 }
 
@@ -136,13 +142,10 @@ pub fn load_base_image_from_bytes(
 ) -> Result<DynamicImage> {
     let highlight_compression = settings.raw_highlight_compression.unwrap_or(2.5);
     let linear_mode = settings.linear_raw_mode.clone();
-    let color_nr_setting = settings.raw_preprocessing_color_nr.unwrap_or(0.5);
-    let color_nr_amount = if color_nr_setting <= 0.0 {
-        0.0
-    } else {
-        let x = color_nr_setting.clamp(0.01, 1.0);
-        (12.0 / x - 10.0).max(0.1)
-    };
+    let color_nr_amount = settings
+        .raw_preprocessing_color_nr
+        .unwrap_or(0.5)
+        .clamp(0.0, 1.0);
     let sharpening_amount = settings.raw_preprocessing_sharpening.unwrap_or(0.35);
     let apply_to_non_raws = settings.apply_preprocessing_to_non_raws.unwrap_or(false);
 
@@ -162,11 +165,7 @@ pub fn load_base_image_from_bytes(
             return Err(anyhow!("Load cancelled"));
         }
 
-        match crate::apple_raw::develop_raw9(
-            bytes,
-            path_for_ext_check,
-            &crate::apple_raw::Raw9Options::for_loading(),
-        ) {
+        match crate::apple_raw::develop_raw9(bytes, path_for_ext_check) {
             Ok(image) => return Ok(image),
             Err(e) => log::warn!(
                 "Apple RAW 9 unavailable for '{}', falling back to rawler: {}",
@@ -376,24 +375,23 @@ fn largest_tiff_jpeg_preview(buf: &[u8]) -> Option<DynamicImage> {
     None
 }
 
-fn embedded_preview_fallback(bytes: &[u8]) -> Option<DynamicImage> {
-    let Some(img) = largest_tiff_jpeg_preview(bytes) else {
-        return crate::raw_processing::extract_embedded_preview(bytes);
-    };
+pub fn tiff_embedded_preview(bytes: &[u8]) -> Option<DynamicImage> {
+    let img = largest_tiff_jpeg_preview(bytes)?;
 
-    let orientation = ExifReader::new()
-        .read_from_container(&mut Cursor::new(bytes))
-        .ok()
-        .and_then(|exif| {
-            exif.get_field(Tag::Orientation, exif::In::PRIMARY)?
-                .value
-                .get_uint(0)
-        });
+    let orientation = exif_processing::read_exif(bytes).and_then(|exif| {
+        exif.get_field(Tag::Orientation, exif::In::PRIMARY)?
+            .value
+            .get_uint(0)
+    });
 
     Some(match orientation {
         Some(o) if o > 1 => apply_orientation(img, Orientation::from_u16(o as u16)),
         _ => img,
     })
+}
+
+fn embedded_preview_fallback(bytes: &[u8]) -> Option<DynamicImage> {
+    tiff_embedded_preview(bytes).or_else(|| crate::raw_processing::extract_embedded_preview(bytes))
 }
 
 pub fn safe_embedded_preview_fallback(bytes: &[u8], path: &str) -> Option<DynamicImage> {
@@ -439,31 +437,152 @@ pub fn load_image_with_orientation(
 
     check_cancel()?;
 
-    let image = reader.decode().context("Failed to decode image")?;
+    let mut decoder = reader.into_decoder().context("Failed to decode image")?;
+    let icc_profile = decoder.icc_profile().ok().flatten();
+    let image = DynamicImage::from_decoder(decoder).context("Failed to decode image")?;
     check_cancel()?;
 
-    let oriented_image = {
-        let exif_reader = ExifReader::new();
-        if let Ok(exif) = exif_reader.read_from_container(&mut cursor.clone()) {
-            if let Some(orientation) = exif
-                .get_field(Tag::Orientation, exif::In::PRIMARY)
-                .and_then(|f| f.value.get_uint(0))
-            {
-                check_cancel()?;
-                apply_orientation(image, Orientation::from_u16(orientation as u16))
-            } else {
-                image
-            }
-        } else {
-            image
-        }
+    let exif = ExifReader::new()
+        .read_from_container(&mut cursor.clone())
+        .ok();
+    let orientation = exif.as_ref().and_then(|exif| {
+        exif.get_field(Tag::Orientation, exif::In::PRIMARY)?
+            .value
+            .get_uint(0)
+    });
+    let oriented_image = match orientation {
+        Some(orientation) => apply_orientation(image, Orientation::from_u16(orientation as u16)),
+        None => image,
     };
 
-    Ok(DynamicImage::ImageRgb32F(oriented_image.to_rgb32f()))
+    let mut rgb = oriented_image.to_rgb32f();
+    let source_profile = match icc_profile {
+        Some(icc) => ColorProfile::new_from_slice(&icc).ok(),
+        None => exif
+            .as_ref()
+            .is_some_and(is_exif_adobe_rgb)
+            .then(ColorProfile::new_adobe_rgb),
+    };
+    if let Some(profile) = source_profile {
+        check_cancel()?;
+        convert_profile_to_srgb(&mut rgb, &profile);
+    }
+
+    Ok(DynamicImage::ImageRgb32F(rgb))
+}
+
+fn is_exif_adobe_rgb(exif: &exif::Exif) -> bool {
+    let uncalibrated = exif
+        .get_field(Tag::ColorSpace, exif::In::PRIMARY)
+        .and_then(|f| f.value.get_uint(0))
+        == Some(0xFFFF);
+    let interop_r03 = exif
+        .get_field(Tag::InteroperabilityIndex, exif::In::PRIMARY)
+        .is_some_and(|f| f.display_value().to_string().contains("R03"));
+    uncalibrated && interop_r03
+}
+
+fn with_linear_trc(mut profile: ColorProfile) -> ColorProfile {
+    let identity = ToneReprCurve::Lut(Vec::new());
+    profile.red_trc = Some(identity.clone());
+    profile.green_trc = Some(identity.clone());
+    profile.blue_trc = Some(identity);
+    profile.cicp = None;
+    profile
+}
+
+fn colorants(profile: &ColorProfile) -> DMat3 {
+    DMat3::from_cols_array_2d(&profile.colorant_matrix().v).transpose()
+}
+
+fn convert_profile_to_srgb(image: &mut Rgb32FImage, source: &ColorProfile) {
+    if source.color_space != DataColorSpace::Rgb || image.width() == 0 {
+        return;
+    }
+    let srgb = ColorProfile::new_srgb();
+    let (target, to_srgb) = if source.is_matrix_shaper() {
+        let matrix = (colorants(&srgb).inverse() * colorants(source)).as_mat3();
+        (with_linear_trc(source.clone()), matrix)
+    } else {
+        (with_linear_trc(srgb), Mat3::IDENTITY)
+    };
+
+    let options = TransformOptions {
+        rendering_intent: RenderingIntent::RelativeColorimetric,
+        ..TransformOptions::default()
+    };
+    let Ok(transform) = source.create_transform_f32(Layout::Rgb, &target, Layout::Rgb, options)
+    else {
+        log::warn!("Unsupported embedded color profile, assuming sRGB");
+        return;
+    };
+    let to_linear_srgb = |src: &[f32], dst: &mut [f32]| {
+        transform.transform(src, dst)?;
+        for rgb in dst.as_chunks_mut::<3>().0 {
+            *rgb = (to_srgb * Vec3::from_array(*rgb)).to_array();
+        }
+        Ok::<_, moxcms::CmsError>(())
+    };
+
+    const STEPS: usize = 16;
+    let probe: Vec<f32> = (0..(STEPS + 1).pow(3))
+        .flat_map(|i| {
+            [
+                i % (STEPS + 1),
+                i / (STEPS + 1) % (STEPS + 1),
+                i / (STEPS + 1).pow(2),
+            ]
+            .map(|c| c as f32 / STEPS as f32)
+        })
+        .collect();
+    let mut probe_out = vec![0.0f32; probe.len()];
+    if to_linear_srgb(&probe, &mut probe_out).is_err() {
+        return;
+    }
+    let is_srgb = probe.iter().zip(&probe_out).all(|(input, linear)| {
+        (linear_channel_to_srgb(*linear).min(1.0) - input).abs() < 2.0 / 255.0
+    });
+    if is_srgb {
+        return;
+    }
+
+    let row_len = image.width() as usize * 3;
+    let mut linear = vec![0.0f32; image.as_raw().len()];
+    let converted = linear
+        .par_chunks_mut(row_len)
+        .zip(image.as_raw().par_chunks(row_len))
+        .try_for_each(|(dst, src)| to_linear_srgb(src, dst));
+    if converted.is_err() {
+        log::warn!("Failed to apply embedded color profile, assuming sRGB");
+        return;
+    }
+
+    image
+        .as_mut()
+        .par_chunks_exact_mut(3)
+        .zip(linear.par_chunks_exact(3))
+        .for_each(|(out, rgb)| {
+            let peak = rgb[0].max(rgb[1]).max(rgb[2]);
+            if peak <= 0.0 {
+                out.fill(0.0);
+                return;
+            }
+            let floor = rgb[0].min(rgb[1]).min(rgb[2]);
+            let saturation = if floor < 0.0 {
+                peak / (peak - floor)
+            } else {
+                1.0
+            };
+            let scale = peak.max(1.0);
+            for (o, c) in out.iter_mut().zip(rgb) {
+                *o = linear_channel_to_srgb((peak - (peak - c) * saturation) / scale);
+            }
+        });
 }
 
 fn composite_patches_cow<'a>(
     base_image: Cow<'a, DynamicImage>,
+    path: &str,
     current_adjustments: &Value,
 ) -> Result<Cow<'a, DynamicImage>> {
     let patches_val = match current_adjustments.get("aiPatches") {
@@ -567,8 +686,11 @@ fn composite_patches_cow<'a>(
                     generate_mask_bitmap(&mask_def, trans_w, trans_h, 1.0, (0.0, 0.0), None)
                         .context("Failed to generate mask from sub_masks for compositing")?;
 
-                gen_mask =
-                    crate::image_processing::inverse_transform_mask(gen_mask, current_adjustments);
+                gen_mask = crate::image_processing::inverse_transform_mask(
+                    gen_mask,
+                    path,
+                    current_adjustments,
+                );
 
                 if let (Some(ox), Some(oy)) = (offset_x, offset_y) {
                     let w = patch_data
@@ -887,15 +1009,120 @@ fn composite_patches_cow<'a>(
     Ok(Cow::Owned(composited_image))
 }
 
+fn is_cancelled(cancel_token: &Option<(Arc<AtomicUsize>, usize)>) -> bool {
+    cancel_token
+        .as_ref()
+        .is_some_and(|(tracker, generation)| tracker.load(Ordering::SeqCst) != *generation)
+}
+
+pub fn decode_pristine(
+    source_path: &Path,
+    path_str: &str,
+    settings: &AppSettings,
+    cancel_token: Option<(Arc<AtomicUsize>, usize)>,
+) -> Result<(DynamicImage, HashMap<String, String>), String> {
+    if crate::file_management::is_cloud_placeholder(source_path) {
+        return Err(format!(
+            "'{}' is stored in iCloud and hasn't been downloaded yet. Download it in Finder, then try again.",
+            path_str
+        ));
+    }
+    let decode = |bytes: &[u8]| -> Result<(DynamicImage, HashMap<String, String>), String> {
+        if is_cancelled(&cancel_token) {
+            return Err("Load cancelled".to_string());
+        }
+        let image =
+            load_base_image_from_bytes(bytes, path_str, false, settings, cancel_token.clone())
+                .map_err(|e| e.to_string())?;
+        crate::as_shot::as_shot_from_bytes(path_str, bytes);
+        Ok((image, exif_processing::read_exif_data(path_str, bytes)))
+    };
+    match read_file_mapped(source_path) {
+        Ok(mmap) => decode(&mmap),
+        Err(e) => {
+            log::warn!(
+                "Failed to memory-map file '{}': {}. Falling back to standard read.",
+                path_str,
+                e
+            );
+            let bytes = fs::read(source_path)
+                .map_err(|io_err| format!("Fallback read failed for {}: {}", path_str, io_err))?;
+            decode(&bytes)
+        }
+    }
+}
+
+pub fn cache_pristine(
+    state: &AppState,
+    path_str: String,
+    fingerprint: Option<DecodeFingerprint>,
+    image: DynamicImage,
+    exif: HashMap<String, String>,
+) -> (Arc<DynamicImage>, HashMap<String, String>) {
+    let image = Arc::new(image);
+    if let Some(fp) = fingerprint {
+        state.decoded_image_cache.lock().unwrap().insert(
+            path_str,
+            fp,
+            Arc::clone(&image),
+            exif.clone(),
+        );
+    }
+    (image, exif)
+}
+
+pub fn get_or_decode_pristine(
+    state: &AppState,
+    source_path: &Path,
+    settings: &AppSettings,
+    cancel_token: Option<(Arc<AtomicUsize>, usize)>,
+) -> Result<(Arc<DynamicImage>, HashMap<String, String>), String> {
+    let path_str = source_path.to_string_lossy().to_string();
+    let fingerprint = DecodeFingerprint::for_file(source_path, settings);
+    let cached = || {
+        fingerprint
+            .as_ref()
+            .and_then(|fp| state.decoded_image_cache.lock().unwrap().get(&path_str, fp))
+    };
+    loop {
+        if let Some(hit) = cached() {
+            return Ok(hit);
+        }
+        if is_cancelled(&cancel_token) {
+            return Err("Load cancelled".to_string());
+        }
+        let _flight = match state.decode_flights.begin(&path_str) {
+            FlightRole::Follower(flight) => {
+                flight.wait();
+                continue;
+            }
+            FlightRole::Leader(guard) => guard,
+        };
+        if let Some(hit) = cached() {
+            return Ok(hit);
+        }
+
+        let (image, exif) = decode_pristine(source_path, &path_str, settings, cancel_token)?;
+        return Ok(cache_pristine(state, path_str, fingerprint, image, exif));
+    }
+}
+
 #[tauri::command]
-pub fn is_image_cached(path: String, state: tauri::State<'_, AppState>) -> bool {
+pub fn is_image_cached(
+    path: String,
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> bool {
     let (source_path, _) = parse_virtual_path(&path);
-    let source_path_str = source_path.to_string_lossy().to_string();
+    let settings = load_settings(app_handle).unwrap_or_default();
+    let Some(fingerprint) = DecodeFingerprint::for_file(&source_path, &settings) else {
+        return false;
+    };
     state
         .decoded_image_cache
         .lock()
         .unwrap()
-        .contains(&source_path_str)
+        .contains(&source_path.to_string_lossy(), &fingerprint)
 }
 
 #[tauri::command]
@@ -904,23 +1131,21 @@ pub async fn load_image(
     state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<LoadImageResult, String> {
+    let (source_path, sidecar_path) = parse_virtual_path(&path);
+    let source_path_str = source_path.to_string_lossy().to_string();
+    let _preload_guard = state.image_preloader.begin_load(&source_path_str);
+
     let my_generation = state.load_image_generation.fetch_add(1, Ordering::SeqCst) + 1;
-    let generation_tracker = state.load_image_generation.clone();
-    let cancel_token = Some((generation_tracker.clone(), my_generation));
+    let cancel_token = Some((state.load_image_generation.clone(), my_generation));
 
     {
         *state
             .original_image
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = None;
-        *state
-            .cached_preview
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = None;
-        *state
-            .gpu_image_cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = None;
+        for target in PreviewTarget::ALL {
+            clear_preview_slot(&state, target);
+        }
         *state
             .full_warped_cache
             .lock()
@@ -938,15 +1163,11 @@ pub async fn load_image(
             .unwrap_or_else(|e| e.into_inner())
             .clear();
         state
-            .geometry_cache
+            .uncropped_source_cache
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
 
-        *state
-            .denoise_result
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = None;
         *state.hdr_result.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *state
             .panorama_result
@@ -954,95 +1175,28 @@ pub async fn load_image(
             .unwrap_or_else(|e| e.into_inner()) = None;
     }
 
-    let (source_path, sidecar_path) = parse_virtual_path(&path);
-    let source_path_str = source_path.to_string_lossy().to_string();
+    crate::immich::ensure_local(&app_handle, &source_path).await?;
 
     let metadata: ImageMetadata = crate::exif_processing::load_sidecar(&sidecar_path);
 
     let settings = load_settings(app_handle.clone()).unwrap_or_default();
     let baseline_options = BaselineOptions::from_settings(&settings);
 
-    let path_clone = source_path_str.clone();
+    state
+        .decoded_image_cache
+        .lock()
+        .unwrap()
+        .promote(&source_path_str);
 
-    let cached_data = {
-        let mut decoded_cache = state.decoded_image_cache.lock().unwrap();
-        decoded_cache.compact_except(&source_path_str);
-        decoded_cache.get(&source_path_str)
-    };
-
-    let (pristine_arc, exif_data) = if let Some((cached_img, cached_exif)) = cached_data {
-        (cached_img, cached_exif)
-    } else {
-        if crate::file_management::is_cloud_placeholder(&source_path) {
-            return Err(format!(
-                "'{}' is stored in iCloud and hasn't been downloaded yet. Download it in Finder, then try again.",
-                source_path_str
-            ));
-        }
-
-        let (pristine_img, exif_data_loaded) = tokio::task::spawn_blocking(move || {
-            if generation_tracker.load(Ordering::SeqCst) != my_generation {
-                return Err("Load cancelled".to_string());
-            }
-
-            let result: Result<(DynamicImage, HashMap<String, String>), String> =
-                (|| match read_file_mapped(Path::new(&path_clone)) {
-                    Ok(mmap) => {
-                        if generation_tracker.load(Ordering::SeqCst) != my_generation {
-                            return Err("Load cancelled".to_string());
-                        }
-
-                        let img = load_base_image_from_bytes(
-                            &mmap,
-                            &path_clone,
-                            false,
-                            &settings,
-                            cancel_token.clone(),
-                        )
-                        .map_err(|e| e.to_string())?;
-                        let exif = exif_processing::read_exif_data(&path_clone, &mmap);
-                        Ok((img, exif))
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to memory-map file '{}': {}. Falling back to standard read.",
-                            path_clone,
-                            e
-                        );
-                        let bytes = fs::read(&path_clone).map_err(|io_err| {
-                            format!("Fallback read failed for {}: {}", path_clone, io_err)
-                        })?;
-
-                        if generation_tracker.load(Ordering::SeqCst) != my_generation {
-                            return Err("Load cancelled".to_string());
-                        }
-
-                        let img = load_base_image_from_bytes(
-                            &bytes,
-                            &path_clone,
-                            false,
-                            &settings,
-                            cancel_token.clone(),
-                        )
-                        .map_err(|e| e.to_string())?;
-                        let exif = exif_processing::read_exif_data(&path_clone, &bytes);
-                        Ok((img, exif))
-                    }
-                })();
-            result
+    let (pristine_arc, exif_data) = {
+        let app_handle = app_handle.clone();
+        let source_path = source_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let state = app_handle.state::<AppState>();
+            get_or_decode_pristine(&state, &source_path, &settings, cancel_token)
         })
         .await
-        .map_err(|e| e.to_string())??;
-
-        let arc_img = Arc::new(pristine_img);
-
-        state.decoded_image_cache.lock().unwrap().insert(
-            source_path_str.clone(),
-            arc_img.clone(),
-            exif_data_loaded.clone(),
-        );
-
-        (arc_img, exif_data_loaded)
+        .map_err(|e| e.to_string())??
     };
 
     if state.load_image_generation.load(Ordering::SeqCst) != my_generation {

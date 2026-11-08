@@ -56,6 +56,57 @@
         "reds": "Rot",
         "yellows": "Gelb"
       },
+      "mixerPickerTooltip": "Farbmischer-Pipette: Auf das Foto klicken und nach oben oder unten ziehen",
+      "monochrome": {
+        "badge": "S/W",
+        "balance": "Abgleich",
+        "blackWhite": "Schwarzweiß",
+        "film": "Film",
+        "filmDescriptions": {
+          "balanced": "Gleichmäßige Empfindlichkeit für alle Farben, mit helleren Rottönen und Haut",
+          "extendedRed": "Rotempfindlicher Film mit leuchtender Haut und dunkleren Himmeln",
+          "infrared": "Leuchtendes Laub und fast schwarze Himmel",
+          "neutral": "Entspricht der wahrgenommenen Helligkeit jeder Farbe",
+          "orthoPanchromatic": "Etwas dunklere Rottöne mit klaren Grüntönen",
+          "orthochromatic": "Rotblind, mit dunklen Rottönen und hellen Himmeln",
+          "panchromatic": "Klassische Filmwiedergabe mit helleren blauen Himmeln"
+        },
+        "films": {
+          "balanced": "Ausgewogen",
+          "extendedRed": "Erweitertes Rot",
+          "infrared": "Infrarot",
+          "neutral": "Neutral",
+          "orthoPanchromatic": "Ortho-Pan",
+          "orthochromatic": "Orthochromatisch",
+          "panchromatic": "Panchromatisch"
+        },
+        "filter": "Filter",
+        "filters": {
+          "blue": "Blau",
+          "green": "Grün",
+          "none": "Kein",
+          "orange": "Orange",
+          "red": "Rot",
+          "yellow": "Gelb"
+        },
+        "highlights": "Lichter",
+        "hue": "Farbton",
+        "mix": "S/W-Mischer",
+        "mixPickerTooltip": "S/W-Mischer-Pipette: Auf das Foto klicken und nach oben oder unten ziehen",
+        "saturation": "Sättigung",
+        "shadows": "Tiefen",
+        "strength": "Stärke",
+        "toning": "Tonung",
+        "tonings": {
+          "cyanotype": "Cyanotypie",
+          "gold": "Gold",
+          "none": "Keine",
+          "platinum": "Platin",
+          "selenium": "Selen",
+          "sepia": "Sepia",
+          "split": "Teiltonung"
+        }
+      },
       "presence": "Präsenz",
       "saturation": "Sättigung",
       "temperature": "Temperatur",
@@ -97,6 +148,7 @@
     },
     "details": {
       "aiDenoise": "KI-Entrauschen",
+      "classicDenoise": "Klassisches Entrauschen",
       "aiDenoiseDetail": "Details",
       "blueYellow": "Blau/Gelb",
       "centre": "Zentriert",
@@ -142,6 +194,24 @@
       "lightFlares": "Blendenflecke",
       "lut": "LUT",
       "midpoint": "Mittelpunkt",
+      "motionBlur": "Bewegungsunschärfe",
+      "motionBlurAngle": "Winkel",
+      "motionBlurDepth": "Tiefe",
+      "motionBlurHighlights": "Lichter",
+      "motionBlurLayer": "Bewegung",
+      "motionBlurLayers": {
+        "auto": "Automatisch",
+        "panning": "Mitziehen",
+        "subject": "Bewegtes Motiv",
+        "uniform": "Gleichmäßig"
+      },
+      "motionBlurType": "Typ",
+      "motionBlurTypes": {
+        "linear": "Linear",
+        "zoom": "Zoom",
+        "spin": "Drehung",
+        "smooth": "Weich"
+      },
       "relight": "Neu beleuchten",
       "relightAddLight": "Licht hinzufügen",
       "relightAmbient": "Umgebungslicht",
@@ -222,13 +292,16 @@
       "aiStyle": "AI Style (auto-edit)",
       "autoStraighten": "Automatisch ausrichten",
       "cancel": "Abbrechen",
+      "closeViewer": "Zweites Fenster schließen",
       "colorLabel": "Farbmarkierung",
       "confirmReset": "Zurücksetzen bestätigen",
+      "convertBlackWhite": "In Schwarzweiß umwandeln",
       "convertNegative": "Negativ umwandeln",
       "copyAdjustments": "Einstellungen kopieren",
       "cullImage": "Autom. aussortieren",
       "denoise": "Entrauschen",
       "editImage": "Bild bearbeiten",
+      "editIn": "Bearbeiten in",
       "exportImage": "Bild exportieren",
       "flag": "Markierung",
       "flagPick": "Ausgewählt",
@@ -237,12 +310,16 @@
       "mergeHdr": "Zu HDR zusammenfügen",
       "noLabel": "Keine Markierung",
       "noRating": "Keine Bewertung",
+      "openViewer": "In zweitem Fenster öffnen",
       "pasteAdjustments": "Einstellungen einfügen",
       "productivity": "Produktivität",
       "rating": "Bewertung",
       "ratingLabel_one": "{{count}} Stern",
       "ratingLabel_other": "{{count}} Sterne",
       "redo": "Wiederholen",
+      "removeBlackWhite": "Schwarzweiß entfernen",
+      "removeDenoise": "Entrauschen entfernen",
+      "removeNegativeConversion": "Negativumwandlung entfernen",
       "resetAdjustments": "Einstellungen zurücksetzen",
       "stitchPanorama": "Panorama zusammenfügen",
       "tagging": "Tagging",
@@ -297,8 +374,6 @@
       "collage_other": "Collage erstellen",
       "confirmDelete": "Löschen bestätigen",
       "confirmDeleteVc": "Löschen + virtuelle Kopien bestätigen",
-      "convertNegative_one": "Negativ umwandeln",
-      "convertNegative_other": "Negative umwandeln",
       "copyImage_one": "Bild kopieren",
       "copyImage_other": "{{count}} Bilder kopieren",
       "cullImage_one": "Autom. aussortieren",
@@ -310,12 +385,14 @@
       "denoise_one": "Entrauschen",
       "denoise_other": "Entrauschen",
       "duplicateImage": "Bild duplizieren",
+      "enable": "Aktivieren",
       "exportImage_one": "Bild exportieren",
       "exportImage_other": "{{count}} Bilder exportieren",
       "noAlbums": "Keine Alben verfügbar",
       "pasteAdjustments_one": "Einstellungen einfügen",
       "pasteAdjustments_other": "Einstellungen in {{count}} Bilder einfügen",
       "physicalCopy": "Physische Kopie",
+      "remove": "Entfernen",
       "removeFromAlbum_one": "Aus Album entfernen",
       "removeFromAlbum_other": "{{count}} Bilder aus Album entfernen",
       "renameImage_one": "Bild umbenennen",
@@ -328,6 +405,9 @@
     "toasts": {
       "couldNotShowExplorer": "Datei konnte nicht im Explorer angezeigt werden: {{err}}",
       "couldNotShowFolder": "Ordner konnte nicht angezeigt werden: {{err}}",
+      "editInFailed": "{{app}} fehlgeschlagen: {{err}}",
+      "editInNoOutput": "{{app}} wurde ohne Speichern geschlossen.",
+      "editInWaiting": "Warte auf {{app}}. Speichere die Datei dort, um sie zurückzuholen, oder schließe diese Meldung, um das Warten zu beenden.",
       "failedAddToAlbum": "Fehler beim Hinzufügen zum Album: {{err}}",
       "failedApplyAuto": "Fehler bei der autom. Anpassung: {{err}}",
       "failedChangeIcon": "Fehler beim Ändern des Symbols: {{err}}",
@@ -403,6 +483,15 @@
         "feather": "Weiche Kante",
         "size": "Pinselgröße"
       },
+      "cloneHeal": {
+        "cloneTooltip": "Kopiert die Quelle exakt, inklusive Helligkeit und Farbe",
+        "dragSource": "Ziehen, um die Quelle zu verschieben",
+        "healTooltip": "Kopiert die Struktur der Quelle und passt sie an Helligkeit und Farbe der Umgebung an",
+        "hintActive": "Ziehe den Quellumriss, um festzulegen, woher die Pixel kommen. Jeder neue Strich wird zu einem eigenen Bereich. Halte Shift gedrückt, um diesen zu erweitern.",
+        "hintEmpty": "Male über einen Fleck, ein Kabel oder eine Störung. Eine passende Quelle wird automatisch gefunden.",
+        "mode": "Modus",
+        "newSource": "Andere Quelle suchen"
+      },
       "comingSoon": "Demnächst",
       "connection": {
         "backendLabel": "KI-Backend:",
@@ -464,7 +553,9 @@
         "quickErase": "Schnelles Löschen {{count}}",
         "quickErase_one": "Schnelles Löschen {{count}}",
         "quickErase_other": "Schnelles Löschen {{count}}",
-        "retouch": "Retusche {{count}}"
+        "retouch": "Retusche {{count}}",
+        "retouch_one": "Retusche {{count}}",
+        "retouch_other": "Retusche {{count}}"
       },
       "resetInpaintingTooltip": "Reparieren zurücksetzen",
       "settings": {
@@ -488,6 +579,13 @@
         "useBasicInpaint": "Einfaches Reparieren verwenden"
       },
       "touchUpTitle": "Ausbessern"
+    },
+    "compare": {
+      "horizontal": "Oben / unten teilen",
+      "sideBySide": "Nebeneinander",
+      "title": "Vorher / Nachher",
+      "toggle": "Ganzes Original",
+      "vertical": "Links / rechts teilen"
     },
     "crop": {
       "aspectRatioHeading": "Seitenverhältnis",
@@ -696,6 +794,17 @@
         "applyPreset": "Vorgabe anwenden",
         "componentPropertiesTitle": "{{name}}-Eigenschaften",
         "copySectionSettings": "{{section}}-Einstellungen kopieren",
+        "faceParts": {
+          "bodySkin": "Körperhaut",
+          "eyeWhites": "Augenweiß",
+          "eyebrows": "Augenbrauen",
+          "faceSkin": "Gesichtshaut",
+          "hair": "Haare",
+          "iris": "Iris & Pupille",
+          "lips": "Lippen",
+          "nose": "Nase",
+          "teeth": "Zähne"
+        },
         "generateTextMask": "Maske erstellen",
         "invertComponent": "Komponente umkehren",
         "invertMask": "Maske umkehren",
@@ -713,8 +822,7 @@
       "toggleAnalyticsTooltip": "Analyseanzeige umschalten",
       "tooltips": {
         "addToCurrent": "{{name}} zur aktuellen Maske hinzufügen oder neu erstellen (Rechtsklick)",
-        "createNew": "Neue {{name}}-Maske erstellen",
-        "selectNewSourcePoint": "{{modifier}} + Klicken, um einen neuen Quellpunkt auszuwählen"
+        "createNew": "Neue {{name}}-Maske erstellen"
       }
     },
     "metadata": {
@@ -817,6 +925,10 @@
         "tool": "Werkzeug"
       }
     },
+    "speedEdit": {
+      "copied": "<0>{{label}}</0> <1>{{value}}</1> kopiert",
+      "pasted": "<0>{{label}}</0> <1>{{value}}</1> eingefügt"
+    },
     "switcher": {
       "tooltips": {
         "adjust": "Anpassen",
@@ -830,25 +942,32 @@
       }
     },
     "toolbar": {
+      "history": "Verlauf",
       "switchToVariant": "Switch to {{label}}",
       "tooltips": {
         "aperture": "Blende",
         "backToLibrary": "Zurück zur Bibliothek",
+        "compare": "Vorher / Nachher (B) oder Modi (Rechtsklick)",
         "focalLength": "Brennweite",
         "fullscreen": "Vollbild umschalten (F)",
         "iso": "ISO",
         "redo": "Wiederholen (Strg+Y) oder Verlauf (Rechtsklick)",
-        "showEdited": "Bearbeitet anzeigen (B)",
-        "showOriginal": "Original anzeigen (B)",
         "shutterSpeed": "Verschlusszeit",
         "undo": "Rückgängig (Strg+Z) oder Verlauf (Rechtsklick)"
       },
       "vc": "VK"
+    },
+    "viewer": {
+      "openFailed": "Das zweite Fenster konnte nicht geöffnet werden: {{error}}",
+      "windowTitle": "RapidRAW-Betrachter"
     }
   },
   "export": {
     "advanced": {
       "exportMasks": "Masken als separate Dateien exportieren",
+      "exportOriginal": "Original zusätzlich exportieren",
+      "originalCrop": "Zuschnitt anwenden",
+      "originalKeepExposure": "Belichtung beibehalten",
       "preserveFolders": "Ordnerstruktur beibehalten",
       "preserveTimestamps": "Dateizeitstempel aus EXIF-Aufnahmedatum setzen",
       "title": "Exporteinstellungen"
@@ -974,6 +1093,69 @@
       "watermarkImage": "Wasserzeichen-Bild"
     }
   },
+  "immich": {
+    "close": {
+      "cancel": "Abbrechen",
+      "closeAnyway": "Trotzdem schließen",
+      "message": "Bearbeitungen, die auf Immich warten: {{number}}. Sie bleiben auf diesem Rechner und werden gesendet, sobald RapidRAW das nächste Mal läuft und Immich erreichbar ist.",
+      "title": "Bearbeitungen noch nicht in Immich"
+    },
+    "export": {
+      "newAlbum": "Neues Album…",
+      "newAlbumName": "Albumname",
+      "createAlbum": "Anlegen",
+      "newAlbumFailed": "Album konnte nicht angelegt werden: {{error}}",
+      "album": "Album",
+      "destination": "Immich",
+      "noAlbum": "Kein Album",
+      "sourceAlbum": "Album, aus dem das Bild geöffnet wurde",
+      "withOriginal": "Original mit hochladen",
+      "withOriginalDesc": "Für Bilder aus einem lokalen Ordner: Das Original wird mit seinen Bearbeitungen hochgeladen und der Export oben darauf gestapelt. Bilder aus Immich werden immer auf ihr Original gestapelt."
+    },
+    "section": {
+      "albums": "Alben",
+      "empty": "Keine Alben auf dem Server.",
+      "error": "Immich ist nicht erreichbar.",
+      "loading": "Alben werden geladen…",
+      "refresh": "Alben aktualisieren",
+      "timeline": "Zeitleiste",
+      "title": "Immich",
+      "unassigned": "Ohne Album",
+      "unassignedHint": "Bilder hierher ziehen, um sie ohne Album hochzuladen."
+    },
+    "settings": {
+      "apiKey": "API-Schlüssel",
+      "apiKeyDesc": "In Immich unter Kontoeinstellungen → API-Schlüssel anlegen, mit diesen Berechtigungen: album.read, album.create, albumAsset.create, albumAsset.delete, asset.read, asset.view, asset.download, asset.upload, asset.update, asset.delete, stack.read, stack.create und user.read.",
+      "connected": "Verbunden als {{user}} (Immich {{version}})",
+      "description": "Zeigt die Fotos deines Immich-Servers in der Bibliothek, damit du sie direkt bearbeiten kannst. Originale werden beim Öffnen heruntergeladen, und deine Bearbeitungen werden in Immich gespeichert – so sehen sie auf jedem Rechner gleich aus.",
+      "keyInFile": "In einer Datei gespeichert, die nur du lesen kannst: Es ist kein Schlüsselbund erreichbar. Unter KDE in den Einstellungen der KDE-Brieftasche die Secret-Service-Schnittstelle einschalten und erneut speichern.",
+      "keyInStore": "Im Schlüsselbund des Systems gespeichert.",
+      "save": "Speichern",
+      "saved": "Gespeichert.",
+      "serverUrl": "Serveradresse",
+      "serverUrlDesc": "Die Adresse, unter der du Immich im Browser öffnest.",
+      "test": "Verbindung testen",
+      "title": "Immich",
+      "working": "Einen Moment…"
+    },
+    "sync": {
+      "offline": "Offline",
+      "pending": "Bearbeitungen, die auf Immich warten: {{number}}"
+    },
+    "toasts": {
+      "editsStayLocal": "{{fileName}} gehört jemand anderem, deshalb nimmt Immich keine Bearbeitungen dafür an. Deine Bearbeitung bleibt auf diesem Computer.",
+      "backOnline": "Immich ist wieder erreichbar, alle Bearbeitungen sind dort gespeichert.",
+      "downloadFailed": "Download aus Immich fehlgeschlagen: {{error}}",
+      "editsConflict": "{{fileName}} wurde auch auf einem anderen Rechner bearbeitet. Deine Bearbeitung bleibt, die andere Fassung liegt als virtuelle Kopie daneben.",
+      "offline": "Immich ist nicht erreichbar. Deine Bearbeitungen bleiben hier und werden gesendet, sobald es wieder da ist.",
+      "transferFailed": "Nicht zu Immich hinzugefügt: {{number}} ({{error}})",
+      "transferred": "Zu Immich hinzugefügt: {{number}}",
+      "transferring": "Wird zu Immich hinzugefügt… {{current}}/{{total}}",
+      "trashFailed": "Verschieben in den Immich-Papierkorb fehlgeschlagen: {{error}}",
+      "uploaded": "Zu Immich hochgeladen: {{number}}",
+      "uploadKeptCopy": "{{fileName}} ist schon mit anderer Bearbeitung in Immich. Diese bleibt, deine Bearbeitung liegt als virtuelle Kopie daneben."
+    }
+  },
   "library": {
     "aiJobs": {
       "discard": "Verbleibende KI-Verarbeitung verwerfen",
@@ -982,6 +1164,7 @@
         "denoise": "KI-Entrauschen",
         "depthMap": "Tiefe wird analysiert",
         "depthMask": "Tiefenmaske wird erstellt",
+        "faceMask": "Gesichtsmaske wird erstellt",
         "foregroundMask": "Vordergrundmaske wird erstellt",
         "normalMap": "Oberflächen werden analysiert",
         "skyMask": "Himmelsmaske wird erstellt",
@@ -1047,6 +1230,12 @@
       "tags": "Tags",
       "toggleFit": "1:1 / Einpassen umschalten",
       "vc": "VK"
+    },
+    "filterExit": {
+      "hiddenSingle": "{{name}} entspricht nicht mehr dem Filter",
+      "hiddenMultiple_one": "{{count}} Bilder entsprechen nicht mehr dem Filter",
+      "hiddenMultiple_other": "{{count}} Bilder entsprechen nicht mehr dem Filter",
+      "undo": "Rückgängig"
     },
     "filters": {
       "edited": {
@@ -1173,13 +1362,9 @@
         "title": "Ansichtsoptionen"
       }
     },
-    "import": {
-      "complete": "Import abgeschlossen!",
-      "failed": "Import fehlgeschlagen!",
-      "progress": "Wird importiert... ({{current}}/{{total}})"
-    },
     "items": {
       "cloudPlaceholder": "In iCloud gespeichert — nicht heruntergeladen",
+      "immichPlaceholder": "In Immich gespeichert — nicht heruntergeladen",
       "collapseFolder": "Ordner zuklappen",
       "currentFolder": "Aktueller Ordner",
       "expandFolder": "Ordner aufklappen",
@@ -1191,6 +1376,29 @@
       "tooltipIso": "ISO",
       "tooltipShutterSpeed": "Verschlusszeit",
       "tooltipVirtualCopy": "Virtuelle Kopie"
+    },
+    "jobs": {
+      "active": "Läuft",
+      "cancel": "Export abbrechen",
+      "cancelling": "Wird abgebrochen…",
+      "clear": "Leeren",
+      "copyError": "Zum Kopieren klicken",
+      "empty": "Keine aktiven Aufgaben",
+      "emptyHint": "Exporte, Importe, Dateiübertragungen und KI-Aufgaben erscheinen hier.",
+      "errorCopied": "Fehler in die Zwischenablage kopiert",
+      "images_one": "{{count}} Bild",
+      "images_other": "{{count}} Bilder",
+      "kinds": {
+        "aiTagging": "KI-Verschlagwortung",
+        "copy": "Dateien kopieren",
+        "export": "Export",
+        "import": "Import",
+        "modelDownload": "KI-Modell-Download",
+        "move": "Dateien verschieben"
+      },
+      "openInLibrary": "In der Bibliothek öffnen",
+      "recent": "Zuletzt",
+      "title": "Aufgaben"
     },
     "reject": {
       "deleteConfirm": "Abgelehnte löschen",
@@ -1260,6 +1468,11 @@
       "goHome": "Zur Startseite",
       "importImages": "Bilder importieren",
       "select": "Auswählen"
+    },
+    "viewMode": {
+      "culling": "Aussortieransicht",
+      "grid": "Rasteransicht",
+      "list": "Listenansicht"
     }
   },
   "masks": {
@@ -1269,12 +1482,14 @@
       "clone": "Klonen",
       "color": "Farbe",
       "depth": "Tiefe",
+      "face": "Gesicht",
       "flow": "Fluss",
       "foreground": "Vordergrund",
       "heal": "Reparieren",
       "linear": "Linear",
       "liquify": "Verflüssigen",
       "luminance": "Luminanz",
+      "matchBrush": "Abgleich-Pinsel",
       "others": "Andere",
       "quickErase": "Schnelles Löschen",
       "quickEraser": "Schnell-Radierer",
@@ -1417,6 +1632,7 @@
       "descReplace": "Überschreibt alle ausgewählten Einstellungen und setzt den Rest auf Standardwerte zurück.",
       "groups": {
         "aiDenoise": "KI-Entrauschen",
+        "blackWhite": "Schwarzweiß",
         "chromaticAberration": "Chromatische Aberration",
         "clarityDehaze": "Klarheit & Dunst entfernen",
         "colorCalibration": "Farbkalibrierung",
@@ -1424,13 +1640,13 @@
         "colorMixer": "Farbmischer",
         "cropAspectRatio": "Zuschnitt & Seitenverhältnis",
         "curves": "Kurven",
-        "exposureToneMapper": "Belichtung & Tonemapper",
         "fog": "Nebel",
         "grain": "Körnung",
         "guidedPerspective": "Geführte Perspektive",
         "halationGlow": "Lichthof & Glühen",
         "hueShift": "Globaler Farbton-Shift",
         "lensBlur": "Objektivunschärfe",
+        "motionBlur": "Bewegungsunschärfe",
         "lensCorrection": "Objektivkorrektur",
         "lut": "LUT",
         "masks": "Masken",
@@ -1439,7 +1655,6 @@
         "presence": "Präsenz",
         "relight": "Neu beleuchten",
         "sharpness": "Schärfe",
-        "tone": "Tonwerte",
         "transformRotation": "Transformieren & Drehen",
         "vignette": "Vignettierung",
         "whiteBalance": "Weißabgleich"
@@ -1501,36 +1716,6 @@
       "styleKeepersHint": "AI Style mit den nicht abgelehnten Fotos öffnen.",
       "starting": "Wird gestartet...",
       "title": "Bilder aussortieren"
-    },
-    "denoise": {
-      "batchProgressText": "Entrauschen von {{current}} aus {{total}}...",
-      "btnBatchDenoise": "Stapel entrauschen & Speichern",
-      "btnRetry": "Wiederholen",
-      "btnSave": "Speichern",
-      "btnStart": "Start",
-      "cancel": "Abbrechen",
-      "close": "Schließen",
-      "denoised": "Entrauscht",
-      "denoisingProgress": "Entrauschen in Arbeit",
-      "description": "Entfernen Sie Rauschen aus Ihrem Bild mithilfe von KI-gestütztem oder traditionellem Entrauschen.",
-      "downloadingText": "Wird heruntergeladen {{status}}...",
-      "gpuWarningTooltip": "NIND Entrauschen unterstützt noch keine GPU-Beschleunigung aufgrund von Abhängigkeiten.",
-      "initializing": "Wird initialisiert...",
-      "methodAi": "NIND (KI - Am besten für RAW)",
-      "methodBm3d": "BM3D (Traditionell - Alle Formate)",
-      "methodLabel": "Methode",
-      "methodRaw9": "Apple RAW 9 (Neural Engine)",
-      "openInEditor": "Im Editor öffnen",
-      "original": "Original",
-      "panZoomEnabled": "Schwenken & Zoomen aktiviert",
-      "processingFailed": "Verarbeitung fehlgeschlagen",
-      "qualityTileSizeLabel": "Qualität / Kachelgröße",
-      "reset": "Zurücksetzen",
-      "saveSuccess": "Bild erfolgreich gespeichert!",
-      "speedNotice": "Dies kann einige Minuten dauern, je nach Bildgröße und Methode.",
-      "strengthLabel": "Stärke",
-      "titleBatch": "Bilder entrauschen",
-      "titleSingle": "Bild entrauschen"
     },
     "focusStack": {
       "cancel": "Abbrechen",
@@ -1610,7 +1795,6 @@
       "selectManufacturer": "Hersteller auswählen",
       "title": "Objektivkorrektur",
       "vignetting": "Vignettierung",
-      "waitingAutoDetect": "Warten auf Auto-Erkennung...",
       "zoomInTooltip": "Vergrößern",
       "zoomOutTooltip": "Verkleinern"
     },
@@ -1726,6 +1910,27 @@
       "pressKey": "Taste drücken... (Esc zum Löschen)",
       "resetDefaults": "Alles auf Standard zurücksetzen",
       "speed": "Geschwindigkeit",
+      "speedEdit": {
+        "adjustments": "Anpassungen",
+        "gestures": {
+          "doubleClick": "Doppelklick zum Zurücksetzen",
+          "drag": "Auf der Leinwand ziehen zum Anpassen",
+          "fine": "Umschalt für fein"
+        },
+        "keys": {
+          "hold": "Tippen / Halten",
+          "previousImage": "Vorh. Bild",
+          "nextImage": "Nächstes Bild",
+          "reset": "Zurücksetzen",
+          "previousAdjustment": "Vorh. Regler",
+          "nextAdjustment": "Nächster Regler",
+          "copy": "Kopieren",
+          "paste": "Einfügen",
+          "stepDown": "−1 Schritt",
+          "stepUp": "+1 Schritt"
+        },
+        "title": "Schnellbearbeitung"
+      },
       "title": "Maussteuerung",
       "zoom": "Zoom-Geschwindigkeitsfaktor",
       "zoomClick": "Foto auf 100% zoomen",
@@ -1734,42 +1939,43 @@
       "zoomDesc": "Passen Sie an, wie schnell das Bild beim Scrollen oder Kneifen zoomt."
     },
     "data": {
-      "clearAiDenoise": "KI-Entrauschen-Cache leeren",
-      "clearAiDenoiseButton": "Leeren",
-      "clearAiDenoiseDesc": "Löscht die zwischengespeicherten KI-Entrauschen-Ergebnisse ({{size}}). Bilder mit aktiviertem KI-Entrauschen berechnen es beim nächsten Öffnen neu.",
-      "clearSidecars": "Alle Filialdateien löschen",
-      "clearSidecarsButton": "Löschen",
-      "clearSidecarsDesc": "Dies löscht alle .rrdata-Dateien (die Ihre Bearbeitungen enthalten) in Ihren Stammordnern:",
-      "clearThumbnail": "Miniaturbild-Cache löschen",
-      "clearThumbnailButton": "Löschen",
-      "clearThumbnailDesc": "Dies löscht alle zwischengespeicherten Miniaturbilder. Sie werden beim Durchsuchen der Bibliothek automatisch neu generiert.",
-      "loading": "Wird geladen...",
-      "logs": "Anwendungsprotokolle anzeigen",
-      "logsButton": "Öffnen",
-      "logsDesc": "Zeigen Sie die Protokolldatei der Anwendung zur Fehlerbehebung an. Das Protokoll befindet sich unter:",
+      "aiTags": "KI-Tags löschen",
+      "aiTagsDesc": "Entfernt KI-generierte Tags von allen Bildern in deinen Stammordnern. Eigene Tags bleiben erhalten.",
+      "allTags": "Alle Tags löschen",
+      "allTagsDesc": "Entfernt KI-generierte und eigene Tags von allen Bildern in deinen Stammordnern. Farbmarkierungen bleiben erhalten.",
+      "clear": "Leeren",
+      "delete": "Löschen",
+      "deleteEdits": "Alle Bearbeitungen löschen",
+      "deleteEditsDesc": "Entfernt alle .rrdata-Begleitdateien (deine Bearbeitungen) in allen Stammordnern. Dies kann nicht rückgängig gemacht werden.",
+      "libraryAndWorkspace": "Bibliothek & Arbeitsbereich",
+      "limit": "Limit",
       "modals": {
         "aiDenoiseMessage": "Möchtest du den KI-Entrauschen-Cache wirklich leeren?\n\nBilder mit aktiviertem KI-Entrauschen müssen erneut entrauscht werden, was pro Bild mehrere Minuten dauern kann.",
+        "aiMapsMessage": "Möchtest du die Tiefen- und Normal-Maps wirklich leeren?\n\nBilder mit Objektivunschärfe, Nebel oder Neubeleuchtung erstellen ihre Maps beim nächsten Öffnen neu.",
         "aiMessage": "Sind Sie sicher, dass Sie alle KI-generierten Tags von allen Bildern in allen aktiven Stammordnern entfernen möchten?\n\nBenutzerdefinierte Tags sind nicht betroffen. Diese Aktion kann nicht rückgängig gemacht werden.",
         "allMessage": "Sind Sie sicher, dass Sie alle KI-generierten und benutzerdefinierten Tags von allen Bildern in allen aktiven Stammordnern entfernen möchten?\n\nDiese Aktion kann nicht rückgängig gemacht werden.",
         "cacheMessage": "Sind Sie sicher, dass Sie den Miniaturbild-Cache löschen möchten?\n\nAlle Miniaturbilder müssen neu generiert werden, was bei großen Ordnern dauern kann.",
         "confirmAiTitle": "KI-Tags löschen bestätigen",
         "confirmAllTitle": "Alle Tags löschen bestätigen",
-        "confirmCacheTitle": "Cache löschen bestätigen",
         "confirmClear": "Löschen",
         "confirmClearAi": "KI-Tags löschen",
         "confirmClearAll": "Alle Tags löschen",
-        "confirmClearCache": "Cache löschen",
         "confirmDeleteAllEdits": "Alle Bearbeitungen löschen",
         "confirmResetLayout": "Layout zurücksetzen",
         "confirmResetLayoutTitle": "Arbeitsbereich-Layout zurücksetzen",
         "confirmTitle": "Löschen bestätigen",
+        "immichMessage": "Möchtest du die heruntergeladenen Immich-Originale wirklich leeren?\n\nDeine Bearbeitungen bleiben erhalten. Originale werden beim Öffnen erneut heruntergeladen.",
+        "metadataMessage": "Möchtest du den Metadaten-Cache wirklich leeren?\n\nMetadaten werden beim Durchsuchen erneut aus deinen Dateien gelesen.",
+        "modelsMessage": "Möchtest du die heruntergeladenen KI-Modelle wirklich entfernen?\n\nSie werden bei der nächsten Nutzung einer KI-Funktion erneut heruntergeladen.",
         "resetLayoutMessage": "Möchten Sie das Layout des Arbeitsbereichs wirklich zurücksetzen? Alle angedockten Panels, Breiten und Umschalter-Positionen werden auf ihre Standardwerte zurückgesetzt.",
         "sidecarMessage": "Sind Sie sicher, dass Sie alle Filialdateien löschen möchten?\n\nDies entfernt dauerhaft alle Ihre Bearbeitungen für alle Bilder in allen aktiven Stammordnern."
       },
       "noFolders": "Keine Ordner ausgewählt",
-      "resetLayoutButton": "Layout zurücksetzen",
+      "refresh": "Aktualisieren",
+      "reset": "Zurücksetzen",
       "resetLayoutDesc": "Setzt Panel-Docks, seitliche Teiler, Höhen und Panel-Umschalter auf das Standard-Layout zurück.",
       "resetLayoutTitle": "Arbeitsbereich-Layout zurücksetzen",
+      "show": "Anzeigen",
       "statuses": {
         "aiDenoiseSuccess": "KI-Entrauschen-Cache erfolgreich geleert.",
         "aiSuccess": "{{count}} Dateien aktualisiert. KI-Tags entfernt.",
@@ -1779,20 +1985,31 @@
         "allSuccess_one": "{{count}} Datei aktualisiert. Alle nicht-farbigen Tags entfernt.",
         "allSuccess_other": "{{count}} Dateien aktualisiert. Alle nicht-farbigen Tags entfernt.",
         "cacheSuccess": "Miniaturbild-Cache erfolgreich gelöscht.",
-        "clearingAi": "KI-Tags aus allen Filialdateien löschen...",
-        "clearingAiDenoise": "KI-Entrauschen-Cache wird geleert...",
-        "clearingAll": "Alle Tags aus Filialdateien löschen...",
-        "clearingCache": "Miniaturbild-Cache löschen...",
-        "deleting": "Filialdateien werden gelöscht, bitte warten...",
-        "failedToGetPath": "Protokolldateipfad konnte nicht abgerufen werden.",
+        "cleared": "Erfolgreich geleert.",
         "layoutResetSuccess": "Layout des Arbeitsbereichs auf Standard zurückgesetzt.",
-        "processing": "Wird verarbeitet...",
-        "resettingLayout": "Arbeitsbereich wird zurückgesetzt...",
         "sidecarSuccess": "{{count}} Filialdateien erfolgreich gelöscht.",
         "sidecarSuccess_one": "{{count}} Filialdatei erfolgreich gelöscht.",
         "sidecarSuccess_other": "{{count}} Filialdateien erfolgreich gelöscht."
       },
-      "title": "Datenverwaltung"
+      "storage": {
+        "aiDenoise": "KI-Entrauschen",
+        "aiDenoiseDesc": "Zwischengespeicherte Entrauschungsergebnisse.",
+        "aiMaps": "Tiefen- & Normal-Maps",
+        "aiMapsDesc": "Werden von Objektivunschärfe, Nebel und Neubeleuchtung genutzt.",
+        "immich": "Immich",
+        "immichDesc": "Heruntergeladene Originale. Die am längsten nicht genutzten werden entfernt, sobald das Limit erreicht ist. Deine Bearbeitungen bleiben erhalten.",
+        "logs": "Protokolle",
+        "logsDesc": "Protokolldateien der Anwendung zur Fehlersuche. Werden bei jedem Start geleert.",
+        "metadata": "Metadaten",
+        "metadataDesc": "Zwischengespeicherte EXIF-Daten für schnelleres Laden von Ordnern.",
+        "models": "KI-Modelle",
+        "modelsDesc": "Werden bei der ersten Nutzung einer KI-Funktion heruntergeladen.",
+        "thumbnails": "Miniaturansichten",
+        "thumbnailsDesc": "Werden beim Durchsuchen automatisch neu erstellt."
+      },
+      "storageTitle": "Speicher",
+      "title": "Datenverwaltung",
+      "totalUsed": "RapidRAW belegt {{size}} auf diesem Gerät."
     },
     "general": {
       "createXmp": "Fehlende XMP-Dateien erstellen",
@@ -1811,6 +2028,8 @@
       "folderImageCountsDesc": "Zeigt die Anzahl der Bilder in Ordnern an, wenn Sie mit der Maus über die Ordnerstruktur fahren.",
       "font": "Schriftart",
       "fontDesc": "Ändern Sie die Schriftart der Anwendung.",
+      "hideCollapsedPanels": "Eingeklappte Panels ausblenden",
+      "hideCollapsedPanelsDesc": "Eingeklappte Seitenpanels werden vollständig ausgeblendet, statt einen schmalen Streifen zu hinterlassen. Öffnen Sie sie über die untere Leiste oder mit ihren Tastenkürzeln wieder.",
       "nativeTitlebar": "Native Titelleiste",
       "nativeTitlebarDesc": "Verwenden Sie die Standard-Fenstertitelleiste Ihres Systems anstelle der benutzerdefinierten von RapidRAW.",
       "neutralGreyCanvas": "Neutralgraue Arbeitsfläche",
@@ -1823,6 +2042,11 @@
       "title": "Allgemeine Einstellungen",
       "toolFocusMode": "Werkzeug-Fokusmodus",
       "toolFocusModeDesc": "Klappt automatisch die anderen Werkzeuge eines Panels ein, wenn Sie eines aufklappen.",
+      "uiScale": "Oberflächenskalierung",
+      "uiScaleCompact": "Kompakt",
+      "uiScaleDefault": "Standard",
+      "uiScaleDesc": "Die Oberfläche unabhängig von der Anzeigeskalierung des Systems verkleinern oder vergrößern. Kompakte Größen passen besser auf kleine Laptop-Bildschirme.",
+      "uiScaleLarge": "Groß",
       "xmpSync": "XMP-Metadaten-Sync",
       "xmpSyncDesc": "Synchronisieren Sie Bewertungen, Farbmarkierungen und Tags in Standard-XMP-Filialdateien für Kompatibilität mit anderen Foto-Editoren."
     },
@@ -1864,6 +2088,7 @@
         "toggle_adjustments": "Anpassungen-Panel ein-/ausblenden",
         "toggle_ai": "KI-Panel ein-/ausblenden",
         "toggle_analytics": "Analyseanzeige ein-/ausblenden",
+        "toggle_black_white": "Schwarzweiß umschalten",
         "toggle_bottom_panel": "Filmstreifen ein-/ausblenden",
         "toggle_crop": "Zuschnitt / Gerade ausrichten umschalten",
         "toggle_crop_panel": "Zuschneiden-Panel ein-/ausblenden",
@@ -1878,6 +2103,7 @@
         "toggle_presets": "Vorgaben-Panel ein-/ausblenden",
         "toggle_reject": "Ablehnungsmarkierung umschalten",
         "toggle_right_panel": "Rechtes Panel ein-/ausblenden",
+        "toggle_viewer_window": "Zweites Fenster umschalten",
         "undo": "Bearbeitung rückgängig machen",
         "unflag": "Markierung entfernen",
         "zoom_100": "Auf 100% zoomen",
@@ -1998,6 +2224,21 @@
         "vulkan": "Vulkan"
       },
       "dynamicDesc": "Der Editor rendert die Vorschau passend zur tatsächlichen Pixeldichte Ihres Displays. Dies sorgt für 1:1 Pixelgenauigkeit und maximale Klarheit beim Zoomen.",
+      "editIn": {
+        "add": "Programm hinzufügen",
+        "args": "Argumente ({file} = Bildpfad)",
+        "browse": "Durchsuchen",
+        "description": "Programme für das Menü „Bearbeiten in“.",
+        "executable": "Programme",
+        "modes": {
+          "original": "Originaldatei senden",
+          "rendered": "Bearbeitetes TIFF senden"
+        },
+        "name": "Name",
+        "path": "Programmpfad",
+        "remove": "Entfernen",
+        "title": "Bearbeiten in"
+      },
       "enableLivePreviews": "Live-Vorschauen aktivieren",
       "highDpi": "High-DPI Rendering",
       "highDpiDesc": "Rendern Sie Vorschauen in der nativen {{dpr}}x Auflösung Ihres Bildschirms. Erzeugt die schärfste Vorschau, verbraucht aber mehr Speicher.",
@@ -2027,7 +2268,7 @@
         "baselineExposure": "Basisbelichtung",
         "baselineExposureAmount": "Basiswert",
         "baselineExposureAmountDesc": "Belichtung, die zu RAW-Dateien addiert wird. darktable verwendet +0,7 LW.",
-        "baselineExposureDesc": "Hellt alle RAW-Dateien um einen festen Wert auf, wie die szenenbezogene Voreinstellung von darktable, zuzüglich des DNG-Tags BaselineExposure, falls vorhanden. Bilder, die vor Einführung dieser Option bearbeitet wurden, sind nicht betroffen.",
+        "baselineExposureDesc": "Hellt RAW-Dateien um einen festen Wert auf, zuzüglich des DNG-Tags BaselineExposure, falls vorhanden.",
         "colorNr": "Basis-Farbrauschreduzierung",
         "colorNrDesc": "Wendet früh in der Pipeline einen Filter an, um Farbrauschen zu entfernen. Höherer Wert = Stärkere Reduzierung.",
         "defaultNonRawTonemapper": "Standard-Tonemapper (Nicht-RAW)",
@@ -2040,7 +2281,7 @@
         "enablePreprocessingNonRaws": "Für Nicht-RAWs aktivieren",
         "enableTonemapperOverride": "Tonemapper-Override aktivieren",
         "highlightPreservation": "Ausgleich der Lichterschutz-Modi",
-        "highlightPreservationDesc": "Stellt die Belichtung wieder her, die die Kamera in Modi zum Schutz der Lichter zurückgehalten hat, ausgelesen aus der RAW-Datei (Fujifilm DR200/DR400, Canon Tonwert Priorität und Automatische Belichtungsoptimierung, Nikon Active D-Lighting, Olympus Gradation, Pentax Dynamikbereichserweiterung). Bilder, die vor Einführung dieser Option bearbeitet wurden, sind nicht betroffen.",
+        "highlightPreservationDesc": "Gleicht die Belichtung aus, die Lichterschutz-Modi der Kamera zurückhalten, z. B. Fujifilm DR200/DR400 oder Nikon Active D-Lighting.",
         "highlightRecovery": "RAW-Lichterwiederherstellung",
         "highlightRecoveryDesc": "Steuert, wie viele Details aus beschnittenen Lichtern wiederhergestellt werden. Höhere Werte stellen mehr her, können aber rosa Artefakte einführen.",
         "linearOptions": {
@@ -2075,15 +2316,14 @@
       "smallThumbnailRes": "Raster-Miniaturbild-Auflösung",
       "smallThumbnailResDesc": "Auflösung der Miniaturbilder, die im Bibliotheksraster angezeigt werden.",
       "staticDesc": "Der Editor rendert das Bild in einer festen Auflösung. Dieser Modus ist am schnellsten und am besten für schwächere Hardware geeignet.",
-      "staticPreviewRes": "Statische Vorschauauflösung",
-      "staticPreviewResDesc": "Legt die Auflösung für statische Vorschauen wie Zuschnitt und Perspektive fest. Beeinflusst nicht die Hauptvorschau.",
       "threads": "Threads",
       "thumbnailRes": "Miniaturbild-Auflösung",
       "thumbnailResDesc": "Bestimmt die Auflösung der generierten Bibliothek-Miniaturbilder. Höhere Werte erzeugen schärfere Bilder.",
       "title": "Verarbeitungs-Engine",
       "wgpu": "WGPU Direkt-Rendering",
       "wgpuDescAndroid": "Umgeht die Browser-Kodierung für sofort reagierende Live-Vorschauen. (Auf Android deaktiviert: Native WGPU-Erstellung wird neben dem mobilen Webview nicht unterstützt.)",
-      "wgpuDescLinux": "Umgeht die Browser-Kodierung für sofort reagierende Live-Vorschauen. (Auf Linux deaktiviert: Tauri nutzt GTK, was mit WGPU kollidiert.)",
+      "wgpuDescLinuxExperimental": "Experimentell unter Linux und möglicherweise instabil.",
+      "wgpuDescLinuxX11": "Unter X11 nicht verfügbar.",
       "wgpuDescRecommended": "Umgeht die Browser-Kodierung für sofort reagierende Live-Vorschauen. Sehr empfehlenswert für die Leistung.",
       "wgpuLabel": "Direktes WGPU-Rendern aktivieren",
       "workerThreads": "Miniaturbild-Worker-Threads",
@@ -2098,11 +2338,6 @@
       "aiTaggingDesc": "Aktiviert automatisches Bild-Tagging mit einem KI-Modell (CLIP). Dies lädt ein zusätzliches Modell herunter und beeinträchtigt die Leistung beim Durchsuchen.",
       "amount": "Betrag",
       "automaticAiTagging": "Automatisches KI-Tagging",
-      "clearAiTagsButton": "Löschen",
-      "clearAiTagsDesc": "Dies entfernt alle KI-generierten Tags aus Ihren .rrdata-Dateien. Benutzerdefinierte Tags bleiben erhalten.",
-      "clearAiTagsTitle": "KI-Tags löschen",
-      "clearAllTagsDesc": "Dies entfernt alle KI-generierten und benutzerdefinierten Tags aus Ihren .rrdata-Dateien. Farbmarkierungen bleiben erhalten.",
-      "clearAllTagsTitle": "Alle Tags löschen",
       "clearCustomTooltip": "KI-Tag-Liste löschen",
       "clearShortcutsTooltip": "Shortcut-Tag-Liste löschen",
       "customList": "Benutzerdefinierte KI-Tag-Liste",
@@ -2127,6 +2362,7 @@
         "lama": "Für das leistungsstarke Bild-Inpainting-Modell.",
         "lensfun": "Für die unschätzbare Open-Source-Bibliothek für Objektivkorrektur.",
         "libgphoto2": "Für die umfassende Kamera-Kommunikationsbibliothek, die RapidRAWs Tethering und Fernauslösung ermöglicht.",
+        "mediapipe": "Für die schnellen Gesichtslandmarken- und Segmentierungsmodelle, die die KI-Gesichtsmasken ermöglichen.",
         "negpy": "Für die Inspiration hinter der Negativumwandlungslogik.",
         "nind": "Für die Bereitstellung von KI-Modellen für die Rauschreduzierung.",
         "rawler": "Für die hervorragende Rust-Crate zur RAW-Bildverarbeitung.",

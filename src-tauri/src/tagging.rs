@@ -261,6 +261,16 @@ fn limit_tags(
     final_tags
 }
 
+fn needs_ai_tags(path: &Path) -> bool {
+    let (_, sidecar_path) = parse_virtual_path(&path.to_string_lossy());
+    match crate::exif_processing::load_sidecar(&sidecar_path).tags {
+        None => true,
+        Some(tags) => !tags
+            .iter()
+            .any(|tag| !tag.starts_with(COLOR_TAG_PREFIX) && !tag.starts_with(USER_TAG_PREFIX)),
+    }
+}
+
 #[tauri::command]
 pub async fn start_background_indexing(
     folder_path: String,
@@ -270,6 +280,7 @@ pub async fn start_background_indexing(
     if let Some(handle) = state.indexing_task_handle.lock().unwrap().take() {
         println!("Cancelling previous indexing task.");
         handle.abort();
+        let _ = app_handle.emit("indexing-cancelled", ());
     }
 
     let settings = crate::load_settings(app_handle.clone())?;
@@ -292,23 +303,14 @@ pub async fn start_background_indexing(
     let app_handle_clone = app_handle.clone();
 
     let task: JoinHandle<()> = tokio::spawn(async move {
-        let _ = app_handle_clone.emit("indexing-started", ());
-        println!("Starting background indexing for: {}", folder_path);
-        println!(
-            "Using {} concurrent threads for AI tagging.",
-            max_concurrent_tasks
-        );
-
-        let state_clone = app_handle_clone.state::<AppState>();
-        let gpu_context =
-            crate::gpu_processing::get_or_init_gpu_context(&state_clone, &app_handle).ok();
-
         let image_paths: Vec<PathBuf> = match fs::read_dir(&folder_path) {
             Ok(entries) => entries
                 .filter_map(Result::ok)
                 .map(|entry| entry.path())
                 .filter(|path| {
-                    path.is_file() && is_supported_image_file(path.to_string_lossy().as_ref())
+                    path.is_file()
+                        && is_supported_image_file(path.to_string_lossy().as_ref())
+                        && needs_ai_tags(path)
                 })
                 .collect(),
             Err(e) => {
@@ -324,12 +326,33 @@ pub async fn start_background_indexing(
             }
         };
 
-        println!(
-            "Found {} images to process in {}",
-            image_paths.len(),
-            folder_path
-        );
         let total_images = image_paths.len();
+        if total_images == 0 {
+            *app_handle_clone
+                .state::<AppState>()
+                .indexing_task_handle
+                .lock()
+                .unwrap() = None;
+            return;
+        }
+
+        let _ = app_handle_clone.emit(
+            "indexing-started",
+            serde_json::json!({ "current": 0, "total": total_images }),
+        );
+        println!(
+            "Starting background indexing of {} images in: {}",
+            total_images, folder_path
+        );
+        println!(
+            "Using {} concurrent threads for AI tagging.",
+            max_concurrent_tasks
+        );
+
+        let state_clone = app_handle_clone.state::<AppState>();
+        let gpu_context =
+            crate::gpu_processing::get_or_init_gpu_context(&state_clone, &app_handle).ok();
+
         let processed_count = Arc::new(Mutex::new(0));
         let custom_ai_tags_shared = Arc::new(custom_ai_tags);
 
@@ -345,59 +368,48 @@ pub async fn start_background_indexing(
                     let path_str = path.to_string_lossy().to_string();
                     let (source_path, sidecar_path) = parse_virtual_path(&path_str);
 
-                    let metadata = crate::exif_processing::load_sidecar(&sidecar_path);
+                    match file_management::get_cached_or_generate_thumbnail_image(
+                        &path_str,
+                        &app_handle_inner,
+                        gpu_context_inner.as_ref(),
+                    ) {
+                        Ok(image) => {
+                            if let Ok(ai_tags) = generate_tags_with_clip(
+                                &image,
+                                &clip_models_inner.model,
+                                &clip_models_inner.tokenizer,
+                                (*tags_inner).clone(),
+                                ai_tag_count,
+                            ) {
+                                println!("Found AI tags for {}: {:?}", path_str, ai_tags);
 
-                    let should_generate_tags = match &metadata.tags {
-                        None => true,
-                        Some(tags) => !tags.iter().any(|tag| {
-                            !tag.starts_with(COLOR_TAG_PREFIX) && !tag.starts_with(USER_TAG_PREFIX)
-                        }),
-                    };
+                                let _ = crate::exif_processing::update_sidecar(
+                                    &sidecar_path,
+                                    &source_path,
+                                    |metadata| {
+                                        let mut existing_tags: HashSet<String> = metadata
+                                            .tags
+                                            .take()
+                                            .unwrap_or_default()
+                                            .into_iter()
+                                            .collect();
 
-                    if should_generate_tags {
-                        match file_management::get_cached_or_generate_thumbnail_image(
-                            &path_str,
-                            &app_handle_inner,
-                            gpu_context_inner.as_ref(),
-                        ) {
-                            Ok(image) => {
-                                if let Ok(ai_tags) = generate_tags_with_clip(
-                                    &image,
-                                    &clip_models_inner.model,
-                                    &clip_models_inner.tokenizer,
-                                    (*tags_inner).clone(),
-                                    ai_tag_count,
-                                ) {
-                                    println!("Found AI tags for {}: {:?}", path_str, ai_tags);
+                                        existing_tags.extend(ai_tags);
 
-                                    let _ = crate::exif_processing::update_sidecar(
-                                        &sidecar_path,
-                                        &source_path,
-                                        |metadata| {
-                                            let mut existing_tags: HashSet<String> = metadata
-                                                .tags
-                                                .take()
-                                                .unwrap_or_default()
-                                                .into_iter()
-                                                .collect();
+                                        let mut final_tags: Vec<String> =
+                                            existing_tags.into_iter().collect();
+                                        final_tags.sort_unstable();
 
-                                            existing_tags.extend(ai_tags);
-
-                                            let mut final_tags: Vec<String> =
-                                                existing_tags.into_iter().collect();
-                                            final_tags.sort_unstable();
-
-                                            metadata.tags = Some(final_tags);
-                                        },
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!(
-                                    "Could not get or generate image for tagging {}: {}",
-                                    path_str, e
+                                        metadata.tags = Some(final_tags);
+                                    },
                                 );
                             }
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "Could not get or generate image for tagging {}: {}",
+                                path_str, e
+                            );
                         }
                     }
 
@@ -454,7 +466,12 @@ fn modify_tags_for_path(
         && settings.enable_xmp_sync.unwrap_or(false)
     {
         let create_if_missing = settings.create_xmp_if_missing.unwrap_or(false);
-        file_management::sync_metadata_to_xmp(&source_path, &metadata, create_if_missing);
+        file_management::sync_metadata_to_xmp(
+            &source_path,
+            &sidecar_path,
+            &metadata,
+            create_if_missing,
+        );
     }
 
     Ok(())
@@ -513,7 +530,12 @@ fn sync_xmp_for_rrdata(
         return;
     }
     if let Some(source_path) = rrdata_source_path(rrdata_path) {
-        file_management::sync_metadata_to_xmp(&source_path, metadata, create_xmp_if_missing);
+        file_management::sync_metadata_to_xmp(
+            &source_path,
+            rrdata_path,
+            metadata,
+            create_xmp_if_missing,
+        );
     }
 }
 

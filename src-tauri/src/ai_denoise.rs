@@ -1,6 +1,5 @@
 use crate::app_state::{AppState, LoadedImage};
 use crate::file_management::parse_virtual_path;
-use crate::relight::RelightTap;
 use half::f16;
 use half::slice::HalfFloatSliceExt;
 use image::{DynamicImage, GenericImageView, Rgb32FImage, imageops};
@@ -10,13 +9,15 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
 
 const MODEL_TAG: &str = "nind-v3";
+const BM3D_TAG: &str = "bm3d-v1";
+const BM3D_INTENSITY: f32 = 0.15;
 const FILE_MAGIC: &[u8; 8] = b"RRDN0002";
-const DISK_CACHE_LIMIT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const MEMORY_CACHE_CAPACITY: usize = 2;
 const BLEND_CHUNK: usize = 3 * 16 * 1024;
 
@@ -38,6 +39,7 @@ struct DenoiseCache {
 }
 
 static CACHE: LazyLock<Mutex<DenoiseCache>> = LazyLock::new(Default::default);
+static DISK_CACHE_LIMIT_BYTES: AtomicU64 = AtomicU64::new(u64::MAX);
 
 fn cache() -> std::sync::MutexGuard<'static, DenoiseCache> {
     CACHE.lock().unwrap_or_else(|e| e.into_inner())
@@ -49,9 +51,44 @@ pub fn initialize_cache_dir(cache_dir: PathBuf) {
     cache().dir = Some(dir);
 }
 
+pub fn set_disk_cache_limit_gb(limit_gb: u32) {
+    let limit = u64::from(limit_gb.max(1)) * 1024 * 1024 * 1024;
+    if DISK_CACHE_LIMIT_BYTES.swap(limit, Ordering::Relaxed) > limit
+        && let Some(dir) = cache().dir.clone()
+    {
+        std::thread::spawn(move || evict_disk_cache(&dir, None));
+    }
+}
+
 pub fn is_enabled(adjustments: &serde_json::Value) -> bool {
     crate::image_processing::is_effect_enabled(adjustments, "noiseReduction", "aiDenoiseEnabled")
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DenoiseMethod {
+    Nind,
+    Bm3d,
+}
+
+impl DenoiseMethod {
+    const ALL: [Self; 2] = [Self::Nind, Self::Bm3d];
+
+    pub fn from_adjustments(adjustments: &serde_json::Value) -> Self {
+        match adjustments["aiDenoiseMethod"].as_str() {
+            Some("bm3d") => Self::Bm3d,
+            _ => Self::Nind,
+        }
+    }
+
+    fn tag(self) -> &'static str {
+        match self {
+            Self::Nind => MODEL_TAG,
+            Self::Bm3d => BM3D_TAG,
+        }
+    }
+}
+
+type Session = Arc<Mutex<ort::session::Session>>;
 
 pub fn cache_epoch() -> u64 {
     cache().epoch
@@ -78,9 +115,9 @@ fn source_string(path: &str) -> String {
     parse_virtual_path(path).0.to_string_lossy().to_string()
 }
 
-fn entry_key(source: &str) -> String {
+fn entry_key(source: &str, method: DenoiseMethod) -> String {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(MODEL_TAG.as_bytes());
+    hasher.update(method.tag().as_bytes());
     hasher.update(source.as_bytes());
     if let Ok(meta) = fs::metadata(source) {
         hasher.update(&meta.len().to_le_bytes());
@@ -204,14 +241,17 @@ fn write_to_disk(entry: &DenoisedBase) -> Result<(), String> {
     drop(file);
 
     fs::rename(&tmp_path, &path).map_err(|e| e.to_string())?;
-    evict_disk_cache(&path);
+    if let Some(dir) = path.parent() {
+        evict_disk_cache(dir, Some(&path));
+    }
     Ok(())
 }
 
-fn evict_disk_cache(keep: &Path) {
-    let Some(read_dir) = keep.parent().and_then(|dir| fs::read_dir(dir).ok()) else {
+fn evict_disk_cache(dir: &Path, keep: Option<&Path>) {
+    let Ok(read_dir) = fs::read_dir(dir) else {
         return;
     };
+    let limit = DISK_CACHE_LIMIT_BYTES.load(Ordering::Relaxed);
 
     let mut entries: Vec<(PathBuf, u64, SystemTime)> = read_dir
         .filter_map(|e| e.ok())
@@ -226,10 +266,10 @@ fn evict_disk_cache(keep: &Path) {
     entries.sort_by_key(|(_, _, modified)| *modified);
 
     for (path, len, _) in entries {
-        if total <= DISK_CACHE_LIMIT_BYTES {
+        if total <= limit {
             break;
         }
-        if path != keep && fs::remove_file(&path).is_ok() {
+        if Some(path.as_path()) != keep && fs::remove_file(&path).is_ok() {
             total = total.saturating_sub(len);
         }
     }
@@ -271,7 +311,8 @@ pub fn apply_ai_denoise<'a>(
     }
 
     let source = source_string(path);
-    let Some(entry) = load_entry(&entry_key(&source), &source) else {
+    let method = DenoiseMethod::from_adjustments(adjustments);
+    let Some(entry) = load_entry(&entry_key(&source, method), &source) else {
         return Cow::Borrowed(base);
     };
 
@@ -350,7 +391,7 @@ fn restore_low_frequencies(denoised: &mut Rgb32FImage, source: &Rgb32FImage) {
                     }
                 });
             for _ in 0..3 {
-                crate::lens_blur::dof_box_filter(&mut plane, sw, sh, 1, 3);
+                box_filter(&mut plane, sw, sh, 1, 3);
             }
             plane
         })
@@ -362,7 +403,7 @@ fn restore_low_frequencies(denoised: &mut Rgb32FImage, source: &Rgb32FImage) {
         .for_each(|(y, row)| {
             let v = (y as f32 + 0.5) / h as f32;
             for x in 0..w {
-                let tap = RelightTap::new((x as f32 + 0.5) / w as f32, v, sw, sh);
+                let tap = BilinearTap::new((x as f32 + 0.5) / w as f32, v, sw, sh);
                 for (c, plane) in planes.iter().enumerate() {
                     row[x * 3 + c] += tap.sample(plane);
                 }
@@ -370,15 +411,18 @@ fn restore_low_frequencies(denoised: &mut Rgb32FImage, source: &Rgb32FImage) {
         });
 }
 
-fn run_model(
+fn run_denoiser(
     base: &DynamicImage,
-    session: &Mutex<ort::session::Session>,
-    on_progress: &dyn Fn(f32),
+    session: Option<&Session>,
+    on_progress: &(dyn Fn(f32) + Sync),
 ) -> Result<Rgb32FImage, String> {
     let source = base.to_rgb32f();
-    let mut output = crate::ai_processing::run_ai_denoise(&source, 0.5, session, on_progress)
-        .map_err(|e| e.to_string())?
-        .into_rgb32f();
+    let mut output = match session {
+        Some(session) => crate::ai_processing::run_ai_denoise(&source, session, on_progress)
+            .map_err(|e| e.to_string())?
+            .into_rgb32f(),
+        None => crate::bm3d::denoise(&source, BM3D_INTENSITY, on_progress),
+    };
 
     output
         .par_iter_mut()
@@ -391,13 +435,13 @@ fn run_model(
 
 fn denoise_into_cache(
     base: &DynamicImage,
-    session: &Mutex<ort::session::Session>,
+    session: Option<&Session>,
     key: String,
     source: String,
     fingerprint: u64,
-    on_progress: &dyn Fn(f32),
+    on_progress: &(dyn Fn(f32) + Sync),
 ) -> Result<(), String> {
-    let image = run_model(base, session, on_progress)?;
+    let image = run_denoiser(base, session, on_progress)?;
 
     let (width, height) = image.dimensions();
     let mut data = vec![f16::ZERO; image.as_raw().len()];
@@ -424,28 +468,41 @@ fn denoise_into_cache(
     Ok(())
 }
 
-async fn generate(
+async fn load_session(
     app_handle: &tauri::AppHandle,
-    loaded_image: LoadedImage,
-    key: String,
-    source: String,
-    fingerprint: u64,
-) -> Result<(), String> {
+    method: DenoiseMethod,
+) -> Result<Option<Session>, String> {
+    if method != DenoiseMethod::Nind {
+        return Ok(None);
+    }
     let state = app_handle.state::<AppState>();
-    let session = crate::ai_processing::get_or_init_denoise_model(
+    crate::ai_processing::get_or_init_denoise_model(
         app_handle,
         &state.ai_state,
         &state.ai_init_lock,
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .map(Some)
+    .map_err(|e| e.to_string())
+}
+
+async fn generate(
+    app_handle: &tauri::AppHandle,
+    loaded_image: LoadedImage,
+    method: DenoiseMethod,
+    key: String,
+    source: String,
+    fingerprint: u64,
+) -> Result<(), String> {
+    let state = app_handle.state::<AppState>();
+    let session = load_session(app_handle, method).await?;
 
     let progress_handle = app_handle.clone();
     let loaded_path = loaded_image.path.clone();
     tokio::task::spawn_blocking(move || {
         denoise_into_cache(
             &loaded_image.image,
-            &session,
+            session.as_ref(),
             key,
             source,
             fingerprint,
@@ -494,7 +551,8 @@ pub fn ensure_generated(
     }
 
     let source = source_string(&loaded_image.path);
-    let key = entry_key(&source);
+    let method = DenoiseMethod::from_adjustments(adjustments);
+    let key = entry_key(&source, method);
     if cache().pending.contains(&key)
         || is_ready(&key, &source, base_fingerprints(&loaded_image.image))
         || !cache().pending.insert(key.clone())
@@ -512,7 +570,15 @@ pub fn ensure_generated(
     );
 
     tauri::async_runtime::spawn(async move {
-        let result = generate(&app_handle, loaded_image, key.clone(), source, fingerprint).await;
+        let result = generate(
+            &app_handle,
+            loaded_image,
+            method,
+            key.clone(),
+            source,
+            fingerprint,
+        )
+        .await;
         cache().pending.remove(&key);
         crate::ai_jobs::release_deferred(&path);
         match result {
@@ -530,24 +596,28 @@ pub fn ensure_generated(
     });
 }
 
-pub fn has_cached_entry(path: &str) -> bool {
+pub fn has_cached_entry(path: &str, method: DenoiseMethod) -> bool {
     let source = source_string(path);
-    let key = entry_key(&source);
+    let key = entry_key(&source, method);
     cache().get(&key).is_some_and(|e| e.source == source)
         || read_disk_header(&key).is_some_and(|h| h.source == source)
 }
 
 pub fn is_generating(path: &str) -> bool {
-    cache().pending.contains(&entry_key(&source_string(path)))
+    let source = source_string(path);
+    DenoiseMethod::ALL
+        .iter()
+        .any(|&method| cache().pending.contains(&entry_key(&source, method)))
 }
 
 pub fn generate_for_base(
     app_handle: &tauri::AppHandle,
     path: &str,
     base: &DynamicImage,
+    method: DenoiseMethod,
 ) -> Result<bool, String> {
     let source = source_string(path);
-    let key = entry_key(&source);
+    let key = entry_key(&source, method);
     if !cache().pending.insert(key.clone()) {
         return Ok(false);
     }
@@ -562,28 +632,22 @@ pub fn generate_for_base(
         "ai-denoise-progress",
         serde_json::json!({ "path": path, "progress": 0.0 }),
     );
-    let state = app_handle.state::<AppState>();
-    let result = tauri::async_runtime::block_on(crate::ai_processing::get_or_init_denoise_model(
-        app_handle,
-        &state.ai_state,
-        &state.ai_init_lock,
-    ))
-    .map_err(|e| e.to_string())
-    .and_then(|session| {
-        denoise_into_cache(
-            base,
-            &session,
-            key.clone(),
-            source,
-            fingerprints[0],
-            &|progress| {
-                let _ = app_handle.emit(
-                    "ai-denoise-progress",
-                    serde_json::json!({ "path": path, "progress": progress }),
-                );
-            },
-        )
-    });
+    let result =
+        tauri::async_runtime::block_on(load_session(app_handle, method)).and_then(|session| {
+            denoise_into_cache(
+                base,
+                session.as_ref(),
+                key.clone(),
+                source,
+                fingerprints[0],
+                &|progress| {
+                    let _ = app_handle.emit(
+                        "ai-denoise-progress",
+                        serde_json::json!({ "path": path, "progress": progress }),
+                    );
+                },
+            )
+        });
 
     cache().pending.remove(&key);
     match &result {
@@ -616,11 +680,6 @@ fn cache_files() -> Vec<(PathBuf, u64)> {
 }
 
 #[tauri::command]
-pub fn get_ai_denoise_cache_size() -> u64 {
-    cache_files().iter().map(|(_, len)| len).sum()
-}
-
-#[tauri::command]
 pub fn clear_ai_denoise_cache() -> Result<(), String> {
     for (path, _) in cache_files() {
         fs::remove_file(&path)
@@ -630,4 +689,102 @@ pub fn clear_ai_denoise_cache() -> Result<(), String> {
     cache.entries.clear();
     cache.epoch += 1;
     Ok(())
+}
+
+struct BilinearTap {
+    i00: usize,
+    i10: usize,
+    i01: usize,
+    i11: usize,
+    wx: f32,
+    wy: f32,
+}
+
+impl BilinearTap {
+    #[inline(always)]
+    fn new(u: f32, v: f32, w: usize, h: usize) -> Self {
+        let fx = (u * w as f32 - 0.5).clamp(0.0, (w - 1) as f32);
+        let fy = (v * h as f32 - 0.5).clamp(0.0, (h - 1) as f32);
+        let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
+        let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1));
+        Self {
+            i00: y0 * w + x0,
+            i10: y0 * w + x1,
+            i01: y1 * w + x0,
+            i11: y1 * w + x1,
+            wx: fx - x0 as f32,
+            wy: fy - y0 as f32,
+        }
+    }
+
+    #[inline(always)]
+    fn sample(&self, buf: &[f32]) -> f32 {
+        let top = buf[self.i00] + (buf[self.i10] - buf[self.i00]) * self.wx;
+        let bot = buf[self.i01] + (buf[self.i11] - buf[self.i01]) * self.wx;
+        top + (bot - top) * self.wy
+    }
+}
+
+fn box_filter(buf: &mut [f32], w: usize, h: usize, ch: usize, radius: usize) {
+    if radius == 0 || w < 2 || h < 2 {
+        return;
+    }
+    let r = radius as isize;
+    let inv = 1.0 / (2 * radius + 1) as f32;
+    let wi = w as isize;
+    let hi = h as isize;
+    let stride = w * ch;
+
+    buf.par_chunks_exact_mut(stride).for_each(|row| {
+        let src = row.to_vec();
+        let mut sums = vec![0.0f32; ch];
+        for i in -r..=r {
+            let ix = i.clamp(0, wi - 1) as usize;
+            for (c, s) in sums.iter_mut().enumerate() {
+                *s += src[ix * ch + c];
+            }
+        }
+        for x in 0..w {
+            for (c, s) in sums.iter().enumerate() {
+                row[x * ch + c] = *s * inv;
+            }
+            let add = ((x as isize + r + 1).clamp(0, wi - 1)) as usize;
+            let sub = ((x as isize - r).clamp(0, wi - 1)) as usize;
+            for (c, s) in sums.iter_mut().enumerate() {
+                *s += src[add * ch + c] - src[sub * ch + c];
+            }
+        }
+    });
+
+    let src = buf.to_vec();
+    let threads = rayon::current_num_threads().max(1);
+    let block_rows = h.div_ceil(threads).max(1);
+
+    buf.par_chunks_mut(block_rows * stride)
+        .enumerate()
+        .for_each(|(bi, block)| {
+            let y_start = bi * block_rows;
+            let rows_here = block.len() / stride;
+            let mut sums = vec![0.0f32; stride];
+
+            for i in -r..=r {
+                let iy = (y_start as isize + i).clamp(0, hi - 1) as usize * stride;
+                for (j, s) in sums.iter_mut().enumerate() {
+                    *s += src[iy + j];
+                }
+            }
+
+            for yy in 0..rows_here {
+                let y = y_start + yy;
+                let base = yy * stride;
+                for (j, s) in sums.iter().enumerate() {
+                    block[base + j] = *s * inv;
+                }
+                let add = ((y as isize + r + 1).clamp(0, hi - 1)) as usize * stride;
+                let sub = ((y as isize - r).clamp(0, hi - 1)) as usize * stride;
+                for (j, s) in sums.iter_mut().enumerate() {
+                    *s += src[add + j] - src[sub + j];
+                }
+            }
+        });
 }

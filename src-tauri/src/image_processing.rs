@@ -1,7 +1,8 @@
 use crate::as_shot::AsShot;
 use crate::baseline_exposure::BaselineOptions;
-use crate::gpu_processing::WgpuDisplay;
+use crate::gpu_processing::{GpuPipelines, WgpuDisplay};
 use crate::guided_perspective::{GuideLine, compute_guided_homography, count_valid_lines};
+use crate::lens_correction::{LensProfile, has_lens_selection, lens_profile};
 use crate::white_balance::{self, WhiteBalance};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat3, Vec2, Vec3};
@@ -22,7 +23,6 @@ pub use crate::gpu_processing::{
     process_and_get_dynamic_image_with_analytics, process_and_get_dynamic_image_with_precision,
 };
 use crate::{AppState, mask_generation::MaskDefinition};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 pub trait IntoCowImage<'a> {
     fn into_cow(self) -> Cow<'a, DynamicImage>;
@@ -212,15 +212,8 @@ pub struct GeometryParams {
     pub lens_distortion_enabled: bool,
     pub lens_tca_enabled: bool,
     pub lens_vignette_enabled: bool,
-    pub lens_dist_k1: f32,
-    pub lens_dist_k2: f32,
-    pub lens_dist_k3: f32,
-    pub lens_model: u32,
-    pub tca_vr: f32,
-    pub tca_vb: f32,
-    pub vig_k1: f32,
-    pub vig_k2: f32,
-    pub vig_k3: f32,
+    #[serde(default)]
+    pub lens: Option<LensProfile>,
     #[serde(default)]
     pub guided_lines: Vec<GuideLine>,
     #[serde(default)]
@@ -244,26 +237,47 @@ impl Default for GeometryParams {
             lens_distortion_enabled: true,
             lens_tca_enabled: true,
             lens_vignette_enabled: true,
-            lens_dist_k1: 0.0,
-            lens_dist_k2: 0.0,
-            lens_dist_k3: 0.0,
-            lens_model: 0,
-            tca_vr: 1.0,
-            tca_vb: 1.0,
-            vig_k1: 0.0,
-            vig_k2: 0.0,
-            vig_k3: 0.0,
+            lens: None,
             guided_lines: Vec::new(),
             guided_perspective_enabled: false,
         }
     }
 }
 
-pub fn get_geometry_params_from_json(adjustments: &serde_json::Value) -> GeometryParams {
-    let lens_params = adjustments
-        .get("lensDistortionParams")
-        .and_then(|v| v.as_object());
+impl GeometryParams {
+    fn lens_distortion(&self) -> Option<&[f64; 5]> {
+        self.lens
+            .as_ref()
+            .and_then(|l| l.distortion.as_ref())
+            .filter(|_| self.lens_distortion_enabled && self.lens_distortion_amount != 0.0)
+    }
 
+    fn lens_tca(&self) -> Option<&[f64; 6]> {
+        self.lens
+            .as_ref()
+            .and_then(|l| l.tca.as_ref())
+            .filter(|_| self.lens_tca_enabled && self.lens_tca_amount != 0.0)
+    }
+
+    fn lens_vignetting(&self) -> Option<&[f64; 3]> {
+        self.lens
+            .as_ref()
+            .and_then(|l| l.vignetting.as_ref())
+            .filter(|_| self.lens_vignette_enabled && self.lens_vignette_amount != 0.0)
+    }
+}
+
+pub fn get_geometry_params_from_json(
+    path: &str,
+    adjustments: &serde_json::Value,
+) -> GeometryParams {
+    GeometryParams {
+        lens: lens_profile(path, adjustments),
+        ..user_geometry_params(adjustments)
+    }
+}
+
+fn user_geometry_params(adjustments: &serde_json::Value) -> GeometryParams {
     let guided = adjustments.get("guidedPerspective");
     let guided_perspective_enabled = guided
         .and_then(|g| g.get("enabled"))
@@ -297,33 +311,7 @@ pub fn get_geometry_params_from_json(adjustments: &serde_json::Value) -> Geometr
         lens_tca_enabled: adjustments["lensTcaEnabled"].as_bool().unwrap_or(true),
         lens_vignette_enabled: adjustments["lensVignetteEnabled"].as_bool().unwrap_or(true),
 
-        lens_dist_k1: lens_params
-            .and_then(|p| p.get("k1").and_then(|k| k.as_f64()))
-            .unwrap_or(0.0) as f32,
-        lens_dist_k2: lens_params
-            .and_then(|p| p.get("k2").and_then(|k| k.as_f64()))
-            .unwrap_or(0.0) as f32,
-        lens_dist_k3: lens_params
-            .and_then(|p| p.get("k3").and_then(|k| k.as_f64()))
-            .unwrap_or(0.0) as f32,
-        lens_model: lens_params
-            .and_then(|p| p.get("model").and_then(|m| m.as_u64()))
-            .unwrap_or(0) as u32,
-        tca_vr: lens_params
-            .and_then(|p| p.get("tca_vr").and_then(|k| k.as_f64()))
-            .unwrap_or(1.0) as f32,
-        tca_vb: lens_params
-            .and_then(|p| p.get("tca_vb").and_then(|k| k.as_f64()))
-            .unwrap_or(1.0) as f32,
-        vig_k1: lens_params
-            .and_then(|p| p.get("vig_k1").and_then(|k| k.as_f64()))
-            .unwrap_or(0.0) as f32,
-        vig_k2: lens_params
-            .and_then(|p| p.get("vig_k2").and_then(|k| k.as_f64()))
-            .unwrap_or(0.0) as f32,
-        vig_k3: lens_params
-            .and_then(|p| p.get("vig_k3").and_then(|k| k.as_f64()))
-            .unwrap_or(0.0) as f32,
+        lens: None,
         guided_lines,
         guided_perspective_enabled,
     }
@@ -346,14 +334,10 @@ fn u8_to_f32_lut() -> &'static [f32; 256] {
     })
 }
 
-pub fn downscale_f32_image_if_needed(
-    image: &DynamicImage,
-    nwidth: u32,
-    nheight: u32,
-) -> Option<DynamicImage> {
-    let start = std::time::Instant::now();
-
-    let (width, height) = image.dimensions();
+pub fn fitted_size(
+    (width, height): (u32, u32),
+    (nwidth, nheight): (u32, u32),
+) -> Option<(u32, u32)> {
     if nwidth == 0 || nheight == 0 || (nwidth >= width && nheight >= height) {
         return None;
     }
@@ -362,9 +346,18 @@ pub fn downscale_f32_image_if_needed(
     let new_w = (width as f32 * ratio).round() as u32;
     let new_h = (height as f32 * ratio).round() as u32;
 
-    if new_w == 0 || new_h == 0 {
-        return None;
-    }
+    (new_w > 0 && new_h > 0).then_some((new_w, new_h))
+}
+
+pub fn downscale_f32_image_if_needed(
+    image: &DynamicImage,
+    nwidth: u32,
+    nheight: u32,
+) -> Option<DynamicImage> {
+    let start = std::time::Instant::now();
+
+    let (width, height) = image.dimensions();
+    let (new_w, new_h) = fitted_size((width, height), (nwidth, nheight))?;
 
     let x_ratio = width as f32 / new_w as f32;
     let y_ratio = height as f32 / new_h as f32;
@@ -749,114 +742,169 @@ fn interpolate_pixel_with_tca(
     pixel_out[2] = sample_channel(bx, by, 2);
 }
 
-fn solve_generic_distortion_inv(r_target: f64, k_scaled: f64) -> f64 {
-    if k_scaled.abs() < 1e-9 {
-        return r_target;
-    }
-
-    let mut r = r_target;
-    for _ in 0..10 {
-        let r2 = r * r;
-        let val = k_scaled * r2 * r + r - r_target;
-        let slope = 3.0 * k_scaled * r2 + 1.0;
-
-        if slope.abs() < 1e-9 {
-            break;
-        }
-        let delta = val / slope;
-        r -= delta;
-        if delta.abs() < 1e-6 {
-            break;
-        }
-    }
-    r
+pub struct WarpModel {
+    pub forward: NaMatrix3<f32>,
+    pub inverse: NaMatrix3<f32>,
+    pub cx: f32,
+    pub cy: f32,
+    pub max_radius_sq_inv: f64,
+    pub k_distortion: f64,
+    pub lens_k: [f64; 4],
+    pub lens_scale: f64,
+    pub has_lens_correction: bool,
+    pub auto_crop_scale: f32,
+    pub tca_red: [f64; 3],
+    pub tca_blue: [f64; 3],
+    pub tca_scale: f64,
+    pub has_tca: bool,
+    pub vignette_k: [f64; 3],
+    pub vignette_scale: f64,
+    pub vignette_amount: f64,
+    pub has_vignetting: bool,
 }
 
-fn compute_lens_auto_crop_scale(params: &GeometryParams, width: f32, height: f32) -> f64 {
-    let cx = (width / 2.0) as f64;
-    let cy = (height / 2.0) as f64;
-    let half_diagonal = (cx * cx + cy * cy).sqrt();
-    let max_radius_sq_inv = 1.0 / (cx * cx + cy * cy);
+impl WarpModel {
+    pub fn new(params: &GeometryParams, width: u32, height: u32) -> Self {
+        let (forward, cx, cy, half_diagonal) =
+            build_transform_matrices(params, width as f32, height as f32);
+        let inverse = forward.try_inverse().unwrap_or(NaMatrix3::identity());
+        let lens = params.lens.as_ref();
+        let radial_scale = lens.map_or(0.0, |l| l.distortion_scale) / half_diagonal;
 
-    let lk1 = params.lens_dist_k1 as f64;
-    let lk2 = params.lens_dist_k2 as f64;
-    let lk3 = params.lens_dist_k3 as f64;
-    let lens_dist_amt = (params.lens_distortion_amount as f64) * 2.5;
+        let amount = params.lens_distortion_amount as f64;
+        let (lens_k, lens_scale) = params.lens_distortion().map_or(([0.0; 4], 0.0), |c| {
+            (
+                [c[1], c[2], c[3], c[4]].map(|k| k / c[0] * amount),
+                radial_scale / c[0],
+            )
+        });
 
-    let k_distortion = (params.distortion as f64 / 100.0) * 2.5;
+        let tca_amount = params.lens_tca_amount as f64;
+        let tca_channel =
+            |v: f64, c: f64, b: f64| [1.0 + (v - 1.0) * tca_amount, c * tca_amount, b * tca_amount];
+        let (tca_red, tca_blue) = params
+            .lens_tca()
+            .map_or(([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]), |t| {
+                (tca_channel(t[0], t[2], t[4]), tca_channel(t[1], t[3], t[5]))
+            });
 
-    let has_lens_correction = params.lens_distortion_enabled
-        && (lk1.abs() > 1e-6 || lk2.abs() > 1e-6 || lk3.abs() > 1e-6);
-    let is_ptlens = params.lens_model == 1;
+        let mut model = Self {
+            forward,
+            inverse,
+            cx,
+            cy,
+            max_radius_sq_inv: 1.0 / (half_diagonal * half_diagonal),
+            k_distortion: (params.distortion as f64 / 100.0) * 2.5,
+            lens_k,
+            lens_scale,
+            has_lens_correction: params.lens_distortion().is_some(),
+            auto_crop_scale: 1.0,
+            tca_red,
+            tca_blue,
+            tca_scale: radial_scale,
+            has_tca: params.lens_tca().is_some(),
+            vignette_k: params.lens_vignetting().copied().unwrap_or_default(),
+            vignette_scale: lens.map_or(0.0, |l| l.vignetting_scale) / half_diagonal,
+            vignette_amount: params.lens_vignette_amount as f64,
+            has_vignetting: params.lens_vignetting().is_some(),
+        };
+        model.auto_crop_scale = model.compute_auto_crop_scale();
+        model
+    }
 
-    let sample_points: [(f64, f64); 8] = [
-        (cx, 0.0),
-        (cx, height as f64),
-        (0.0, cy),
-        (width as f64, cy),
-        (0.0, 0.0),
-        (width as f64, 0.0),
-        (0.0, height as f64),
-        (width as f64, height as f64),
-    ];
+    fn radial_factor(&self, radius: f64) -> f64 {
+        let user = 1.0 + self.k_distortion * radius * radius * self.max_radius_sq_inv;
+        let r = radius * user * self.lens_scale;
+        let [k1, k2, k3, k4] = self.lens_k;
+        user * (1.0 + r * (k1 + r * (k2 + r * (k3 + r * k4))))
+    }
 
-    let mut max_scale: f64 = 1.0;
-
-    for &(px, py) in &sample_points {
-        let dx = px - cx;
-        let dy = py - cy;
-        let ru = (dx * dx + dy * dy).sqrt();
-        if ru < 1e-6 {
-            continue;
+    fn compute_auto_crop_scale(&self) -> f32 {
+        if !self.has_lens_correction && self.k_distortion.abs() <= 1e-5 {
+            return 1.0;
         }
+        const RADIUS_STEPS: usize = 512;
+        const BORDER_SAMPLES: usize = 64;
 
-        let mut mapped_dx = dx;
-        let mut mapped_dy = dy;
+        let (cx, cy) = (self.cx as f64, self.cy as f64);
+        let half_diagonal = cx.hypot(cy);
+        let mut furthest = 0.0f64;
+        let reach: Vec<(f64, f64)> = (0..=RADIUS_STEPS)
+            .map(|i| {
+                let radius = half_diagonal * i as f64 / RADIUS_STEPS as f64;
+                furthest = furthest.max(radius * self.radial_factor(radius));
+                (radius, furthest)
+            })
+            .collect();
 
-        if has_lens_correction {
-            let ru_norm = ru / half_diagonal;
-            let ru_norm2 = ru_norm * ru_norm;
+        let shortest = cx.min(cy);
+        let scale = (0..=BORDER_SAMPLES)
+            .filter_map(|j| {
+                let border =
+                    shortest + (half_diagonal - shortest) * j as f64 / BORDER_SAMPLES as f64;
+                let i = reach.partition_point(|&(_, source)| source < border);
+                let ((r0, s0), (r1, s1)) = (*reach.get(i.checked_sub(1)?)?, *reach.get(i)?);
+                Some(border / (r0 + (border - s0) / (s1 - s0) * (r1 - r0)))
+            })
+            .fold(1.0f64, f64::max);
 
-            let rd_norm = if is_ptlens {
-                let a = lk1;
-                let b = lk2;
-                let c = lk3;
-                let d = 1.0 - a - b - c;
-                ru_norm * (a * ru_norm2 * ru_norm + b * ru_norm2 + c * ru_norm + d)
-            } else {
-                ru_norm
-                    * (1.0
-                        + lk1 * ru_norm2
-                        + lk2 * (ru_norm2 * ru_norm2)
-                        + lk3 * (ru_norm2 * ru_norm2 * ru_norm2))
-            };
-
-            let effective_r_norm = ru_norm + (rd_norm - ru_norm) * lens_dist_amt;
-            let scale = effective_r_norm / ru_norm;
-
-            mapped_dx *= scale;
-            mapped_dy *= scale;
-        }
-
-        if k_distortion.abs() > 1e-5 {
-            let r2_norm = (mapped_dx * mapped_dx + mapped_dy * mapped_dy) * max_radius_sq_inv;
-            let f = 1.0 + k_distortion * r2_norm;
-            mapped_dx *= f;
-            mapped_dy *= f;
-        }
-
-        let mapped_ru = (mapped_dx * mapped_dx + mapped_dy * mapped_dy).sqrt();
-        let scale = mapped_ru / ru;
-
-        if scale > max_scale {
-            max_scale = scale;
+        if scale > 1.0 {
+            (scale * 1.002) as f32
+        } else {
+            1.0
         }
     }
 
-    if max_scale > 1.0 {
-        max_scale * 1.002
-    } else {
-        max_scale
+    pub fn source_point(&self, x: f64, y: f64) -> (f64, f64) {
+        let (cx, cy) = (self.cx as f64, self.cy as f64);
+        let crop = self.auto_crop_scale as f64;
+        let (dx, dy) = ((x - cx) / crop, (y - cy) / crop);
+        let factor = self.radial_factor(dx.hypot(dy));
+        (cx + dx * factor, cy + dy * factor)
+    }
+
+    fn output_point(&self, x: f64, y: f64) -> (f64, f64) {
+        let (cx, cy) = (self.cx as f64, self.cy as f64);
+        let (dx, dy) = (x - cx, y - cy);
+        let source_radius = dx.hypot(dy);
+        let mapped = |r: f64| r * self.radial_factor(r);
+        let mut radius = source_radius;
+        for _ in 0..20 {
+            let h = (radius.abs() * 1e-4).max(1e-3);
+            let slope = (mapped(radius + h) - mapped(radius - h)) / (2.0 * h);
+            if slope.abs() < 1e-9 {
+                break;
+            }
+            let step = (mapped(radius) - source_radius) / slope;
+            radius -= step;
+            if step.abs() < 1e-4 {
+                break;
+            }
+        }
+        let scale = if source_radius > 1e-6 {
+            radius / source_radius
+        } else {
+            1.0
+        } * self.auto_crop_scale as f64;
+        (cx + dx * scale, cy + dy * scale)
+    }
+
+    fn tca_scales(&self, dx: f64, dy: f64) -> (f32, f32) {
+        let r = dx.hypot(dy) * self.tca_scale;
+        let scale = |[v, c, b]: [f64; 3]| (v + r * (c + r * b)) as f32;
+        (scale(self.tca_red), scale(self.tca_blue))
+    }
+
+    fn vignette_gain(&self, dx: f64, dy: f64) -> f32 {
+        let r = dx.hypot(dy) * self.vignette_scale;
+        let r2 = r * r;
+        let [k1, k2, k3] = self.vignette_k;
+        let falloff = 1.0 + r2 * (k1 + r2 * (k2 + r2 * k3));
+        if falloff > 1e-6 {
+            (1.0 + (1.0 / falloff - 1.0) * self.vignette_amount) as f32
+        } else {
+            1.0
+        }
     }
 }
 
@@ -872,54 +920,12 @@ pub fn warp_image_geometry(image: &DynamicImage, params: GeometryParams) -> Dyna
     let (width, height) = src_img.dimensions();
     let mut out_buffer = vec![0.0f32; (width * height * 3) as usize];
 
-    let (forward_transform, cx, cy, half_diagonal) =
-        build_transform_matrices(&params, width as f32, height as f32);
-    let inv = forward_transform
-        .try_inverse()
-        .unwrap_or(NaMatrix3::identity());
-
+    let model = WarpModel::new(&params, width, height);
+    let inv = model.inverse;
     let step_vec_x = NaVector3::new(inv[(0, 0)], inv[(1, 0)], inv[(2, 0)]);
     let step_vec_y = NaVector3::new(inv[(0, 1)], inv[(1, 1)], inv[(2, 1)]);
     let origin_vec = NaVector3::new(inv[(0, 2)], inv[(1, 2)], inv[(2, 2)]);
-
-    let max_radius_sq_inv = 1.0 / ((cx * cx + cy * cy) as f64);
-    let hd = half_diagonal;
-
-    let k_distortion = (params.distortion as f64 / 100.0) * 2.5;
-    let lk1 = params.lens_dist_k1 as f64;
-    let lk2 = params.lens_dist_k2 as f64;
-    let lk3 = params.lens_dist_k3 as f64;
-    let lens_dist_amt = (params.lens_distortion_amount as f64) * 2.5;
-
-    let has_lens_correction = params.lens_distortion_enabled
-        && (lk1.abs() > 1e-6 || lk2.abs() > 1e-6 || lk3.abs() > 1e-6);
-    let is_ptlens = params.lens_model == 1;
-
-    let auto_crop_scale = if has_lens_correction || k_distortion.abs() > 1e-5 {
-        compute_lens_auto_crop_scale(&params, width as f32, height as f32) as f32
-    } else {
-        1.0
-    };
-
-    let vr = if (params.tca_vr - 1.0).abs() > 1e-5 {
-        params.tca_vr + (1.0 - params.tca_vr) * (1.0 - params.lens_tca_amount)
-    } else {
-        1.0
-    };
-    let vb = if (params.tca_vb - 1.0).abs() > 1e-5 {
-        params.tca_vb + (1.0 - params.tca_vb) * (1.0 - params.lens_tca_amount)
-    } else {
-        1.0
-    };
-    let has_tca = params.lens_tca_enabled && ((vr - 1.0).abs() > 1e-5 || (vb - 1.0).abs() > 1e-5);
-
-    let vk1 = params.vig_k1 as f64;
-    let vk2 = params.vig_k2 as f64;
-    let vk3 = params.vig_k3 as f64;
-    let lens_vig_amt = (params.lens_vignette_amount as f64) * 0.8;
-    let has_vignetting = params.lens_vignette_enabled
-        && (vk1.abs() > 1e-6 || vk2.abs() > 1e-6 || vk3.abs() > 1e-6)
-        && lens_vig_amt > 0.01;
+    let (cx, cy) = (model.cx as f64, model.cy as f64);
 
     let src_raw = src_img.as_raw();
     let width_usize = width as usize;
@@ -928,98 +934,37 @@ pub fn warp_image_geometry(image: &DynamicImage, params: GeometryParams) -> Dyna
         src_raw,
         src_width: width_usize,
         src_height: height_usize,
-        cx,
-        cy,
+        cx: model.cx,
+        cy: model.cy,
     };
 
     out_buffer
         .par_chunks_exact_mut(width_usize * 3)
         .enumerate()
         .for_each(|(y, row_pixel_data)| {
-            let y_f = y as f32;
-            let mut current_vec = origin_vec + (step_vec_y * y_f);
+            let row_origin = origin_vec + (step_vec_y * y as f32);
 
-            for pixel in row_pixel_data.as_chunks_mut::<3>().0.iter_mut() {
-                if current_vec.z.abs() > 1e-6 {
-                    let inv_z = 1.0 / current_vec.z;
-                    let mut src_x = current_vec.x * inv_z;
-                    let mut src_y = current_vec.y * inv_z;
-
-                    if auto_crop_scale > 1.0 {
-                        src_x = cx + (src_x - cx) / auto_crop_scale;
-                        src_y = cy + (src_y - cy) / auto_crop_scale;
-                    }
-
-                    if has_lens_correction {
-                        let dx = (src_x - cx) as f64;
-                        let dy = (src_y - cy) as f64;
-                        let ru = (dx * dx + dy * dy).sqrt();
-
-                        if ru > 1e-6 {
-                            let ru_norm = ru / hd;
-                            let ru_norm2 = ru_norm * ru_norm;
-
-                            let rd_norm = if is_ptlens {
-                                let a = lk1;
-                                let b = lk2;
-                                let c = lk3;
-                                let d = 1.0 - a - b - c;
-                                ru_norm * (a * ru_norm2 * ru_norm + b * ru_norm2 + c * ru_norm + d)
-                            } else {
-                                ru_norm
-                                    * (1.0
-                                        + lk1 * ru_norm2
-                                        + lk2 * (ru_norm2 * ru_norm2)
-                                        + lk3 * (ru_norm2 * ru_norm2 * ru_norm2))
-                            };
-
-                            let effective_r_norm = ru_norm + (rd_norm - ru_norm) * lens_dist_amt;
-                            let scale = effective_r_norm / ru_norm;
-
-                            src_x = cx + (dx * scale) as f32;
-                            src_y = cy + (dy * scale) as f32;
-                        }
-                    }
-
-                    if k_distortion.abs() > 1e-5 {
-                        let dx = (src_x - cx) as f64;
-                        let dy = (src_y - cy) as f64;
-                        let r2_norm = (dx * dx + dy * dy) * max_radius_sq_inv;
-                        let f = 1.0 + k_distortion * r2_norm;
-
-                        src_x = cx + (dx * f) as f32;
-                        src_y = cy + (dy * f) as f32;
-                    }
-
-                    if has_tca {
-                        interpolate_pixel_with_tca(&tca_ctx, src_x, src_y, vr, vb, pixel);
-                    } else {
-                        interpolate_pixel(src_raw, width_usize, height_usize, src_x, src_y, pixel);
-                    }
-
-                    if has_vignetting {
-                        let dx = (src_x - cx) as f64;
-                        let dy = (src_y - cy) as f64;
-                        let ru = (dx * dx + dy * dy).sqrt();
-                        let ru_norm = ru / hd;
-                        let ru_norm2 = ru_norm * ru_norm;
-
-                        let v_factor = 1.0
-                            + vk1 * ru_norm2
-                            + vk2 * (ru_norm2 * ru_norm2)
-                            + vk3 * (ru_norm2 * ru_norm2 * ru_norm2);
-
-                        if v_factor > 1e-6 {
-                            let correction_gain = 1.0 / v_factor;
-                            let final_gain = 1.0 + (correction_gain - 1.0) * lens_vig_amt;
-
-                            pixel[0] *= final_gain as f32;
-                            pixel[1] *= final_gain as f32;
-                            pixel[2] *= final_gain as f32;
-                        }
-                    }
+            for (x, pixel) in row_pixel_data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+                let current_vec = row_origin + step_vec_x * x as f32;
+                if current_vec.z.abs() <= 1e-6 {
+                    continue;
                 }
-                current_vec += step_vec_x;
+                let inv_z = 1.0 / current_vec.z as f64;
+                let (sx, sy) =
+                    model.source_point(current_vec.x as f64 * inv_z, current_vec.y as f64 * inv_z);
+                let (src_x, src_y) = (sx as f32, sy as f32);
+
+                if model.has_tca {
+                    let (vr, vb) = model.tca_scales(sx - cx, sy - cy);
+                    interpolate_pixel_with_tca(&tca_ctx, src_x, src_y, vr, vb, pixel);
+                } else {
+                    interpolate_pixel(src_raw, width_usize, height_usize, src_x, src_y, pixel);
+                }
+
+                if model.has_vignetting {
+                    let gain = model.vignette_gain(sx - cx, sy - cy);
+                    pixel.iter_mut().for_each(|c| *c *= gain);
+                }
             }
         });
 
@@ -1039,27 +984,7 @@ pub fn unwarp_image_geometry(warped_image: &DynamicImage, params: GeometryParams
     let (width, height) = src_img.dimensions();
     let mut out_buffer = vec![0.0f32; (width * height * 3) as usize];
 
-    let (forward_transform, cx, cy, half_diagonal) =
-        build_transform_matrices(&params, width as f32, height as f32);
-    let max_radius_sq_inv = 1.0 / ((cx * cx + cy * cy) as f64);
-    let hd = half_diagonal;
-
-    let k_distortion = (params.distortion as f64 / 100.0) * 2.5;
-    let lk1 = params.lens_dist_k1 as f64;
-    let lk2 = params.lens_dist_k2 as f64;
-    let lk3 = params.lens_dist_k3 as f64;
-    let lens_dist_amt = (params.lens_distortion_amount as f64) * 2.5;
-
-    let has_lens_correction = params.lens_distortion_enabled
-        && (lk1.abs() > 1e-6 || lk2.abs() > 1e-6 || lk3.abs() > 1e-6);
-    let is_ptlens = params.lens_model == 1;
-
-    let auto_crop_scale = if has_lens_correction || k_distortion.abs() > 1e-5 {
-        compute_lens_auto_crop_scale(&params, width as f32, height as f32) as f32
-    } else {
-        1.0
-    };
-
+    let model = WarpModel::new(&params, width, height);
     let src_raw = src_img.as_raw();
     let width_usize = width as usize;
     let height_usize = height as usize;
@@ -1068,91 +993,9 @@ pub fn unwarp_image_geometry(warped_image: &DynamicImage, params: GeometryParams
         .par_chunks_exact_mut(width_usize * 3)
         .enumerate()
         .for_each(|(y, row_pixel_data)| {
-            let y_f = y as f32;
-
             for (x, pixel) in row_pixel_data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
-                let x_f = x as f32;
-                let mut current_x = x_f;
-                let mut current_y = y_f;
-
-                if k_distortion.abs() > 1e-5 {
-                    let dx = (current_x - cx) as f64;
-                    let dy = (current_y - cy) as f64;
-                    let r_distorted = (dx * dx + dy * dy).sqrt();
-
-                    if r_distorted > 1e-6 {
-                        let k_effective = k_distortion * max_radius_sq_inv;
-                        let r_straight = solve_generic_distortion_inv(r_distorted, k_effective);
-
-                        let scale = r_straight / r_distorted;
-                        current_x = cx + (dx * scale) as f32;
-                        current_y = cy + (dy * scale) as f32;
-                    }
-                }
-
-                if has_lens_correction {
-                    let dx = (current_x - cx) as f64;
-                    let dy = (current_y - cy) as f64;
-                    let rd = (dx * dx + dy * dy).sqrt();
-
-                    if rd > 1e-6 {
-                        let mut ru = rd;
-
-                        for _ in 0..8 {
-                            let ru_norm = ru / hd;
-                            let ru_norm2 = ru_norm * ru_norm;
-
-                            let (f_val, f_prime) = if is_ptlens {
-                                let a = lk1;
-                                let b = lk2;
-                                let c = lk3;
-                                let d = 1.0 - a - b - c;
-                                let poly = a * ru_norm2 * ru_norm + b * ru_norm2 + c * ru_norm + d;
-
-                                let val = ru * poly;
-                                let prime = 4.0 * a * ru_norm2 * ru_norm
-                                    + 3.0 * b * ru_norm2
-                                    + 2.0 * c * ru_norm
-                                    + d;
-                                (val, prime)
-                            } else {
-                                let poly = 1.0
-                                    + lk1 * ru_norm2
-                                    + lk2 * (ru_norm2 * ru_norm2)
-                                    + lk3 * (ru_norm2 * ru_norm2 * ru_norm2);
-                                let val = ru * poly;
-                                let poly_prime = 2.0 * lk1 * ru_norm
-                                    + 4.0 * lk2 * ru_norm2 * ru_norm
-                                    + 6.0 * lk3 * (ru_norm2 * ru_norm2) * ru_norm;
-                                let prime = poly + ru_norm * poly_prime;
-                                (val, prime)
-                            };
-
-                            let g_val = ru + (f_val - ru) * lens_dist_amt - rd;
-                            let g_prime = 1.0 + (f_prime - 1.0) * lens_dist_amt;
-
-                            if g_prime.abs() < 1e-7 {
-                                break;
-                            }
-                            let delta = g_val / g_prime;
-                            ru -= delta;
-                            if delta.abs() < 1e-4 {
-                                break;
-                            }
-                        }
-
-                        let scale = ru / rd;
-                        current_x = cx + (dx * scale) as f32;
-                        current_y = cy + (dy * scale) as f32;
-                    }
-                }
-
-                if auto_crop_scale > 1.0 {
-                    current_x = cx + (current_x - cx) * auto_crop_scale;
-                    current_y = cy + (current_y - cy) * auto_crop_scale;
-                }
-
-                let target_vec = forward_transform * NaVector3::new(current_x, current_y, 1.0);
+                let (ox, oy) = model.output_point(x as f64, y as f64);
+                let target_vec = model.forward * NaVector3::new(ox as f32, oy as f32, 1.0);
 
                 if target_vec.z.abs() > 1e-6 {
                     let inv_z = 1.0 / target_vec.z;
@@ -1171,6 +1014,7 @@ pub fn unwarp_image_geometry(warped_image: &DynamicImage, params: GeometryParams
 
 pub fn inverse_transform_mask(
     mask: image::GrayImage,
+    path: &str,
     adjustments: &serde_json::Value,
 ) -> image::GrayImage {
     let rotation_degrees = adjustments
@@ -1202,7 +1046,7 @@ pub fn inverse_transform_mask(
     let inverse_steps = (4 - (steps % 4)) % 4;
     let unrotated_coarse = apply_coarse_rotation(flipped, inverse_steps).into_owned();
 
-    let unwarped = apply_unwarp_geometry(unrotated_coarse, adjustments).into_owned();
+    let unwarped = apply_unwarp_geometry(unrotated_coarse, path, adjustments).into_owned();
 
     unwarped.into_luma8()
 }
@@ -1212,6 +1056,7 @@ pub fn inverse_transform_point(
     mut y: f64,
     mut curr_w: f64,
     mut curr_h: f64,
+    path: &str,
     adjustments: &serde_json::Value,
 ) -> (f64, f64) {
     let rotation_degrees = adjustments
@@ -1259,87 +1104,12 @@ pub fn inverse_transform_point(
         std::mem::swap(&mut curr_w, &mut curr_h);
     }
 
-    let params = get_geometry_params_from_json(adjustments);
-    let width = curr_w as f32;
-    let height = curr_h as f32;
-
-    let (forward_transform, cx_f32, cy_f32, hd) = build_transform_matrices(&params, width, height);
-    let cx = cx_f32 as f64;
-    let cy = cy_f32 as f64;
-    let inv = forward_transform
-        .try_inverse()
-        .unwrap_or(nalgebra::Matrix3::identity());
-
-    let vec = inv * nalgebra::Vector3::new(x as f32, y as f32, 1.0);
+    let params = get_geometry_params_from_json(path, adjustments);
+    let model = WarpModel::new(&params, curr_w as u32, curr_h as u32);
+    let vec = model.inverse * nalgebra::Vector3::new(x as f32, y as f32, 1.0);
     if vec.z.abs() > 1e-6 {
         let inv_z = 1.0 / (vec.z as f64);
-        let mut src_x = (vec.x as f64) * inv_z;
-        let mut src_y = (vec.y as f64) * inv_z;
-
-        let k_distortion = (params.distortion as f64 / 100.0) * 2.5;
-        let lk1 = params.lens_dist_k1 as f64;
-        let lk2 = params.lens_dist_k2 as f64;
-        let lk3 = params.lens_dist_k3 as f64;
-        let lens_dist_amt = (params.lens_distortion_amount as f64) * 2.5;
-
-        let has_lens_correction = params.lens_distortion_enabled
-            && (lk1.abs() > 1e-6 || lk2.abs() > 1e-6 || lk3.abs() > 1e-6);
-        let is_ptlens = params.lens_model == 1;
-
-        let auto_crop_scale = if has_lens_correction || k_distortion.abs() > 1e-5 {
-            compute_lens_auto_crop_scale(&params, width, height)
-        } else {
-            1.0
-        };
-
-        if auto_crop_scale > 1.0 {
-            src_x = cx + (src_x - cx) / auto_crop_scale;
-            src_y = cy + (src_y - cy) / auto_crop_scale;
-        }
-
-        if has_lens_correction {
-            let dx = src_x - cx;
-            let dy = src_y - cy;
-            let ru = (dx * dx + dy * dy).sqrt();
-
-            if ru > 1e-6 {
-                let ru_norm = ru / hd;
-                let ru_norm2 = ru_norm * ru_norm;
-
-                let rd_norm = if is_ptlens {
-                    let a = lk1;
-                    let b = lk2;
-                    let c = lk3;
-                    let d = 1.0 - a - b - c;
-                    ru_norm * (a * ru_norm2 * ru_norm + b * ru_norm2 + c * ru_norm + d)
-                } else {
-                    ru_norm
-                        * (1.0
-                            + lk1 * ru_norm2
-                            + lk2 * (ru_norm2 * ru_norm2)
-                            + lk3 * (ru_norm2 * ru_norm2 * ru_norm2))
-                };
-
-                let effective_r_norm = ru_norm + (rd_norm - ru_norm) * lens_dist_amt;
-                let scale = effective_r_norm / ru_norm;
-
-                src_x = cx + (dx * scale);
-                src_y = cy + (dy * scale);
-            }
-        }
-
-        if k_distortion.abs() > 1e-5 {
-            let max_radius_sq_inv = 1.0 / (cx * cx + cy * cy);
-            let dx = src_x - cx;
-            let dy = src_y - cy;
-            let r2_norm = (dx * dx + dy * dy) * max_radius_sq_inv;
-            let f = 1.0 + k_distortion * r2_norm;
-
-            src_x = cx + (dx * f);
-            src_y = cy + (dy * f);
-        }
-
-        return (src_x, src_y);
+        return model.source_point(vec.x as f64 * inv_z, vec.y as f64 * inv_z);
     }
 
     (x, y)
@@ -1417,15 +1187,17 @@ pub fn apply_srgb_to_linear(image: DynamicImage) -> DynamicImage {
     map_color_channels(image, |x| srgb_channel_to_linear(x.max(0.0)))
 }
 
+pub(crate) fn linear_channel_to_srgb(x: f32) -> f32 {
+    let x = x.max(0.0);
+    if x <= 0.0031308 {
+        x * 12.92
+    } else {
+        1.055 * x.powf(1.0 / 2.4) - 0.055
+    }
+}
+
 pub fn apply_linear_to_srgb(image: DynamicImage) -> DynamicImage {
-    map_color_channels(image, |x| {
-        let x = x.max(0.0);
-        if x <= 0.0031308 {
-            x * 12.92
-        } else {
-            1.055 * x.powf(1.0 / 2.4) - 0.055
-        }
-    })
+    map_color_channels(image, linear_channel_to_srgb)
 }
 
 pub fn apply_orientation(image: DynamicImage, orientation: Orientation) -> DynamicImage {
@@ -1498,10 +1270,11 @@ pub fn oriented_rgb32f(
 
 pub fn apply_geometry_warp<'a>(
     image: impl IntoCowImage<'a>,
+    path: &str,
     adjustments: &serde_json::Value,
 ) -> Cow<'a, DynamicImage> {
     let image = image.into_cow();
-    let params = get_geometry_params_from_json(adjustments);
+    let params = get_geometry_params_from_json(path, adjustments);
     if !is_geometry_identity(&params) {
         Cow::Owned(warp_image_geometry(image.as_ref(), params))
     } else {
@@ -1511,10 +1284,11 @@ pub fn apply_geometry_warp<'a>(
 
 pub fn apply_unwarp_geometry<'a>(
     image: impl IntoCowImage<'a>,
+    path: &str,
     adjustments: &serde_json::Value,
 ) -> Cow<'a, DynamicImage> {
     let image = image.into_cow();
-    let params = get_geometry_params_from_json(adjustments);
+    let params = get_geometry_params_from_json(path, adjustments);
     if !is_geometry_identity(&params) {
         Cow::Owned(unwarp_image_geometry(image.as_ref(), params))
     } else {
@@ -1555,34 +1329,11 @@ pub fn apply_rotation<'a>(
     Cow::Owned(DynamicImage::ImageRgba32F(rotated))
 }
 
-pub fn apply_crop<'a>(image: impl IntoCowImage<'a>, crop_value: &Value) -> Cow<'a, DynamicImage> {
-    let image = image.into_cow();
-    if crop_value.is_null() {
-        return image;
-    }
-
-    if let Ok(crop) = serde_json::from_value::<Crop>(crop_value.clone()) {
-        let x = crop.x.round() as u32;
-        let y = crop.y.round() as u32;
-        let width = crop.width.round() as u32;
-        let height = crop.height.round() as u32;
-
-        if width > 0 && height > 0 {
-            let (img_w, img_h) = image.dimensions();
-            if x < img_w && y < img_h {
-                let new_width = (img_w - x).min(width);
-                let new_height = (img_h - y).min(height);
-
-                if new_width > 0 && new_height > 0 {
-                    if x == 0 && y == 0 && new_width == img_w && new_height == img_h {
-                        return image;
-                    }
-                    return Cow::Owned(image.crop_imm(x, y, new_width, new_height));
-                }
-            }
-        }
-    }
-    image
+pub fn crop_rect(crop: &Crop, (img_w, img_h): (u32, u32)) -> Option<(u32, u32, u32, u32)> {
+    let (x, y) = (crop.x.round() as u32, crop.y.round() as u32);
+    let (width, height) = (crop.width.round() as u32, crop.height.round() as u32);
+    (width > 0 && height > 0 && x < img_w && y < img_h)
+        .then(|| (x, y, (img_w - x).min(width), (img_h - y).min(height)))
 }
 
 pub fn apply_flip<'a>(
@@ -1610,23 +1361,6 @@ pub fn is_geometry_identity(params: &GeometryParams) -> bool {
         return false;
     }
 
-    let dist_identity = !params.lens_distortion_enabled
-        || ((params.lens_distortion_amount - 1.0).abs() < 1e-4
-            && params.lens_dist_k1.abs() < 1e-6
-            && params.lens_dist_k2.abs() < 1e-6
-            && params.lens_dist_k3.abs() < 1e-6);
-
-    let tca_identity = !params.lens_tca_enabled
-        || ((params.lens_tca_amount - 1.0).abs() < 1e-4
-            && (params.tca_vr - 1.0).abs() < 1e-6
-            && (params.tca_vb - 1.0).abs() < 1e-6);
-
-    let vig_identity = !params.lens_vignette_enabled
-        || ((params.lens_vignette_amount - 1.0).abs() < 1e-4
-            && params.vig_k1.abs() < 1e-6
-            && params.vig_k2.abs() < 1e-6
-            && params.vig_k3.abs() < 1e-6);
-
     params.distortion == 0.0
         && params.vertical == 0.0
         && params.horizontal == 0.0
@@ -1635,9 +1369,9 @@ pub fn is_geometry_identity(params: &GeometryParams) -> bool {
         && params.scale == 100.0
         && params.x_offset == 0.0
         && params.y_offset == 0.0
-        && dist_identity
-        && tca_identity
-        && vig_identity
+        && params.lens_distortion().is_none()
+        && params.lens_tca().is_none()
+        && params.lens_vignetting().is_none()
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1697,6 +1431,24 @@ pub struct ColorCalibrationSettings {
     _pad1: f32,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Pod, Zeroable, Default)]
+#[repr(C)]
+pub struct MonochromeSettings {
+    pub enabled: u32,
+    pub weight_r: f32,
+    pub weight_g: f32,
+    pub weight_b: f32,
+    pub mix: [f32; 8],
+    pub shadow_a: f32,
+    pub shadow_b: f32,
+    pub highlight_a: f32,
+    pub highlight_b: f32,
+    pub toning_balance: f32,
+    _pad1: f32,
+    _pad2: f32,
+    _pad3: f32,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct GpuMat3 {
@@ -1753,7 +1505,7 @@ pub struct GlobalAdjustments {
     pub chromatic_aberration_blue_yellow: f32,
     pub show_clipping: u32,
     pub is_raw_image: u32,
-    _pad_ca1: f32,
+    pub grain_softness: f32,
 
     pub has_lut: u32,
     pub lut_intensity: f32,
@@ -1804,6 +1556,8 @@ pub struct GlobalAdjustments {
     pub halation_amount: f32,
     pub flare_amount: f32,
     pub sharpness_threshold: f32,
+
+    pub monochrome: MonochromeSettings,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Pod, Zeroable, Default)]
@@ -1915,6 +1669,9 @@ struct AdjustmentScales {
     color_calibration_hue: f32,
     color_calibration_saturation: f32,
 
+    monochrome_mix: f32,
+    monochrome_toning_saturation: f32,
+
     glow: f32,
     halation: f32,
     flares: f32,
@@ -1936,7 +1693,7 @@ const SCALES: AdjustmentScales = AdjustmentScales {
     luma_noise_reduction: 100.0,
     color_noise_reduction: 100.0,
     clarity: 125.0,
-    dehaze: 750.0,
+    dehaze: 100.0,
     structure: 125.0,
     centré: 250.0,
 
@@ -1944,8 +1701,8 @@ const SCALES: AdjustmentScales = AdjustmentScales {
     vignette_midpoint: 100.0,
     vignette_roundness: 100.0,
     vignette_feather: 100.0,
-    grain_amount: 200.0,
-    grain_size: 50.0,
+    grain_amount: 250.0,
+    grain_size: 60.0,
     grain_roughness: 100.0,
 
     chromatic_aberration: 10000.0,
@@ -1961,6 +1718,9 @@ const SCALES: AdjustmentScales = AdjustmentScales {
 
     color_calibration_hue: 400.0,
     color_calibration_saturation: 120.0,
+
+    monochrome_mix: 100.0,
+    monochrome_toning_saturation: 800.0,
 
     glow: 100.0,
     halation: 100.0,
@@ -2008,6 +1768,122 @@ fn parse_color_grade_settings(js_cg: &serde_json::Value) -> ColorGradeSettings {
         luminance: js_cg["luminance"].as_f64().unwrap_or(0.0) as f32
             / SCALES.color_grading_luminance,
         _pad: 0.0,
+    }
+}
+
+fn hue_to_linear_srgb(hue_degrees: f32) -> Vec3 {
+    let h = hue_degrees.rem_euclid(360.0) / 60.0;
+    let x = 1.0 - ((h % 2.0) - 1.0).abs();
+    let srgb = match h as u32 {
+        0 => Vec3::new(1.0, x, 0.0),
+        1 => Vec3::new(x, 1.0, 0.0),
+        2 => Vec3::new(0.0, 1.0, x),
+        3 => Vec3::new(0.0, x, 1.0),
+        4 => Vec3::new(x, 0.0, 1.0),
+        _ => Vec3::new(1.0, 0.0, x),
+    };
+    srgb.map(|c| {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    })
+}
+
+fn oklab_hue_direction(hue_degrees: f32) -> Vec2 {
+    let rgb = hue_to_linear_srgb(hue_degrees);
+    let l = (0.412_221_47 * rgb.x + 0.536_332_55 * rgb.y + 0.051_445_995 * rgb.z).cbrt();
+    let m = (0.211_903_5 * rgb.x + 0.680_699_5 * rgb.y + 0.107_396_96 * rgb.z).cbrt();
+    let s = (0.088_302_46 * rgb.x + 0.281_718_85 * rgb.y + 0.629_978_7 * rgb.z).cbrt();
+    let ab = Vec2::new(
+        1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s,
+        0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s,
+    );
+    ab.normalize_or_zero()
+}
+
+fn monochrome_film_response(film: &str) -> (Vec3, [f32; 8]) {
+    match film {
+        "panchromatic" => (Vec3::new(0.19, 0.36, 0.45), [0.0; 8]),
+        "balanced" => (Vec3::new(0.33, 0.36, 0.31), [0.0; 8]),
+        "orthoPanchromatic" => (Vec3::new(0.237, 0.418, 0.345), [0.0; 8]),
+        "extendedRed" => (Vec3::new(0.45, 0.35, 0.20), [0.0; 8]),
+        "orthochromatic" => (Vec3::new(0.0, 0.4, 0.6), [0.0; 8]),
+        "infrared" => (
+            Vec3::new(0.45, 0.55, 0.0),
+            [0.3, 0.3, 0.6, 1.0, -0.5, -1.0, -0.3, 0.2],
+        ),
+        _ => (Vec3::new(0.2126, 0.7152, 0.0722), [0.0; 8]),
+    }
+}
+
+fn parse_monochrome_settings(
+    js_adjustments: &serde_json::Value,
+    mix_visible: bool,
+    toning_visible: bool,
+) -> MonochromeSettings {
+    let get = |value: &serde_json::Value, default: f64| value.as_f64().unwrap_or(default) as f32;
+
+    let filter_strength =
+        (get(&js_adjustments["monochromeFilterStrength"], 0.0) / 100.0).clamp(0.0, 1.0);
+    let filter = Vec3::ONE.lerp(
+        hue_to_linear_srgb(get(&js_adjustments["monochromeFilterHue"], 0.0)),
+        filter_strength,
+    );
+    let (film, mut mix) =
+        monochrome_film_response(js_adjustments["monochromeFilm"].as_str().unwrap_or(""));
+    let filtered = (film * filter).max(Vec3::ZERO);
+    let filtered_sum = filtered.x + filtered.y + filtered.z;
+    let weights = if filtered_sum > 1e-4 {
+        filtered / filtered_sum
+    } else {
+        film
+    };
+
+    if mix_visible {
+        let js_mix = &js_adjustments["monochromeMix"];
+        for (index, name) in [
+            "reds", "oranges", "yellows", "greens", "aquas", "blues", "purples", "magentas",
+        ]
+        .iter()
+        .enumerate()
+        {
+            mix[index] =
+                (mix[index] + get(&js_mix[*name], 0.0) / SCALES.monochrome_mix).clamp(-1.0, 1.0);
+        }
+    }
+
+    let js_toning = &js_adjustments["monochromeToning"];
+    let toning = |hue_key: &str, saturation_key: &str| {
+        if !toning_visible {
+            return Vec2::ZERO;
+        }
+        let saturation = get(&js_toning[saturation_key], 0.0).clamp(0.0, 100.0);
+        oklab_hue_direction(get(&js_toning[hue_key], 0.0))
+            * (saturation / SCALES.monochrome_toning_saturation)
+    };
+    let shadow = toning("shadowHue", "shadowSaturation");
+    let highlight = toning("highlightHue", "highlightSaturation");
+
+    MonochromeSettings {
+        enabled: 1,
+        weight_r: weights.x,
+        weight_g: weights.y,
+        weight_b: weights.z,
+        mix,
+        shadow_a: shadow.x,
+        shadow_b: shadow.y,
+        highlight_a: highlight.x,
+        highlight_b: highlight.y,
+        toning_balance: if toning_visible {
+            get(&js_toning["balance"], 0.0) / 100.0
+        } else {
+            0.0
+        },
+        _pad1: 0.0,
+        _pad2: 0.0,
+        _pad3: 0.0,
     }
 }
 
@@ -2138,7 +2014,7 @@ pub fn resolve_tonemapper_override(settings: &crate::AppSettings, is_raw: bool) 
     Some(if tm == "agx" { 1 } else { 0 })
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RenderOptions {
     pub tonemapper_override: Option<u32>,
     pub non_raw_tonemapper_override: Option<u32>,
@@ -2301,6 +2177,9 @@ pub fn is_image_edited(
     {
         return true;
     }
+    if is_tool_active(adj, "motionBlur") && adj["motionBlurAmount"].as_f64().unwrap_or(0.0) > 0.0 {
+        return true;
+    }
 
     if let Some(crop_val) = adj.get("crop")
         && !crop_val.is_null()
@@ -2342,8 +2221,7 @@ pub fn is_image_edited(
         return true;
     }
 
-    let geo = get_geometry_params_from_json(adj);
-    if !is_geometry_identity(&geo) {
+    if has_lens_selection(adj) || !is_geometry_identity(&user_geometry_params(adj)) {
         return true;
     }
 
@@ -2395,7 +2273,14 @@ const LEGACY_SECTION_TOOLS: &[(&str, &[&str])] = &[
     (
         "effects",
         &[
-            "creative", "lensBlur", "relight", "fog", "lut", "vignette", "grain",
+            "creative",
+            "motionBlur",
+            "lensBlur",
+            "relight",
+            "fog",
+            "lut",
+            "vignette",
+            "grain",
         ],
     ),
 ];
@@ -2499,8 +2384,12 @@ fn get_global_adjustments_from_json(
         Vec::new()
     };
 
-    let color_grading_visible = is_visible("colorGrading");
-    let color_mixer_visible = is_visible("colorMixer");
+    let is_monochrome = js_adjustments["monochromeEnabled"]
+        .as_bool()
+        .unwrap_or(false)
+        && is_visible("colorPresence");
+    let color_grading_visible = is_visible("colorGrading") && !is_monochrome;
+    let color_mixer_visible = is_visible("colorMixer") && !is_monochrome;
 
     let cg_obj = js_adjustments
         .get("colorGrading")
@@ -2512,7 +2401,7 @@ fn get_global_adjustments_from_json(
         .cloned()
         .unwrap_or_default();
 
-    let color_cal_settings = if is_visible("colorCalibration") {
+    let color_cal_settings = if is_visible("colorCalibration") && !is_monochrome {
         ColorCalibrationSettings {
             shadows_tint: cal_obj["shadowsTint"].as_f64().unwrap_or(0.0) as f32
                 / SCALES.color_calibration_hue,
@@ -2559,6 +2448,9 @@ fn get_global_adjustments_from_json(
         (0, 1.0, 0)
     };
 
+    let grain_amount = get_val("grain", "grainAmount", SCALES.grain_amount, None);
+    let grain_size = 0.243 * get_val("grain", "grainSize", SCALES.grain_size, Some(25.0)).exp2();
+
     GlobalAdjustments {
         exposure: get_val("basic", "exposure", SCALES.exposure, None) + baseline_exposure,
         brightness: get_val("basic", "brightness", SCALES.brightness, None),
@@ -2568,9 +2460,21 @@ fn get_global_adjustments_from_json(
         whites: get_val("basic", "whites", SCALES.whites, None),
         blacks: get_val("basic", "blacks", SCALES.blacks, None),
 
-        saturation: get_val("colorPresence", "saturation", SCALES.saturation, None),
-        vibrance: get_val("colorPresence", "vibrance", SCALES.vibrance, None),
-        hue: get_val("hue", "hue", 1.0, None),
+        saturation: if is_monochrome {
+            0.0
+        } else {
+            get_val("colorPresence", "saturation", SCALES.saturation, None)
+        },
+        vibrance: if is_monochrome {
+            0.0
+        } else {
+            get_val("colorPresence", "vibrance", SCALES.vibrance, None)
+        },
+        hue: if is_monochrome {
+            0.0
+        } else {
+            get_val("hue", "hue", 1.0, None)
+        },
         wb_log_gain_l: white_balance_gains[0],
         wb_log_gain_m: white_balance_gains[1],
         wb_log_gain_s: white_balance_gains[2],
@@ -2614,8 +2518,8 @@ fn get_global_adjustments_from_json(
             SCALES.vignette_feather,
             Some(50.0),
         ),
-        grain_amount: get_val("grain", "grainAmount", SCALES.grain_amount, None),
-        grain_size: get_val("grain", "grainSize", SCALES.grain_size, Some(25.0)),
+        grain_amount,
+        grain_size,
         grain_roughness: get_val(
             "grain",
             "grainRoughness",
@@ -2641,7 +2545,7 @@ fn get_global_adjustments_from_json(
             0
         },
         is_raw_image: if is_raw { 1 } else { 0 },
-        _pad_ca1: 0.0,
+        grain_softness: (grain_amount * 3.75).min(1.0) * grain_size.min(1.0) * 0.75,
 
         has_lut,
         lut_intensity,
@@ -2727,6 +2631,16 @@ fn get_global_adjustments_from_json(
             SCALES.sharpness_threshold,
             Some(15.0),
         ),
+
+        monochrome: if is_monochrome {
+            parse_monochrome_settings(
+                js_adjustments,
+                is_visible("colorMixer"),
+                is_visible("colorGrading"),
+            )
+        } else {
+            MonochromeSettings::default()
+        },
     }
 }
 
@@ -2946,27 +2860,29 @@ pub fn get_all_adjustments_from_json(
 
 #[derive(Clone)]
 pub struct GpuContext {
+    pub instance: wgpu::Instance,
+    pub adapter: wgpu::Adapter,
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
     pub limits: wgpu::Limits,
     pub adapter_info: wgpu::AdapterInfo,
     pub display: Arc<std::sync::Mutex<Option<WgpuDisplay>>>,
+    pub viewer_display: Arc<std::sync::Mutex<Option<WgpuDisplay>>>,
+    pub pipelines: Arc<OnceLock<Arc<GpuPipelines>>>,
+    pub compute: Arc<OnceLock<crate::gpu_compute::ComputePipelines>>,
 }
 
-#[inline(always)]
-fn rgb_to_yc_only(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
-    let y = 0.299 * r + 0.587 * g + 0.114 * b;
-    let cb = -0.168736 * r - 0.331264 * g + 0.5 * b;
-    let cr = 0.5 * r - 0.418688 * g - 0.081312 * b;
-    (y, cb, cr)
-}
-
-#[inline(always)]
-fn yc_to_rgb(y: f32, cb: f32, cr: f32) -> (f32, f32, f32) {
-    let r = y + 1.402 * cr;
-    let g = y - 0.344136 * cb - 0.714136 * cr;
-    let b = y + 1.772 * cb;
-    (r, g, b)
+impl GpuContext {
+    pub fn display_for_label(
+        &self,
+        label: &str,
+    ) -> Option<&Arc<std::sync::Mutex<Option<WgpuDisplay>>>> {
+        match label {
+            "main" => Some(&self.display),
+            crate::viewer_window::VIEWER_LABEL => Some(&self.viewer_display),
+            _ => None,
+        }
+    }
 }
 
 fn into_rgb32f_parallel(image: DynamicImage) -> image::Rgb32FImage {
@@ -2985,211 +2901,643 @@ fn into_rgb32f_parallel(image: DynamicImage) -> image::Rgb32FImage {
 
 pub fn remove_raw_artifacts_and_enhance(
     image: &mut DynamicImage,
-    color_nr_inv_sigma: f32,
+    color_nr_amount: f32,
     sharpening_amount: f32,
 ) {
     let mut buffer = into_rgb32f_parallel(std::mem::take(image));
-    let w = buffer.width() as usize;
-    let h = buffer.height() as usize;
 
-    let mut ycbcr_buffer = vec![0.0f32; w * h * 3];
-
-    let src = buffer.as_raw();
-
-    ycbcr_buffer
-        .par_chunks_mut(3)
-        .zip(src.par_chunks(3))
-        .for_each(|(dest, pixel)| {
-            let (y, cb, cr) = rgb_to_yc_only(pixel[0], pixel[1], pixel[2]);
-            dest[0] = y;
-            dest[1] = cb;
-            dest[2] = cr;
-        });
-
-    if color_nr_inv_sigma > 0.0 {
-        let base_inv_sigma = color_nr_inv_sigma;
-        const OFFSETS: [isize; 3] = [-5, -1, 3];
-        const OFFSET_SQUARES: [f32; 3] = [25.0, 1.0, 9.0];
-
-        buffer
-            .par_chunks_mut(w * 3)
-            .enumerate()
-            .for_each(|(y, row)| {
-                let row_offset = y * w;
-                let h_isize = h as isize;
-                let w_isize = w as isize;
-                let y_isize = y as isize;
-
-                for x in 0..w {
-                    let center_idx = (row_offset + x) * 3;
-
-                    let cy = ycbcr_buffer[center_idx];
-                    let ccb = ycbcr_buffer[center_idx + 1];
-                    let ccr = ycbcr_buffer[center_idx + 2];
-
-                    let mut cb_sum = 0.0;
-                    let mut cr_sum = 0.0;
-                    let mut w_sum = 0.0;
-
-                    for (ki, &ky) in OFFSETS.iter().enumerate() {
-                        let sy = y_isize + ky;
-                        if sy < 0 || sy >= h_isize {
-                            continue;
-                        }
-
-                        let neighbor_row_idx = (sy as usize) * w;
-                        let ky_sq_div_50 = OFFSET_SQUARES[ki] * 0.02;
-
-                        for (kj, &kx) in OFFSETS.iter().enumerate() {
-                            let sx = (x as isize) + kx;
-                            if sx < 0 || sx >= w_isize {
-                                continue;
-                            }
-
-                            let neighbor_idx = (neighbor_row_idx + sx as usize) * 3;
-
-                            let neighbor_y = ycbcr_buffer[neighbor_idx];
-                            let y_diff = (cy - neighbor_y).abs();
-
-                            let val = y_diff * base_inv_sigma;
-                            let spatial_penalty = OFFSET_SQUARES[kj] * 0.02 + ky_sq_div_50;
-
-                            let weight = 1.0 / (1.0 + val * val + spatial_penalty);
-
-                            cb_sum += ycbcr_buffer[neighbor_idx + 1] * weight;
-                            cr_sum += ycbcr_buffer[neighbor_idx + 2] * weight;
-                            w_sum += weight;
-                        }
-                    }
-
-                    let (out_cb, out_cr) = if w_sum > 1e-4 {
-                        let inv_w_sum = 1.0 / w_sum;
-                        let filtered_cb = cb_sum * inv_w_sum;
-                        let filtered_cr = cr_sum * inv_w_sum;
-
-                        let orig_mag_sq = ccb * ccb + ccr * ccr;
-                        let filt_mag_sq = filtered_cb * filtered_cb + filtered_cr * filtered_cr;
-
-                        if filt_mag_sq > orig_mag_sq && orig_mag_sq > 1e-12 {
-                            let scale = (orig_mag_sq / filt_mag_sq).sqrt();
-                            (filtered_cb * scale, filtered_cr * scale)
-                        } else {
-                            (filtered_cb, filtered_cr)
-                        }
-                    } else {
-                        (ccb, ccr)
-                    };
-
-                    let (r, g, b) = yc_to_rgb(cy, out_cb, out_cr);
-
-                    let o = x * 3;
-                    row[o] = r.max(0.0);
-                    row[o + 1] = g.max(0.0);
-                    row[o + 2] = b.max(0.0);
-                }
-            });
-    }
+    let luma = (color_nr_amount > 0.0)
+        .then(|| reduce_raw_chroma_noise(&mut buffer, color_nr_amount.min(1.0)));
 
     if sharpening_amount > 0.0 {
-        apply_gentle_detail_enhance(&mut buffer, &ycbcr_buffer, sharpening_amount);
+        let luma = luma.unwrap_or_else(|| sqrt_luma_plane(&buffer));
+        apply_gentle_detail_enhance(&mut buffer, &luma, sharpening_amount);
     }
 
     *image = DynamicImage::ImageRgb32F(buffer);
 }
 
-fn apply_gentle_detail_enhance(
-    buffer: &mut image::ImageBuffer<image::Rgb<f32>, Vec<f32>>,
-    ycbcr_source: &[f32],
-    amount: f32,
-) {
-    let w = buffer.width() as usize;
-    let h = buffer.height() as usize;
-
-    let mut temp_blur = vec![0.0; w * h];
-    let radius = 2i32;
-
-    temp_blur
-        .par_chunks_mut(w)
-        .enumerate()
-        .for_each(|(y, row)| {
-            let row_offset = y * w;
-            for (x, row_val) in row.iter_mut().enumerate() {
-                let mut sum = 0.0;
-                let mut count = 0;
-                for kx in -radius..=radius {
-                    let sx = (x as i32 + kx).clamp(0, (w as i32) - 1) as usize;
-                    sum += ycbcr_source[(row_offset + sx) * 3];
-                    count += 1;
-                }
-                *row_val = sum / count as f32;
-            }
-        });
-
-    let output = buffer.as_mut();
-
-    output
-        .par_chunks_mut(w * 3)
-        .enumerate()
-        .for_each(|(y, rgb_row)| {
-            for x in 0..w {
-                let mut blur_sum = 0.0;
-                let mut count = 0;
-                for ky in -radius..=radius {
-                    let sy = (y as i32 + ky).clamp(0, (h as i32) - 1) as usize;
-                    blur_sum += temp_blur[sy * w + x];
-                    count += 1;
-                }
-                let blurred_val = blur_sum / count as f32;
-
-                let original_luma = ycbcr_source[(y * w + x) * 3];
-
-                let detail = original_luma - blurred_val;
-
-                let edge_strength = detail.abs();
-                let adaptive_amount = if edge_strength > 0.1 {
-                    amount * 0.3
-                } else {
-                    amount
-                };
-                let boost = detail * adaptive_amount;
-
-                let r_idx = x * 3;
-                let g_idx = r_idx + 1;
-                let b_idx = r_idx + 2;
-
-                let r = rgb_row[r_idx];
-                let g = rgb_row[g_idx];
-                let b = rgb_row[b_idx];
-
-                let new_r = r + boost;
-                let new_g = g + boost;
-                let new_b = b + boost;
-
-                let max_val = new_r.max(new_g).max(new_b);
-                let min_val = new_r.min(new_g).min(new_b);
-
-                let scale = if max_val > 1.0 || min_val < 0.0 {
-                    if max_val > 1.0 && min_val < 0.0 {
-                        0.0
-                    } else if max_val > 1.0 {
-                        (1.0 - r.max(g).max(b)) / boost.max(0.001)
-                    } else {
-                        r.min(g).min(b) / (-boost).max(0.001)
-                    }
-                } else {
-                    1.0
-                };
-
-                let safe_boost = boost * scale.clamp(0.0, 1.0);
-
-                rgb_row[r_idx] = (r + safe_boost).max(0.0);
-                rgb_row[g_idx] = (g + safe_boost).max(0.0);
-                rgb_row[b_idx] = (b + safe_boost).max(0.0);
-            }
-        });
+struct ChromaPlanes {
+    q: Vec<f32>,
+    cr: Vec<f32>,
+    cb: Vec<f32>,
+    w: usize,
+    h: usize,
+    noise_q: f32,
+    noise_c: f32,
 }
 
-#[derive(Serialize, Clone)]
+impl ChromaPlanes {
+    const PAD: usize = 2;
+    const CHUNK: usize = 64;
+    const FLOOR: f32 = 0.002;
+
+    fn stabilize(rgb: [f32; 3]) -> (f32, f32, f32) {
+        let l = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+        let s = (l.max(0.0) + Self::FLOOR).sqrt();
+        (
+            s,
+            (rgb[0].max(0.0) + Self::FLOOR).sqrt() - s,
+            (rgb[2].max(0.0) + Self::FLOOR).sqrt() - s,
+        )
+    }
+
+    fn new(w: usize, h: usize, sample: impl Fn(usize, usize) -> (f32, f32, f32) + Sync) -> Self {
+        let pw = w + 2 * Self::PAD;
+        let ph = h + 2 * Self::PAD;
+        let mut q = vec![0.0f32; pw * ph];
+        let mut cr = vec![0.0f32; pw * ph];
+        let mut cb = vec![0.0f32; pw * ph];
+        q.par_chunks_mut(pw)
+            .zip(cr.par_chunks_mut(pw))
+            .zip(cb.par_chunks_mut(pw))
+            .enumerate()
+            .for_each(|(py, ((q_row, cr_row), cb_row))| {
+                let y = py.saturating_sub(Self::PAD).min(h - 1);
+                for px in 0..pw {
+                    let x = px.saturating_sub(Self::PAD).min(w - 1);
+                    (q_row[px], cr_row[px], cb_row[px]) = sample(x, y);
+                }
+            });
+        let noise_q = estimate_noise(pw, ph, &[&|i| q[i]]).max(1e-3);
+        let noise_c = estimate_noise(pw, ph, &[&|i| cr[i], &|i| cb[i]]).max(1e-3);
+        Self {
+            q,
+            cr,
+            cb,
+            w,
+            h,
+            noise_q,
+            noise_c,
+        }
+    }
+
+    fn from_rgb(src: &[f32], w: usize, h: usize) -> Self {
+        Self::new(w.div_ceil(2), h.div_ceil(2), |x, y| {
+            let mut sum = [0.0f32; 3];
+            for sy in [2 * y, (2 * y + 1).min(h - 1)] {
+                for sx in [2 * x, (2 * x + 1).min(w - 1)] {
+                    let i = (sy * w + sx) * 3;
+                    for c in 0..3 {
+                        sum[c] += src[i + c] * 0.25;
+                    }
+                }
+            }
+            Self::stabilize(sum)
+        })
+    }
+
+    fn downsample(&self) -> Self {
+        Self::new(self.w.div_ceil(2), self.h.div_ceil(2), |x, y| {
+            let mut sum = (0.0, 0.0, 0.0);
+            for sy in [2 * y, (2 * y + 1).min(self.h - 1)] {
+                for sx in [2 * x, (2 * x + 1).min(self.w - 1)] {
+                    let i = self.at(sx, sy);
+                    sum.0 += self.q[i] * 0.25;
+                    sum.1 += self.cr[i] * 0.25;
+                    sum.2 += self.cb[i] * 0.25;
+                }
+            }
+            sum
+        })
+    }
+
+    fn stride(&self) -> usize {
+        self.w + 2 * Self::PAD
+    }
+
+    fn at(&self, x: usize, y: usize) -> usize {
+        (y + Self::PAD) * self.stride() + x + Self::PAD
+    }
+
+    fn filter(
+        &self,
+        amount: f32,
+        reference: Option<&(Vec<f32>, Vec<f32>)>,
+    ) -> (Vec<f32>, Vec<f32>) {
+        const R: usize = ChromaPlanes::PAD;
+        const D: usize = 2 * R + 1;
+
+        let (w, h, pw) = (self.w, self.h, self.stride());
+        let (q, cr, cb) = (&self.q, &self.cr, &self.cb);
+        let luma_tol = (1.5 + 2.0 * amount) * self.noise_q;
+        let chroma_tol = (2.0 + 3.0 * amount) * self.noise_c;
+        let sigma = 1.5 + amount;
+        let spatial: [f32; D * D] = std::array::from_fn(|k| {
+            let dx = (k % D) as f32 - R as f32;
+            let dy = (k / D) as f32 - R as f32;
+            (-(dx * dx + dy * dy) / (2.0 * sigma * sigma)).exp()
+        });
+        let kq = 1.0 / (luma_tol * luma_tol);
+        let kc = 1.0 / (chroma_tol * chroma_tol);
+        let eps = luma_tol * luma_tol;
+        let ph = h + 2 * R;
+        let mut rel = vec![1.0f32; q.len()];
+        let mut widen = vec![1.0f32; q.len()];
+        rel.par_chunks_mut(pw)
+            .zip(widen.par_chunks_mut(pw))
+            .enumerate()
+            .for_each(|(py, (rel_row, widen_row))| {
+                if py == 0 || py + 1 >= ph {
+                    return;
+                }
+                for px in 1..pw - 1 {
+                    let i = py * pw + px;
+                    let g = 0.5
+                        * (q[i + 1] - q[i - 1])
+                            .abs()
+                            .max((q[i + pw] - q[i - pw]).abs());
+                    let t = g / luma_tol;
+                    rel_row[px] = 1.0 / (1.0 + t * t);
+                    let f = 1.0 + 2.0 * t;
+                    widen_row[px] = 1.0 / (f * f);
+                }
+            });
+
+        let mut out_r = vec![0.0f32; w * h];
+        let mut out_b = vec![0.0f32; w * h];
+        out_r
+            .par_chunks_mut(w)
+            .zip(out_b.par_chunks_mut(w))
+            .enumerate()
+            .for_each(|(y, (row_r, row_b))| {
+                let mut x0 = 0;
+                while x0 < w {
+                    let n = ChromaPlanes::CHUNK.min(w - x0);
+                    let at = |j: usize, i: usize| (y + j) * pw + x0 + i;
+                    let c = at(R, R);
+                    let qc = &q[c..c + n];
+                    let wc = &widen[c..c + n];
+
+                    let mut ref_r = [0.0f32; ChromaPlanes::CHUNK];
+                    let mut ref_b = [0.0f32; ChromaPlanes::CHUNK];
+                    if let Some((rr, rb)) = reference {
+                        let o = y * w + x0;
+                        ref_r[..n].copy_from_slice(&rr[o..o + n]);
+                        ref_b[..n].copy_from_slice(&rb[o..o + n]);
+                    } else {
+                        let mut ref_w = [0.0f32; ChromaPlanes::CHUNK];
+                        for j in R - 1..=R + 1 {
+                            for i in R - 1..=R + 1 {
+                                let o = at(j, i);
+                                let sp = spatial[j * D + i];
+                                let (qs, crs, cbs, rs) =
+                                    (&q[o..o + n], &cr[o..o + n], &cb[o..o + n], &rel[o..o + n]);
+                                for k in 0..n {
+                                    let d = qs[k] - qc[k];
+                                    let t = (1.0 - d * d * kq * wc[k]).max(0.0);
+                                    let wt = sp * rs[k] * t * t;
+                                    ref_r[k] += wt * crs[k];
+                                    ref_b[k] += wt * cbs[k];
+                                    ref_w[k] += wt;
+                                }
+                            }
+                        }
+                        for k in 0..n {
+                            let inv = 1.0 / ref_w[k];
+                            ref_r[k] *= inv;
+                            ref_b[k] *= inv;
+                        }
+                    }
+
+                    let mut sw = [0.0f32; ChromaPlanes::CHUNK];
+                    let mut sd = [0.0f32; ChromaPlanes::CHUNK];
+                    let mut sdd = [0.0f32; ChromaPlanes::CHUNK];
+                    let mut sr = [0.0f32; ChromaPlanes::CHUNK];
+                    let mut sb = [0.0f32; ChromaPlanes::CHUNK];
+                    let mut sdr = [0.0f32; ChromaPlanes::CHUNK];
+                    let mut sdb = [0.0f32; ChromaPlanes::CHUNK];
+                    for j in 0..D {
+                        for i in 0..D {
+                            let o = at(j, i);
+                            let sp = spatial[j * D + i];
+                            let (qs, crs, cbs, rs) =
+                                (&q[o..o + n], &cr[o..o + n], &cb[o..o + n], &rel[o..o + n]);
+                            for k in 0..n {
+                                let d = qs[k] - qc[k];
+                                let er = crs[k] - ref_r[k];
+                                let eb = cbs[k] - ref_b[k];
+                                let t = (1.0 - (d * d * kq + (er * er + eb * eb) * kc) * wc[k])
+                                    .max(0.0);
+                                let wt = sp * rs[k] * t * t;
+                                let wd = wt * d;
+                                sw[k] += wt;
+                                sd[k] += wd;
+                                sdd[k] += wd * d;
+                                sr[k] += wt * crs[k];
+                                sb[k] += wt * cbs[k];
+                                sdr[k] += wd * crs[k];
+                                sdb[k] += wd * cbs[k];
+                            }
+                        }
+                    }
+
+                    for k in 0..n {
+                        let (fr, fb) = if sw[k] > 1e-6 {
+                            let inv = 1.0 / sw[k];
+                            let md = sd[k] * inv;
+                            let mr = sr[k] * inv;
+                            let mb = sb[k] * inv;
+                            let var = (sdd[k] * inv - md * md).max(0.0) + eps;
+                            let slope_r = (sdr[k] * inv - mr * md) / var;
+                            let slope_b = (sdb[k] * inv - mb * md) / var;
+                            (mr - slope_r * md, mb - slope_b * md)
+                        } else {
+                            (ref_r[k], ref_b[k])
+                        };
+                        row_r[x0 + k] = fr;
+                        row_b[x0 + k] = fb;
+                    }
+                    x0 += n;
+                }
+            });
+        (out_r, out_b)
+    }
+
+    fn upsample_eps(&self, amount: f32) -> f32 {
+        16.0 * ((1.5 + 2.0 * amount) * self.noise_q).powi(2)
+    }
+
+    fn upsample(
+        &self,
+        coarse: &ChromaPlanes,
+        (cr, cb): &(Vec<f32>, Vec<f32>),
+        amount: f32,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let eps = self.upsample_eps(amount);
+        let (w, cw) = (self.w, coarse.w);
+        let mut out_r = vec![0.0f32; w * self.h];
+        let mut out_b = vec![0.0f32; w * self.h];
+        out_r
+            .par_chunks_mut(w)
+            .zip(out_b.par_chunks_mut(w))
+            .enumerate()
+            .for_each(|(y, (row_r, row_b))| {
+                let rows = upsample_taps(y, coarse.h).map(|(ly, wy)| {
+                    let o = coarse.at(0, ly);
+                    (
+                        &coarse.q[o..o + cw],
+                        &cr[ly * cw..(ly + 1) * cw],
+                        &cb[ly * cw..(ly + 1) * cw],
+                        wy,
+                    )
+                });
+                let q_row = &self.q[self.at(0, y)..self.at(0, y) + w];
+                let mut x0 = 0;
+                while x0 < w {
+                    let n = ChromaPlanes::CHUNK.min(w - x0);
+                    let up = upsample_chunk(rows, &q_row[x0..x0 + n], x0, cw, eps);
+                    row_r[x0..x0 + n].copy_from_slice(&up.r[..n]);
+                    row_b[x0..x0 + n].copy_from_slice(&up.b[..n]);
+                    x0 += n;
+                }
+            });
+        (out_r, out_b)
+    }
+
+    fn core(
+        &self,
+        (mut fr, mut fb): (Vec<f32>, Vec<f32>),
+        (rr, rb): &(Vec<f32>, Vec<f32>),
+        amount: f32,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let mut mags: Vec<f32> = (0..fr.len())
+            .step_by(7)
+            .map(|i| (fr[i] - rr[i]).hypot(fb[i] - rb[i]))
+            .collect();
+        let mid = mags.len() / 2;
+        let core = (*mags.select_nth_unstable_by(mid, f32::total_cmp).1 * (1.5 + amount)).max(1e-6);
+        let texture = 4.0 * (0.5 + amount);
+        let (w, pw) = (self.w, self.stride());
+        fr.par_chunks_mut(w)
+            .zip(fb.par_chunks_mut(w))
+            .zip(rr.par_chunks(w).zip(rb.par_chunks(w)))
+            .enumerate()
+            .for_each(|(y, ((r, b), (ref_r, ref_b)))| {
+                let rows: [&[f32]; 3] = std::array::from_fn(|j| {
+                    let o = (y + Self::PAD + j - 1) * pw + Self::PAD;
+                    &self.q[o - 1..o + w + 1]
+                });
+                for x in 0..w {
+                    let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+                    for row in rows {
+                        for &v in &row[x..x + 3] {
+                            lo = lo.min(v);
+                            hi = hi.max(v);
+                        }
+                    }
+                    let (er, eb) = (r[x] - ref_r[x], b[x] - ref_b[x]);
+                    let keep = ((er * er + eb * eb).sqrt() / (core + texture * (hi - lo)) - 1.0)
+                        .clamp(0.0, 1.0);
+                    r[x] = ref_r[x] + er * keep;
+                    b[x] = ref_b[x] + eb * keep;
+                }
+            });
+        (fr, fb)
+    }
+}
+
+type UpsampleRow<'a> = (&'a [f32], &'a [f32], &'a [f32], f32);
+
+struct UpsampledChunk {
+    r: [f32; ChromaPlanes::CHUNK],
+    b: [f32; ChromaPlanes::CHUNK],
+    q_range: [f32; ChromaPlanes::CHUNK],
+    r_min: [f32; ChromaPlanes::CHUNK],
+    r_max: [f32; ChromaPlanes::CHUNK],
+    b_min: [f32; ChromaPlanes::CHUNK],
+    b_max: [f32; ChromaPlanes::CHUNK],
+}
+
+fn upsample_chunk(
+    rows: [UpsampleRow; 2],
+    qc: &[f32],
+    x0: usize,
+    cw: usize,
+    eps: f32,
+) -> UpsampledChunk {
+    let n = qc.len().min(ChromaPlanes::CHUNK);
+    let mut out = UpsampledChunk {
+        r: [0.0; ChromaPlanes::CHUNK],
+        b: [0.0; ChromaPlanes::CHUNK],
+        q_range: [0.0; ChromaPlanes::CHUNK],
+        r_min: [f32::MAX; ChromaPlanes::CHUNK],
+        r_max: [f32::MIN; ChromaPlanes::CHUNK],
+        b_min: [f32::MAX; ChromaPlanes::CHUNK],
+        b_max: [f32::MIN; ChromaPlanes::CHUNK],
+    };
+    let mut q_min = [f32::MAX; ChromaPlanes::CHUNK];
+    let mut q_max = [f32::MIN; ChromaPlanes::CHUNK];
+    let mut sd = [0.0f32; ChromaPlanes::CHUNK];
+    let mut sdd = [0.0f32; ChromaPlanes::CHUNK];
+    let mut sdr = [0.0f32; ChromaPlanes::CHUNK];
+    let mut sdb = [0.0f32; ChromaPlanes::CHUNK];
+    for (q_row, r_row, b_row, wy) in rows {
+        for side in 0..2 {
+            let mut gq = [0.0f32; ChromaPlanes::CHUNK];
+            let mut gr = [0.0f32; ChromaPlanes::CHUNK];
+            let mut gb = [0.0f32; ChromaPlanes::CHUNK];
+            let mut gw = [0.0f32; ChromaPlanes::CHUNK];
+            for k in 0..n {
+                let (lx, wx) = upsample_taps(x0 + k, cw)[side];
+                gq[k] = q_row[lx];
+                gr[k] = r_row[lx];
+                gb[k] = b_row[lx];
+                gw[k] = wy * wx;
+            }
+            for k in 0..n {
+                let d = gq[k] - qc[k];
+                let wd = gw[k] * d;
+                out.r[k] += gw[k] * gr[k];
+                out.b[k] += gw[k] * gb[k];
+                sd[k] += wd;
+                sdd[k] += wd * d;
+                sdr[k] += wd * gr[k];
+                sdb[k] += wd * gb[k];
+                q_min[k] = q_min[k].min(gq[k]);
+                q_max[k] = q_max[k].max(gq[k]);
+                out.r_min[k] = out.r_min[k].min(gr[k]);
+                out.r_max[k] = out.r_max[k].max(gr[k]);
+                out.b_min[k] = out.b_min[k].min(gb[k]);
+                out.b_max[k] = out.b_max[k].max(gb[k]);
+            }
+        }
+    }
+    for k in 0..n {
+        let var = (sdd[k] - sd[k] * sd[k]).max(0.0) + eps;
+        let slope_r = (sdr[k] - out.r[k] * sd[k]) / var;
+        let slope_b = (sdb[k] - out.b[k] * sd[k]) / var;
+        out.r[k] -= slope_r * sd[k];
+        out.b[k] -= slope_b * sd[k];
+        out.q_range[k] = q_max[k] - q_min[k];
+    }
+    out
+}
+
+fn upsample_taps(v: usize, n: usize) -> [(usize, f32); 2] {
+    let i = (v / 2).min(n - 1);
+    if v.is_multiple_of(2) {
+        [(i.saturating_sub(1), 0.25), (i, 0.75)]
+    } else {
+        [(i, 0.75), ((i + 1).min(n - 1), 0.25)]
+    }
+}
+
+fn reduce_raw_chroma_noise(buffer: &mut Rgb32FImage, amount: f32) -> Vec<f32> {
+    const FLOOR: f32 = ChromaPlanes::FLOOR;
+
+    let w = buffer.width() as usize;
+    let h = buffer.height() as usize;
+    let src = buffer.as_raw();
+
+    let half = ChromaPlanes::from_rgb(src, w, h);
+    let quarter = half.downsample();
+    let reference = half.upsample(&quarter, &quarter.filter(amount, None), amount);
+    let (fr, fb) = half.core(half.filter(amount, Some(&reference)), &reference, amount);
+
+    let pixel = |i: usize| ChromaPlanes::stabilize([src[i * 3], src[i * 3 + 1], src[i * 3 + 2]]);
+    let noise_c_full = estimate_noise(w, h, &[&|i| pixel(i).1, &|i| pixel(i).2]).max(1e-3);
+    let eps = half.upsample_eps(amount);
+    let edge_scale = 0.5 / eps.sqrt();
+    let core = (2.0 + 2.0 * amount) * noise_c_full;
+    let texture = 4.0 * (0.5 + amount);
+    let (hw, hh) = (half.w, half.h);
+
+    let mut luma = vec![0.0f32; w * h];
+    buffer
+        .par_chunks_mut(w * 3)
+        .zip(luma.par_chunks_mut(w))
+        .enumerate()
+        .for_each(|(y, (row, luma_row))| {
+            let low_rows = upsample_taps(y, hh).map(|(ly, wy)| {
+                let o = half.at(0, ly);
+                (
+                    &half.q[o..o + hw],
+                    &fr[ly * hw..(ly + 1) * hw],
+                    &fb[ly * hw..(ly + 1) * hw],
+                    wy,
+                )
+            });
+            for (cx, px) in row.chunks_mut(ChromaPlanes::CHUNK * 3).enumerate() {
+                let x0 = cx * ChromaPlanes::CHUNK;
+                let n = (px.len() / 3).min(ChromaPlanes::CHUNK);
+                let mut rgb = [[0.0f32; ChromaPlanes::CHUNK]; 3];
+                for k in 0..n {
+                    for c in 0..3 {
+                        rgb[c][k] = px[k * 3 + c];
+                    }
+                }
+                let mut l = [0.0f32; ChromaPlanes::CHUNK];
+                let mut qc = [0.0f32; ChromaPlanes::CHUNK];
+                let mut cr = [0.0f32; ChromaPlanes::CHUNK];
+                let mut cb = [0.0f32; ChromaPlanes::CHUNK];
+                for k in 0..n {
+                    let lk = 0.2126 * rgb[0][k] + 0.7152 * rgb[1][k] + 0.0722 * rgb[2][k];
+                    let s = (lk.max(0.0) + FLOOR).sqrt();
+                    l[k] = lk;
+                    qc[k] = s;
+                    cr[k] = (rgb[0][k].max(0.0) + FLOOR).sqrt() - s;
+                    cb[k] = (rgb[2][k].max(0.0) + FLOOR).sqrt() - s;
+                }
+
+                luma_row[x0..x0 + n].copy_from_slice(&qc[..n]);
+                let up = upsample_chunk(low_rows, &qc[..n], x0, hw, eps);
+
+                for k in 0..n {
+                    let er = cr[k] - up.r[k];
+                    let eb = cb[k] - up.b[k];
+                    let edge = up.q_range[k] * edge_scale;
+                    let keep = ((er * er + eb * eb).sqrt() / (core + texture * up.q_range[k])
+                        - 1.0)
+                        .clamp(0.0, 1.0)
+                        / (1.0 + edge * edge);
+                    let nr = (up.r[k] + er * keep).max(up.r_min[k]).min(up.r_max[k]);
+                    let nb = (up.b[k] + eb * keep).max(up.b_min[k]).min(up.b_max[k]);
+                    let vr = (qc[k] + nr).max(0.0);
+                    let vb = (qc[k] + nb).max(0.0);
+                    let lk = l[k];
+                    let dr = vr * vr - FLOOR - lk;
+                    let db = vb * vb - FLOOR - lk;
+                    let dg = -(0.2126 * dr + 0.0722 * db) * (1.0 / 0.7152);
+                    let m = dr.min(dg).min(db);
+                    let s = if lk + m < 0.0 { -lk / m } else { 1.0 };
+                    let apply = |v: f32, orig: f32| if lk > 0.0 { v.max(0.0) } else { orig };
+                    rgb[0][k] = apply(lk + dr * s, rgb[0][k]);
+                    rgb[1][k] = apply(lk + dg * s, rgb[1][k]);
+                    rgb[2][k] = apply(lk + db * s, rgb[2][k]);
+                }
+                for k in 0..n {
+                    for c in 0..3 {
+                        px[k * 3 + c] = rgb[c][k];
+                    }
+                }
+            }
+        });
+    luma
+}
+
+fn estimate_noise(w: usize, h: usize, channels: &[&(dyn Fn(usize) -> f32 + Sync)]) -> f32 {
+    let mut diffs: Vec<f32> = (0..h)
+        .into_par_iter()
+        .step_by(8)
+        .flat_map_iter(|y| {
+            (0..w.saturating_sub(4)).step_by(7).flat_map(move |x| {
+                let i = y * w + x;
+                channels.iter().map(move |f| (f(i + 4) - f(i)).abs())
+            })
+        })
+        .collect();
+    if diffs.is_empty() {
+        return 0.0;
+    }
+    let mid = diffs.len() / 2;
+    let (_, median, _) = diffs.select_nth_unstable_by(mid, f32::total_cmp);
+    *median * 1.4826 / std::f32::consts::SQRT_2
+}
+
+fn sqrt_luma_plane(buffer: &Rgb32FImage) -> Vec<f32> {
+    buffer
+        .as_raw()
+        .par_chunks_exact(3)
+        .map(|p| {
+            ((0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]).max(0.0) + ChromaPlanes::FLOOR).sqrt()
+        })
+        .collect()
+}
+
+fn apply_gentle_detail_enhance(buffer: &mut Rgb32FImage, q: &[f32], amount: f32) {
+    let w = buffer.width() as usize;
+    let h = buffer.height() as usize;
+    let row_at = |y: isize| {
+        let y = y.clamp(0, h as isize - 1) as usize;
+        &q[y * w..(y + 1) * w]
+    };
+    let blur_row = |y: usize, v: &mut [f32], out: &mut [f32]| {
+        let r: [&[f32]; 5] = std::array::from_fn(|k| row_at(y as isize + k as isize - 2));
+        for x in 0..w {
+            v[x + 2] =
+                (r[0][x] + r[4][x] + 4.0 * (r[1][x] + r[3][x]) + 6.0 * r[2][x]) * (1.0 / 16.0);
+        }
+        (v[0], v[1]) = (v[2], v[2]);
+        (v[w + 2], v[w + 3]) = (v[w + 1], v[w + 1]);
+        for x in 0..w {
+            out[x] =
+                (v[x] + v[x + 4] + 4.0 * (v[x + 1] + v[x + 3]) + 6.0 * v[x + 2]) * (1.0 / 16.0);
+        }
+    };
+
+    let mut samples: Vec<f32> = (0..h)
+        .into_par_iter()
+        .step_by(16)
+        .flat_map_iter(|y| {
+            let (mut v, mut blur) = (vec![0.0f32; w + 4], vec![0.0f32; w]);
+            blur_row(y, &mut v, &mut blur);
+            let row = &q[y * w..(y + 1) * w];
+            (0..w)
+                .step_by(5)
+                .map(|x| (row[x] - blur[x]).abs())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if samples.is_empty() {
+        return;
+    }
+    let mid = samples.len() / 2;
+    let noise = *samples.select_nth_unstable_by(mid, f32::total_cmp).1 * 1.4826;
+    let threshold = (1.5 * noise).powi(2).max(1e-12);
+    let strength = 4.5 * amount;
+    let taper = 0.3 / threshold.sqrt();
+    let floor = ChromaPlanes::FLOOR;
+
+    buffer.par_chunks_mut(w * 3).enumerate().for_each_init(
+        || {
+            (
+                vec![0.0f32; w + 4],
+                vec![0.0f32; w],
+                vec![0.0f32; w + 2],
+                vec![0.0f32; w + 2],
+            )
+        },
+        |(v, blur, lo, hi), (y, row)| {
+            blur_row(y, v, blur);
+            let r: [&[f32]; 3] = std::array::from_fn(|k| row_at(y as isize + k as isize - 1));
+            for x in 0..w {
+                lo[x + 1] = r[0][x].min(r[1][x]).min(r[2][x]);
+                hi[x + 1] = r[0][x].max(r[1][x]).max(r[2][x]);
+            }
+            (lo[0], hi[0], lo[w + 1], hi[w + 1]) = (lo[1], hi[1], lo[w], hi[w]);
+            let center = r[1];
+            for (x, p) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+                let qc = center[x];
+                let d = qc - blur[x];
+                let d = d * d * d / (d * d + threshold);
+                let d = d / (1.0 + d.abs() * taper);
+                let min = lo[x].min(lo[x + 1]).min(lo[x + 2]);
+                let max = hi[x].max(hi[x + 1]).max(hi[x + 2]);
+                let delta = strength * d;
+                let range = max - min;
+                let up_room = max - qc + range * 0.15 + 0.004;
+                let down_room = qc - min + range * 0.05 + 0.002;
+                let up = delta.max(0.0);
+                let down = (-delta).max(0.0) * 0.7;
+                let qn = qc + up * up_room / (up_room + up) - down * down_room / (down_room + down);
+                let l = qc * qc - floor;
+                let ln = (qn * qn - floor).max(0.0);
+                if l > 1e-6 {
+                    let peak = p[0].max(p[1]).max(p[2]);
+                    let mut ratio = ln / l;
+                    if ratio > 1.0 && peak * ratio > 1.0 {
+                        ratio = (1.0 / peak).max(1.0);
+                    }
+                    p.iter_mut().for_each(|c| *c *= ratio);
+                } else {
+                    p.iter_mut().for_each(|c| *c = (*c + ln - l).max(0.0));
+                }
+            }
+        },
+    );
+}
+
 pub struct HistogramData {
     red: Vec<f32>,
     green: Vec<f32>,
@@ -3349,15 +3697,57 @@ fn normalize_histogram_range(histogram: &mut [f32], percentile_clip: f32) {
     }
 }
 
-#[derive(serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub struct WaveformData {
-    pub rgb: String,
-    pub luma: String,
-    pub parade: String,
-    pub vectorscope: String,
+    pub rgb: Vec<u8>,
+    pub luma: Vec<u8>,
+    pub parade: Vec<u8>,
+    pub vectorscope: Vec<u8>,
     pub width: u32,
     pub height: u32,
+}
+
+pub fn encode_analytics_packet(
+    path: &str,
+    histogram: Option<&HistogramData>,
+    waveform: Option<&WaveformData>,
+) -> Vec<u8> {
+    let put_u32 = |out: &mut Vec<u8>, v: usize| out.extend_from_slice(&(v as u32).to_le_bytes());
+    let wave_len = waveform.map_or(0, |w| {
+        w.rgb.len() + w.luma.len() + w.parade.len() + w.vectorscope.len()
+    });
+    let mut out = Vec::with_capacity(path.len() + 4 * 256 * 4 + wave_len + 40);
+
+    put_u32(&mut out, path.len());
+    out.extend_from_slice(path.as_bytes());
+
+    match histogram {
+        Some(h) => {
+            put_u32(&mut out, h.red.len());
+            for channel in [&h.red, &h.green, &h.blue, &h.luma] {
+                for v in channel.iter() {
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+        }
+        None => put_u32(&mut out, 0),
+    }
+
+    match waveform {
+        Some(w) => {
+            put_u32(&mut out, w.width as usize);
+            put_u32(&mut out, w.height as usize);
+            for plane in [&w.rgb, &w.luma, &w.parade, &w.vectorscope] {
+                put_u32(&mut out, plane.len());
+                out.extend_from_slice(plane);
+            }
+        }
+        None => {
+            put_u32(&mut out, 0);
+            put_u32(&mut out, 0);
+        }
+    }
+
+    out
 }
 
 const WAVEFORM_W: usize = 256;
@@ -3633,26 +4023,10 @@ pub fn calculate_waveform(
     }
 
     Ok(WaveformData {
-        rgb: if do_rgb {
-            BASE64.encode(&rgba_rgb)
-        } else {
-            String::new()
-        },
-        luma: if do_luma {
-            BASE64.encode(&rgba_luma)
-        } else {
-            String::new()
-        },
-        parade: if do_parade {
-            BASE64.encode(&rgba_parade)
-        } else {
-            String::new()
-        },
-        vectorscope: if do_vectorscope {
-            BASE64.encode(&rgba_vector)
-        } else {
-            String::new()
-        },
+        rgb: rgba_rgb,
+        luma: rgba_luma,
+        parade: rgba_parade,
+        vectorscope: rgba_vector,
         width: W as u32,
         height: H as u32,
     })

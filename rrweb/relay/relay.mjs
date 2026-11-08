@@ -129,6 +129,38 @@ let bridge = null;
 const clients = new Set();
 const inflight = new Map(); // relayId -> { client, id, cmd, t0 }
 let rid = 0;
+// Tauri Channels: the browser sends "__RR_CHANNEL__:<local id>"; the relay gives the bridge a globally unique id and
+// remembers which browser tab owns it. Messages from the bridge come back as [0][global id][payload] binary frames.
+const channelOwners = new Map();
+let channelSeq = 0;
+const CHANNEL_PREFIX = '__RR_CHANNEL__:';
+function rewriteChannels(value, ws) {
+  if (typeof value === 'string' && value.startsWith(CHANNEL_PREFIX)) {
+    const local = Number(value.slice(CHANNEL_PREFIX.length));
+    if (Number.isInteger(local) && local > 0) {
+      const id = ++channelSeq;
+      channelOwners.set(id, { ws, local });
+      return `${CHANNEL_PREFIX}${id}`;
+    }
+  }
+  if (Array.isArray(value)) return value.map((entry) => rewriteChannels(entry, ws));
+  if (value && typeof value === 'object') {
+    for (const key of Object.keys(value)) value[key] = rewriteChannels(value[key], ws);
+  }
+  return value;
+}
+function sendChannel(owner, local, payload) {
+  if (!owner || owner.readyState !== 1) return;
+  if (Buffer.isBuffer(payload)) {
+    const frame = Buffer.allocUnsafe(8 + payload.length);
+    frame.writeUInt32LE(0, 0);
+    frame.writeUInt32LE(local, 4);
+    payload.copy(frame, 8);
+    owner.send(frame);
+    return;
+  }
+  owner.send(JSON.stringify({ channel: local, data: payload }));
+}
 // Photo library folder: chosen in the RapidRAW Web window on the server (native dialog), stored in RR_CONFIG
 const CONFIG = process.env.RR_CONFIG;
 let config = {};
@@ -281,6 +313,12 @@ wssBridge.on('connection', (ws) => {
   ws.on('message', (data, isBinary) => {
     if (isBinary) {
       const r = data.readUInt32LE(0);
+      if (r === 0 && data.length >= 8) {
+        const channel = data.readUInt32LE(4);
+        const owner = channelOwners.get(channel);
+        if (owner) sendChannel(owner.ws, owner.local, data.subarray(8));
+        return;
+      }
       const f = inflight.get(r); inflight.delete(r);
       if (!f) return;
       if (f.cmd === 'load_image') { editor.loaded(r); loadDone(f); }
@@ -300,6 +338,11 @@ wssBridge.on('connection', (ws) => {
     if (msg.rr === 'set-library') {
       try { setLibrary(msg.path); } catch (e) { console.error(`[relay] photo library ${msg.path}: ${e.message}`); }
       ws.send(JSON.stringify(libraryState()));
+      return;
+    }
+    if (msg.channel !== undefined) {
+      const owner = channelOwners.get(msg.channel);
+      if (owner) sendChannel(owner.ws, owner.local, msg.data);
       return;
     }
     if (msg.event !== undefined) {
@@ -325,6 +368,7 @@ wssBridge.on('connection', (ws) => {
   });
   ws.on('close', () => {
     if (bridge === ws) bridge = null;
+    channelOwners.clear();
     console.log('[relay] bridge disconnected');
     for (const [r, f] of inflight) { f.client.send(JSON.stringify({ id: f.id, error: 'bridge disconnected' })); inflight.delete(r); }
     editor.loads.clear();
@@ -370,14 +414,16 @@ wssClient.on('connection', (ws, req) => {
       editor.loading(rid);
       remote.focus(args?.path);
     }
+    const forwardedArgs = rewriteChannels(args, ws);
     inflight.set(rid, { client: ws, id, cmd, t0: process.hrtime.bigint(), ...(cmd === 'load_image' ? { path: args?.path, started: Date.now() } : {}),
       ...(cmd === 'apply_adjustments' ? { interactive: !!args?.isInteractive } : {}) });
-    bridge.send(JSON.stringify({ id: rid, cmd, args }));
+    bridge.send(JSON.stringify({ id: rid, cmd, args: forwardedArgs }));
   });
   ws.on('close', () => {
     clients.delete(ws);
     editor.dropView(ws);
     for (const [r, f] of inflight) if (f.client === ws) { inflight.delete(r); editor.loaded(r); }
+    for (const [id, owner] of channelOwners) if (owner.ws === ws) channelOwners.delete(id);
   });
 });
 
