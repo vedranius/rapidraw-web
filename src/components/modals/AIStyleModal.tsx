@@ -260,6 +260,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   const [minScore, setMinScore] = useState(0.12);
   const [useFallback, setUseFallback] = useState(false);
   const [suggestions, setSuggestions] = useState<StyleSuggestion[]>([]);
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [suggestionPreviews, setSuggestionPreviews] = useState<Record<string, string>>({});
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
 
@@ -355,10 +356,10 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
 
   const pathCount = targetPaths.length;
   const targetKey = useMemo(() => targetPaths.join('\n'), [targetPaths]);
-  const firstSuggestion = suggestions[0] ?? null;
+  const currentSuggestion = suggestions[suggestionIndex] ?? suggestions[0] ?? null;
   const suggestionProfiles = useMemo(
-    () => firstSuggestion?.candidates.slice(0, 4).map((candidate) => candidate.profile) ?? [],
-    [firstSuggestion],
+    () => currentSuggestion?.candidates.slice(0, 4).map((candidate) => candidate.profile) ?? [],
+    [currentSuggestion],
   );
   const suggestionKey = useMemo(
     () => suggestionProfiles.map((profile) => profile.id).join('|'),
@@ -462,12 +463,14 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     }
     setSuggestionsLoading(true);
     setSuggestions([]);
+    setSuggestionIndex(0);
     try {
       const result = await invoke<StyleSuggestion[]>(Invokes.SuggestStyleProfilesForPaths, {
         paths,
         limit: 4,
       });
       setSuggestions(result);
+      setSuggestionIndex(0);
     } catch (err) {
       console.error('Could not suggest style profiles:', err);
       setSuggestions([]);
@@ -560,7 +563,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   }, [isOpen, tab, selectedProfile, intensity, targetKey]);
 
   useEffect(() => {
-    if (!isOpen || tab !== 'matches' || !targetPaths[0] || suggestionProfiles.length === 0) {
+    if (!isOpen || tab !== 'matches' || !currentSuggestion || suggestionProfiles.length === 0) {
       setSuggestionPreviews({});
       return;
     }
@@ -569,7 +572,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       void (async () => {
         try {
           const batch = await invoke<{ base: number[]; looks: number[][] }>(Invokes.PreviewStyleProfiles, {
-            path: targetPaths[0],
+            path: currentSuggestion.path,
             profiles: suggestionProfiles,
             intensity,
           });
@@ -590,7 +593,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       })();
     }, 300);
     return () => clearTimeout(timer);
-  }, [isOpen, tab, targetKey, suggestionKey, intensity, suggestionProfiles]);
+  }, [isOpen, tab, targetKey, currentSuggestion, suggestionKey, intensity, suggestionProfiles]);
 
   const takeSidecarSnapshot = useCallback(async (): Promise<SidecarSnapshot[]> => {
     try {
@@ -1607,8 +1610,8 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   );
 
   const renderSceneSuggestions = () => {
-    if (!firstSuggestion) return null;
-    const scene = firstSuggestion.scene;
+    if (!currentSuggestion) return null;
+    const scene = currentSuggestion.scene;
     const sceneSubject = scene.hasPerson
       ? scene.subject === 'performer'
         ? t('modals.aiStyle.subjectPerformer')
@@ -1656,19 +1659,33 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-2 pt-1">
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
           <Text variant={TextVariants.small} className="text-text-secondary">
             {t('modals.aiStyle.suggestedLooks')}
           </Text>
-          <Text variant={TextVariants.small} className="text-text-secondary/70">
-            {suggestions.length > 1
-              ? t('modals.aiStyle.suggestionFirstOnly', { n: suggestions.length })
-              : t('modals.aiStyle.suggestionHint')}
-          </Text>
+          <div className="flex items-center gap-2">
+            {suggestions.length > 1 && (
+              <select
+                value={suggestionIndex}
+                onChange={(event) => setSuggestionIndex(Number(event.target.value))}
+                aria-label={t('modals.aiStyle.suggestionPhoto')}
+                className="h-6 max-w-[12rem] rounded border border-border-color bg-bg-primary px-1 text-[9px] text-text-secondary"
+              >
+                {suggestions.map((suggestion, index) => (
+                  <option key={suggestion.path} value={index}>
+                    {suggestion.path.split(/[\\/]/).pop()}
+                  </option>
+                ))}
+              </select>
+            )}
+            <Text variant={TextVariants.small} className="text-text-secondary/70">
+              {t('modals.aiStyle.suggestionHint')}
+            </Text>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {firstSuggestion.candidates.slice(0, 4).map((candidate) => {
+          {currentSuggestion.candidates.slice(0, 4).map((candidate) => {
             const preview = suggestionPreviews[candidate.profile.id];
             const kindLabel =
               candidate.kind === 'recommended'

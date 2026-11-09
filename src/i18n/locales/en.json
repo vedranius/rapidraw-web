@@ -1596,7 +1596,7 @@
       "subjectScene": "Scene",
       "suggestedLooks": "Suggested looks",
       "suggestionHint": "Colour, film and monochrome directions — not just black and white.",
-      "suggestionFirstOnly": "For the first of {{n}} selected photos",
+      "suggestionPhoto": "Photo for suggestions",
       "candidateColor": "Color",
       "candidateFilm": "Film",
       "candidateMonochrome": "Mono",
