@@ -2318,6 +2318,18 @@ fn profile_is_monochrome(profile: &StyleProfile) -> bool {
         || profile.name.to_ascii_lowercase().contains("black & white")
 }
 
+/// Broader grouping used only for diversity: the three concert directions
+/// (dark, warm, clean colour) should not fill the whole suggestion list, and
+/// neither should two night looks.
+fn style_family_group(profile: &StyleProfile) -> &'static str {
+    match style_family(profile) {
+        "concert" | "concert-color" | "festival" => "concert",
+        "night" | "night-portrait" => "night",
+        "portrait" | "portrait-cinematic" => "portrait",
+        other => other,
+    }
+}
+
 fn scene_affinity(scene: &str, family: &str, has_person: bool) -> f64 {
     match scene {
         "concert" => match family {
@@ -2491,7 +2503,7 @@ fn recommend_candidates<'a>(
         if chosen.len() >= limit {
             break;
         }
-        let family = style_family(profile);
+        let family = style_family_group(profile);
         if families.get(family).copied().unwrap_or(0) >= 2 {
             continue;
         }
