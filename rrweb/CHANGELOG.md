@@ -2,6 +2,11 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.15.6
+
+- When the style-count slider asks for more looks than the detected scene has distinct built-in profiles, AI Style now creates **session-only variations of the best-fitting looks** (Soft, Bold, Cinematic, Pastel, Punchy, Airy) instead of returning fewer cards or filling a concert with landscape/food presets. Save any variation as a profile to keep it permanently.
+- The same variation profiles are available to the per-photo assignment batch and the interactive Apply & next workflow.
+
 ## 1.15.5
 
 - **AI Style is now a full-screen workspace.** The modal uses almost the whole app window, previews are much larger, and clicking any suggested look opens a full-viewport preview so the edit can be judged before applying.

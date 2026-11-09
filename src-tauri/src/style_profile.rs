@@ -162,6 +162,79 @@ pub struct StyleAssignment {
     pub profile_id: String,
 }
 
+/// Extra directions generated on demand when the user asks for more styles
+/// than the current scene has distinct built-in profiles. They live for this
+/// app session; saving one as a profile makes it permanent.
+static SESSION_VARIANTS: OnceLock<Mutex<HashMap<String, StyleProfile>>> = OnceLock::new();
+
+fn session_variants() -> &'static Mutex<HashMap<String, StyleProfile>> {
+    SESSION_VARIANTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn bump_variant_scalar(adjustments: &mut Value, key: &str, delta: f64) {
+    let Some(map) = adjustments.as_object_mut() else {
+        return;
+    };
+    let current = map.get(key).and_then(Value::as_f64).unwrap_or(0.0);
+    map.insert(
+        key.to_string(),
+        json!((current + delta).clamp(-200.0, 200.0)),
+    );
+}
+
+fn make_session_variant(base: &StyleProfile, index: usize) -> StyleProfile {
+    const SUFFIXES: [&str; 6] = ["Soft", "Bold", "Cinematic", "Pastel", "Punchy", "Airy"];
+    let mut profile = base.clone();
+    profile.id = format!("session-{}-{}", base.id, index);
+    profile.name = if index < SUFFIXES.len() {
+        format!("{} — {}", base.name, SUFFIXES[index])
+    } else {
+        format!("{} — Variation {}", base.name, index + 1)
+    };
+    profile.description = Some(
+        "An extra direction generated for this AI Style session. Save it as a profile to keep it."
+            .to_string(),
+    );
+    profile.built_in = true;
+    match index % 6 {
+        0 => {
+            bump_variant_scalar(&mut profile.adjustments, "contrast", -4.0);
+            bump_variant_scalar(&mut profile.adjustments, "shadows", 4.0);
+            bump_variant_scalar(&mut profile.adjustments, "saturation", -3.0);
+            bump_variant_scalar(&mut profile.adjustments, "grainAmount", 2.0);
+        }
+        1 => {
+            bump_variant_scalar(&mut profile.adjustments, "contrast", 6.0);
+            bump_variant_scalar(&mut profile.adjustments, "clarity", 2.0);
+            bump_variant_scalar(&mut profile.adjustments, "blacks", -2.0);
+        }
+        2 => {
+            bump_variant_scalar(&mut profile.adjustments, "temperature", 2.0);
+            bump_variant_scalar(&mut profile.adjustments, "vibrance", 3.0);
+            bump_variant_scalar(&mut profile.adjustments, "glowAmount", 2.0);
+        }
+        3 => {
+            bump_variant_scalar(&mut profile.adjustments, "highlights", -3.0);
+            bump_variant_scalar(&mut profile.adjustments, "whites", -2.0);
+            bump_variant_scalar(&mut profile.adjustments, "saturation", 2.0);
+        }
+        4 => {
+            bump_variant_scalar(&mut profile.adjustments, "clarity", 4.0);
+            bump_variant_scalar(&mut profile.adjustments, "structure", 2.0);
+            bump_variant_scalar(&mut profile.adjustments, "contrast", 3.0);
+        }
+        _ => {
+            bump_variant_scalar(&mut profile.adjustments, "temperature", -2.0);
+            bump_variant_scalar(&mut profile.adjustments, "tint", 1.0);
+            bump_variant_scalar(&mut profile.adjustments, "shadows", 2.0);
+        }
+    }
+    if let Some(lut) = profile.lut.as_mut() {
+        lut.intensity = (lut.intensity * 0.85).clamp(0.0, 100.0);
+    }
+    profile
+}
+
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileUsage {
@@ -1576,6 +1649,9 @@ fn all_style_profiles(app_handle: &AppHandle) -> Vec<StyleProfile> {
     resolve_builtin_lut_paths(app_handle, &mut user);
 
     profiles.extend(user);
+    if let Ok(session) = session_variants().lock() {
+        profiles.extend(session.values().cloned());
+    }
     profiles
 }
 
@@ -2275,6 +2351,9 @@ pub(crate) fn analyze_scene(
 
 fn style_family(profile: &StyleProfile) -> &'static str {
     let id = profile.id.as_str();
+    if id.starts_with("session-") {
+        return "session";
+    }
     if id.contains("concert-color") {
         "concert-color"
     } else if id.contains("concert") {
@@ -2453,6 +2532,11 @@ fn recommend_candidates<'a>(
     let mut ranked: Vec<(f64, f64, Vec<String>, &StyleProfile)> = profiles
         .iter()
         .filter_map(|profile| {
+            // Session variations are created only to fill a large request; they
+            // must not leak into recommendations for another photo.
+            if profile.id.starts_with("session-") {
+                return None;
+            }
             let (base, matched) = match_score(image_tags, profile);
             if base == 0.0 && profile.detect_tags.is_empty() {
                 return None;
@@ -2597,16 +2681,17 @@ pub async fn suggest_style_profiles_for_paths(
             let tags = sidecar.tags.unwrap_or_default();
             let stats = stats_for_path(&app_handle, &path);
             let scene = analyze_scene(&tags, stats.as_deref(), &sidecar.exif);
-            let candidates = recommend_candidates(&tags, &scene, &profiles, limit)
-                .into_iter()
+            let base = recommend_candidates(&tags, &scene, &profiles, limit);
+            let mut candidates: Vec<StyleCandidate> = base
+                .iter()
                 .enumerate()
                 .map(|(index, (score, matched, profile))| {
                     let mono = profile_is_monochrome(profile);
                     StyleCandidate {
-                        profile: profile.clone(),
-                        score,
+                        profile: (*profile).clone(),
+                        score: *score,
                         matched_tags: matched.clone(),
-                        reason: candidate_reason(&scene, &matched, profile),
+                        reason: candidate_reason(&scene, matched, profile),
                         kind: if index == 0 {
                             "recommended".to_string()
                         } else if mono {
@@ -2619,6 +2704,31 @@ pub async fn suggest_style_profiles_for_paths(
                     }
                 })
                 .collect();
+
+            // The filter above deliberately avoids unrelated scenes. When the
+            // user asks for more styles than the scene has distinct profiles,
+            // add session-only variations of the best-fitting looks instead of
+            // filling the list with landscape/food presets on a concert photo.
+            if candidates.len() < limit && !base.is_empty() {
+                let mut index = 0usize;
+                while candidates.len() < limit {
+                    let (_, matched, profile) = &base[index % base.len()];
+                    let variant = make_session_variant(*profile, index);
+                    let variant_id = variant.id.clone();
+                    if let Ok(mut session) = session_variants().lock() {
+                        session.insert(variant_id, variant.clone());
+                    }
+                    candidates.push(StyleCandidate {
+                        profile: variant,
+                        score: 0.04,
+                        matched_tags: matched.clone(),
+                        reason: format!("{} variation", scene.scene),
+                        kind: "variation".to_string(),
+                    });
+                    index += 1;
+                }
+            }
+
             suggestions.push(StyleSuggestion {
                 path,
                 scene,
