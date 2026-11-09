@@ -28,6 +28,7 @@ import {
   PromptAiConfig,
   PromptAiStatus,
   SidecarSnapshot,
+  StyleAssignment,
   StyleMatch,
   StyleProfile,
   StyleSuggestion,
@@ -261,6 +262,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   const [useFallback, setUseFallback] = useState(false);
   const [suggestions, setSuggestions] = useState<StyleSuggestion[]>([]);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const [assignments, setAssignments] = useState<Record<string, string | null>>({});
   const [suggestionPreviews, setSuggestionPreviews] = useState<Record<string, string>>({});
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
 
@@ -357,6 +359,11 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   const pathCount = targetPaths.length;
   const targetKey = useMemo(() => targetPaths.join('\n'), [targetPaths]);
   const currentSuggestion = suggestions[suggestionIndex] ?? suggestions[0] ?? null;
+  const currentAssignment = currentSuggestion ? assignments[currentSuggestion.path] ?? null : null;
+  const assignedCount = useMemo(
+    () => suggestions.filter((suggestion) => !!assignments[suggestion.path]).length,
+    [assignments, suggestions],
+  );
   const suggestionProfiles = useMemo(
     () => currentSuggestion?.candidates.slice(0, 4).map((candidate) => candidate.profile) ?? [],
     [currentSuggestion],
@@ -459,17 +466,27 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   const loadSuggestions = useCallback(async (paths: string[]) => {
     if (paths.length === 0) {
       setSuggestions([]);
+      setAssignments({});
       return;
     }
     setSuggestionsLoading(true);
     setSuggestions([]);
     setSuggestionIndex(0);
+    setAssignments({});
     try {
       const result = await invoke<StyleSuggestion[]>(Invokes.SuggestStyleProfilesForPaths, {
         paths,
         limit: 4,
       });
       setSuggestions(result);
+      setAssignments(
+        Object.fromEntries(
+          result.map((suggestion) => [
+            suggestion.path,
+            suggestion.candidates[0]?.profile.id ?? null,
+          ]),
+        ),
+      );
       setSuggestionIndex(0);
     } catch (err) {
       console.error('Could not suggest style profiles:', err);
@@ -595,9 +612,9 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     return () => clearTimeout(timer);
   }, [isOpen, tab, targetKey, currentSuggestion, suggestionKey, intensity, suggestionProfiles]);
 
-  const takeSidecarSnapshot = useCallback(async (): Promise<SidecarSnapshot[]> => {
+  const takeSidecarSnapshot = useCallback(async (paths: string[] = targetPaths): Promise<SidecarSnapshot[]> => {
     try {
-      return await invoke<SidecarSnapshot[]>(Invokes.SnapshotSidecars, { paths: targetPaths });
+      return await invoke<SidecarSnapshot[]>(Invokes.SnapshotSidecars, { paths });
     } catch (err) {
       // A failed snapshot must never block the actual style application.
       console.error('Could not snapshot sidecars for undo:', err);
@@ -606,12 +623,12 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   }, [targetPaths]);
 
   const restoreAfterApply = useCallback(
-    async (snapshot: SidecarSnapshot[]) => {
+    async (snapshot: SidecarSnapshot[], paths: string[] = targetPaths) => {
       try {
         await invoke(Invokes.RestoreSidecars, { snapshots: snapshot });
         // The apply already regenerated the thumbnails with the look; after
         // restoring the sidecars they must be rendered again from the old edit.
-        await invoke(Invokes.RegenerateThumbnails, { paths: targetPaths });
+        await invoke(Invokes.RegenerateThumbnails, { paths });
         toast.dismiss(UNDO_TOAST_ID);
         toast.info(t('modals.aiStyle.undone'));
         await onApplied();
@@ -623,7 +640,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   );
 
   const showApplied = useCallback(
-    (message: string, snapshot: SidecarSnapshot[]) => {
+    (message: string, snapshot: SidecarSnapshot[], paths: string[] = targetPaths) => {
       if (snapshot.length === 0) {
         toast.success(message);
         return;
@@ -635,7 +652,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
           <button
             type="button"
             className="shrink-0 rounded bg-white/20 px-2 py-0.5 text-xs font-semibold underline transition-colors hover:bg-white/30"
-            onClick={() => void restoreAfterApply(snapshot)}
+            onClick={() => void restoreAfterApply(snapshot, paths)}
           >
             {t('modals.aiStyle.undo')}
           </button>
@@ -647,7 +664,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
         },
       );
     },
-    [restoreAfterApply, t],
+    [restoreAfterApply, t, targetPaths],
   );
 
   const handleApplySelected = async () => {
@@ -709,6 +726,81 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       } else {
         showApplied(t('modals.aiStyle.autoApplied', { n: summary.applied }), snapshot);
       }
+      await onApplied();
+      onClose();
+    } catch (err) {
+      toast.error(t('modals.aiStyle.applyFailed', { err: String(err) }));
+    } finally {
+      setBusy(null);
+      setApplyProgress(null);
+    }
+  };
+
+  const assignLook = (profileId: string, paths?: string[]) => {
+    const targets = paths ?? (currentSuggestion ? [currentSuggestion.path] : []);
+    if (targets.length === 0) return;
+    setAssignments((current) => {
+      const next = { ...current };
+      targets.forEach((path) => {
+        next[path] = profileId;
+      });
+      return next;
+    });
+  };
+
+  const toggleCurrentAssignment = () => {
+    if (!currentSuggestion) return;
+    if (currentAssignment) {
+      setAssignments((current) => ({ ...current, [currentSuggestion.path]: null }));
+      return;
+    }
+    const recommended = currentSuggestion.candidates[0]?.profile.id;
+    if (recommended) assignLook(recommended, [currentSuggestion.path]);
+  };
+
+  const applyCurrentSuggestion = async () => {
+    if (!currentSuggestion || !currentAssignment || intensity <= 0) return;
+    setBusy(`apply-current:${currentSuggestion.path}`);
+    setApplyProgress({ stage: 'analyzing', current: 0, total: 1 });
+    try {
+      const snapshot = await takeSidecarSnapshot([currentSuggestion.path]);
+      await invoke(Invokes.ApplyStyleProfileToPaths, {
+        paths: [currentSuggestion.path],
+        profileId: currentAssignment,
+        intensity,
+      });
+      showApplied(
+        t('modals.aiStyle.assignedOne', { name: currentSuggestion.path.split(/[\\/]/).pop() }),
+        snapshot,
+        [currentSuggestion.path],
+      );
+      await onApplied();
+    } catch (err) {
+      toast.error(t('modals.aiStyle.applyFailed', { err: String(err) }));
+    } finally {
+      setBusy(null);
+      setApplyProgress(null);
+    }
+  };
+
+  const applyAssignments = async () => {
+    const assignmentsToApply: StyleAssignment[] = suggestions
+      .map((suggestion) => {
+        const profileId = assignments[suggestion.path];
+        return profileId ? { path: suggestion.path, profileId } : null;
+      })
+      .filter((assignment): assignment is StyleAssignment => assignment !== null);
+    if (assignmentsToApply.length === 0 || intensity <= 0) {
+      toast.info(t('modals.aiStyle.nothingAssigned'));
+      return;
+    }
+    setBusy('apply-assigned');
+    setApplyProgress({ stage: 'analyzing', current: 0, total: assignmentsToApply.length });
+    try {
+      const paths = assignmentsToApply.map((assignment) => assignment.path);
+      const snapshot = await takeSidecarSnapshot(paths);
+      await invoke(Invokes.ApplyStyleAssignments, { assignments: assignmentsToApply, intensity });
+      showApplied(t('modals.aiStyle.assignedApplied', { n: assignmentsToApply.length }), snapshot, paths);
       await onApplied();
       onClose();
     } catch (err) {
@@ -1687,6 +1779,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {currentSuggestion.candidates.slice(0, 4).map((candidate) => {
             const preview = suggestionPreviews[candidate.profile.id];
+            const assigned = currentAssignment === candidate.profile.id;
             const kindLabel =
               candidate.kind === 'recommended'
                 ? t('modals.aiStyle.recommended')
@@ -1698,7 +1791,9 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
             return (
               <div
                 key={candidate.profile.id}
-                className="overflow-hidden rounded-md border border-border-color bg-bg-primary"
+                className={`overflow-hidden rounded-md border bg-bg-primary ${
+                  assigned ? 'border-accent ring-1 ring-accent/40' : 'border-border-color'
+                }`}
               >
                 <div className="relative h-20 bg-black/30">
                   {preview ? (
@@ -1711,6 +1806,11 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
                   <span className="absolute left-1 top-1 rounded bg-black/70 px-1 py-0.5 text-[8px] uppercase tracking-wide text-white">
                     {kindLabel}
                   </span>
+                  {assigned && (
+                    <span className="absolute right-1 top-1 rounded-full bg-accent p-0.5 text-bg-primary">
+                      <Check size={10} />
+                    </span>
+                  )}
                 </div>
                 <div className="space-y-1 p-1.5">
                   <div className="truncate text-[10px] font-medium text-text-primary">{candidate.profile.name}</div>
@@ -1719,22 +1819,69 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
                   </div>
                   <div className="flex items-center justify-between gap-1">
                     <span className="text-[9px] text-text-secondary">{Math.round(candidate.score * 100)}%</span>
-                    <Button
-                      onClick={() => void handleApplyCandidate(candidate.profile)}
-                      disabled={!!busy || intensity <= 0}
-                      className="h-5 px-1.5 text-[9px]"
-                    >
-                      {busy === `apply-candidate:${candidate.profile.id}` ? (
-                        <Loader2 size={10} className="animate-spin" />
-                      ) : (
-                        t('modals.aiStyle.candidateApply')
-                      )}
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          assignLook(
+                            candidate.profile.id,
+                            suggestions.map((suggestion) => suggestion.path),
+                          )
+                        }
+                        className="rounded px-1 py-0.5 text-[8px] text-text-secondary transition-colors hover:bg-surface hover:text-text-primary"
+                      >
+                        {t('modals.aiStyle.useForAll')}
+                      </button>
+                      <Button
+                        onClick={() => assignLook(candidate.profile.id)}
+                        disabled={!!busy}
+                        className="h-5 px-1.5 text-[9px]"
+                      >
+                        {assigned ? t('modals.aiStyle.candidateAssigned') : t('modals.aiStyle.candidateAssign')}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
             );
           })}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-color/60 pt-2">
+          <Text variant={TextVariants.small} className="text-text-secondary">
+            {t('modals.aiStyle.assignedCount', { assigned: assignedCount, total: suggestions.length })}
+          </Text>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              onClick={toggleCurrentAssignment}
+              disabled={!!busy}
+              className="h-6 px-2 text-[9px]"
+            >
+              {currentAssignment ? t('modals.aiStyle.skipPhoto') : t('modals.aiStyle.includePhoto')}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => void applyCurrentSuggestion()}
+              disabled={!currentAssignment || !!busy || intensity <= 0}
+              className="flex h-6 items-center gap-1 px-2 text-[9px]"
+            >
+              {busy === `apply-current:${currentSuggestion.path}` ? (
+                <Loader2 size={10} className="animate-spin" />
+              ) : (
+                <Palette size={10} />
+              )}
+              {t('modals.aiStyle.applyCurrentPhoto')}
+            </Button>
+            <Button
+              onClick={() => void applyAssignments()}
+              disabled={assignedCount === 0 || !!busy || intensity <= 0}
+              className="flex h-6 items-center gap-1 px-2 text-[9px]"
+            >
+              {busy === 'apply-assigned' ? <Loader2 size={10} className="animate-spin" /> : <Wand2 size={10} />}
+              {t('modals.aiStyle.applyAssigned', { n: assignedCount })}
+            </Button>
+          </div>
         </div>
       </div>
     );

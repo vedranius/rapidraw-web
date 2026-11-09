@@ -61,6 +61,7 @@ export enum Invokes {
   MatchStyleProfilesForPaths = 'match_style_profiles_for_paths',
   SuggestStyleProfilesForPaths = 'suggest_style_profiles_for_paths',
   ApplyStyleProfileToPaths = 'apply_style_profile_to_paths',
+  ApplyStyleAssignments = 'apply_style_assignments',
   ApplyCustomStyleProfile = 'apply_custom_style_profile',
   SnapshotSidecars = 'snapshot_sidecars',
   RestoreSidecars = 'restore_sidecars',
@@ -643,6 +644,11 @@ export interface StyleSuggestion {
   path: string;
   scene: SceneAnalysis;
   candidates: StyleCandidate[];
+}
+
+export interface StyleAssignment {
+  path: string;
+  profileId: string;
 }
 
 export interface ProfileUsage {

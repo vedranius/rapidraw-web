@@ -2,6 +2,12 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.15.4
+
+- **AI Style suggestions now work per photo.** With several photos selected, each one keeps its own recommended look. Assign a different look to each photo, assign one look to a group, or use the same look for the whole selection. A photo can also be skipped; it is not touched by **Apply assigned**.
+- Candidate cards now **Assign** instead of immediately applying to the whole selection. Use *Apply to this photo* for a single photo or *Apply assigned (N)* to apply every assignment in one batch; the existing sidecar undo still works for each apply.
+- Added the `apply_style_assignments` backend command, which builds per-photo adaptations and writes/regenerates thumbnails once for the whole assignment set.
+
 ## 1.15.3
 
 - **AI Style now reads the scene and the people, then proposes several directions.** It recognises concert, festival, portrait, wedding, landscape, street, night, food, sports and wildlife from the content tags, and falls back to ISO, exposure and colourfulness when a folder has not been AI-tagged yet. Person and performer tags are surfaced as a separate subject signal.

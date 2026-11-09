@@ -155,6 +155,13 @@ pub struct StyleSuggestion {
     pub candidates: Vec<StyleCandidate>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct StyleAssignment {
+    pub path: String,
+    pub profile_id: String,
+}
+
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileUsage {
@@ -3210,6 +3217,81 @@ pub(crate) async fn apply_profile_object_to_paths(
     })
     .await
     .map_err(|error| format!("Style adaptation task failed: {error}"))?;
+
+    apply_adjustments_to_paths_map(entries, app_handle).await
+}
+
+/// Applies a different profile to each photo in one batch. This is what the
+/// multi-photo AI Style picker uses: the user can assign one look to several
+/// photos, another look to the next group, and leave the rest untouched.
+#[tauri::command]
+pub async fn apply_style_assignments(
+    assignments: Vec<StyleAssignment>,
+    intensity: Option<f64>,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    if assignments.is_empty() {
+        return Ok(());
+    }
+
+    let profiles = all_style_profiles(&app_handle);
+    let mut resolved = Vec::with_capacity(assignments.len());
+    for assignment in assignments {
+        let profile = profiles
+            .iter()
+            .find(|profile| profile.id == assignment.profile_id)
+            .cloned()
+            .ok_or_else(|| format!("Style profile '{}' not found", assignment.profile_id))?;
+        resolved.push((assignment.path, profile));
+    }
+
+    let total = resolved.len();
+    log::info!(
+        "AI Style: applying per-photo assignments to {} images",
+        total
+    );
+    let _ = app_handle.emit(
+        "style-apply-progress",
+        json!({ "stage": "analyzing", "current": 0, "total": total }),
+    );
+
+    let task_handle = app_handle.clone();
+    let entries = tauri::async_runtime::spawn_blocking(move || {
+        let report_every = (total / 50).max(1);
+        let mut entries = Vec::with_capacity(total);
+        for (index, (path, profile)) in resolved.into_iter().enumerate() {
+            let tags = tags_for_path(&path);
+            let (_, sidecar_path) = parse_virtual_path(&path);
+            let unedited = crate::exif_processing::load_sidecar(&sidecar_path)
+                .adjustments
+                .is_null();
+            let auto_baseline = if unedited {
+                auto_baseline_for_path(&path, &task_handle)
+            } else {
+                None
+            };
+            let stats = stats_for_path(&task_handle, &path);
+            let look_intensity = intensity.unwrap_or(profile.intensity).clamp(0.0, 100.0);
+            let adjustments = build_look_overlay(
+                &profile,
+                Some(look_intensity),
+                &tags,
+                auto_baseline.as_ref(),
+                stats.as_deref(),
+            );
+            entries.push((path, adjustments));
+            let current = index + 1;
+            if current % report_every == 0 || current == total {
+                let _ = task_handle.emit(
+                    "style-apply-progress",
+                    json!({ "stage": "analyzing", "current": current, "total": total }),
+                );
+            }
+        }
+        entries
+    })
+    .await
+    .map_err(|error| format!("Style assignment task failed: {error}"))?;
 
     apply_adjustments_to_paths_map(entries, app_handle).await
 }
