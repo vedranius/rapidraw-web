@@ -2,6 +2,14 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.15.5
+
+- **AI Style is now a full-screen workspace.** The modal uses almost the whole app window, previews are much larger, and clicking any suggested look opens a full-viewport preview so the edit can be judged before applying.
+- **No more stale previews when switching photos.** Selecting another photo from the dropdown or the style sidebar clears the old images immediately and shows a loading state until that photo's previews arrive.
+- **Choose 1–16 suggested styles.** A slider sets how many directions AI Style generates for each photo; the backend recommendation limit follows it.
+- **Interactive tab for batch work.** Photos are grouped in the sidebar by assigned style with small thumbnails under each style name. Pick a photo, choose a style, then use *Apply & next* to apply only that photo and move to the next one; or use *Apply assigned (N)* for the whole plan. Photos can be skipped or assigned different styles independently.
+- Suggested looks can be saved as user profiles, and user profiles can now be renamed from the Profiles tab; built-in looks remain immutable but can be saved as a copy for reuse.
+
 ## 1.15.4
 
 - **AI Style suggestions now work per photo.** With several photos selected, each one keeps its own recommended look. Assign a different look to each photo, assign one look to a group, or use the same look for the whole selection. A photo can also be skipped; it is not touched by **Apply assigned**.

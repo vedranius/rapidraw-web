@@ -2589,7 +2589,7 @@ pub async fn suggest_style_profiles_for_paths(
 ) -> Result<Vec<StyleSuggestion>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let profiles = all_style_profiles(&app_handle);
-        let limit = limit.unwrap_or(4).clamp(2, 6);
+        let limit = limit.unwrap_or(4).clamp(1, 16);
         let mut suggestions = Vec::with_capacity(paths.len());
         for path in paths {
             let (_, sidecar_path) = parse_virtual_path(&path);

@@ -20,6 +20,8 @@ import {
   Settings,
   Server,
   KeyRound,
+  Play,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import {
@@ -49,7 +51,7 @@ interface AIStyleModalProps {
   onApplied(): Promise<void> | void;
 }
 
-type Tab = 'profiles' | 'prompt' | 'matches' | 'learn';
+type Tab = 'profiles' | 'prompt' | 'matches' | 'interactive' | 'learn';
 
 interface StyleApplyProgress {
   stage: 'analyzing' | 'writing' | 'thumbnails';
@@ -265,10 +267,15 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   const [assignments, setAssignments] = useState<Record<string, string | null>>({});
   const [suggestionPreviews, setSuggestionPreviews] = useState<Record<string, string>>({});
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [suggestionPreviewLoading, setSuggestionPreviewLoading] = useState(false);
+  const [styleCount, setStyleCount] = useState(4);
+  const [previewLightbox, setPreviewLightbox] = useState<{ src: string; title: string } | null>(null);
 
   const [learnName, setLearnName] = useState('');
   const [learnSubject, setLearnSubject] = useState('');
   const [derived, setDerived] = useState<StyleProfile | null>(null);
+  const [renamingProfileId, setRenamingProfileId] = useState<string | null>(null);
+  const [profileRename, setProfileRename] = useState('');
 
   // Prompt-driven looks ("moody teal and orange concert, subtle grain").
   const [prompt, setPrompt] = useState('');
@@ -364,9 +371,25 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     () => suggestions.filter((suggestion) => !!assignments[suggestion.path]).length,
     [assignments, suggestions],
   );
+  const styleGroups = useMemo(() => {
+    const groups = new Map<string, { profile: StyleProfile; paths: string[] }>();
+    for (const suggestion of suggestions) {
+      const profileId = assignments[suggestion.path];
+      if (!profileId) continue;
+      const profile =
+        suggestion.candidates.find((candidate) => candidate.profile.id === profileId)?.profile ??
+        profiles.find((candidate) => candidate.id === profileId);
+      if (!profile) continue;
+      const group = groups.get(profileId) ?? { profile, paths: [] };
+      group.paths.push(suggestion.path);
+      groups.set(profileId, group);
+    }
+    return [...groups.values()].sort((a, b) => a.profile.name.localeCompare(b.profile.name));
+  }, [assignments, profiles, suggestions]);
+
   const suggestionProfiles = useMemo(
-    () => currentSuggestion?.candidates.slice(0, 4).map((candidate) => candidate.profile) ?? [],
-    [currentSuggestion],
+    () => currentSuggestion?.candidates.slice(0, styleCount).map((candidate) => candidate.profile) ?? [],
+    [currentSuggestion, styleCount],
   );
   const suggestionKey = useMemo(
     () => suggestionProfiles.map((profile) => profile.id).join('|'),
@@ -463,7 +486,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     setMatches(result);
   }, [pathCount, targetPaths, minScore]);
 
-  const loadSuggestions = useCallback(async (paths: string[]) => {
+  const loadSuggestions = useCallback(async (paths: string[], limit = styleCount) => {
     if (paths.length === 0) {
       setSuggestions([]);
       setAssignments({});
@@ -476,7 +499,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     try {
       const result = await invoke<StyleSuggestion[]>(Invokes.SuggestStyleProfilesForPaths, {
         paths,
-        limit: 4,
+        limit,
       });
       setSuggestions(result);
       setAssignments(
@@ -494,7 +517,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     } finally {
       setSuggestionsLoading(false);
     }
-  }, []);
+  }, [styleCount]);
 
   // Full reload: only when the modal opens or the selection changes. Deliberately
   // not tied to minScore/loadMatches so dragging the threshold slider does not
@@ -580,10 +603,13 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   }, [isOpen, tab, selectedProfile, intensity, targetKey]);
 
   useEffect(() => {
-    if (!isOpen || tab !== 'matches' || !currentSuggestion || suggestionProfiles.length === 0) {
+    if (!isOpen || (tab !== 'matches' && tab !== 'interactive') || !currentSuggestion || suggestionProfiles.length === 0) {
       setSuggestionPreviews({});
+      setSuggestionPreviewLoading(false);
       return;
     }
+    setSuggestionPreviews({});
+    setSuggestionPreviewLoading(true);
     const request = ++suggestionPreviewRequest.current;
     const timer = setTimeout(() => {
       void (async () => {
@@ -602,10 +628,12 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
             }
           });
           setSuggestionPreviews(next);
+          setSuggestionPreviewLoading(false);
         } catch (err) {
           if (request !== suggestionPreviewRequest.current) return;
           console.error('Could not render the suggested style previews:', err);
           setSuggestionPreviews({});
+          setSuggestionPreviewLoading(false);
         }
       })();
     }, 300);
@@ -748,6 +776,13 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     });
   };
 
+  const selectSuggestion = (index: number) => {
+    if (index === suggestionIndex) return;
+    setSuggestionIndex(index);
+    setSuggestionPreviews({});
+    setSuggestionPreviewLoading(true);
+  };
+
   const toggleCurrentAssignment = () => {
     if (!currentSuggestion) return;
     if (currentAssignment) {
@@ -758,25 +793,35 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     if (recommended) assignLook(recommended, [currentSuggestion.path]);
   };
 
-  const applyCurrentSuggestion = async () => {
-    if (!currentSuggestion || !currentAssignment || intensity <= 0) return;
-    setBusy(`apply-current:${currentSuggestion.path}`);
+  const applyCurrentSuggestion = async (advance = false): Promise<boolean> => {
+    if (!currentSuggestion || !currentAssignment || intensity <= 0) return false;
+    const path = currentSuggestion.path;
+    setBusy(`apply-current:${path}`);
     setApplyProgress({ stage: 'analyzing', current: 0, total: 1 });
     try {
-      const snapshot = await takeSidecarSnapshot([currentSuggestion.path]);
+      const snapshot = await takeSidecarSnapshot([path]);
       await invoke(Invokes.ApplyStyleProfileToPaths, {
-        paths: [currentSuggestion.path],
+        paths: [path],
         profileId: currentAssignment,
         intensity,
       });
       showApplied(
-        t('modals.aiStyle.assignedOne', { name: currentSuggestion.path.split(/[\\/]/).pop() }),
+        t('modals.aiStyle.assignedOne', { name: path.split(/[\\/]/).pop() }),
         snapshot,
-        [currentSuggestion.path],
+        [path],
       );
       await onApplied();
+      if (advance) {
+        if (suggestionIndex < suggestions.length - 1) {
+          selectSuggestion(suggestionIndex + 1);
+        } else {
+          toast.info(t('modals.aiStyle.batchComplete'));
+        }
+      }
+      return true;
     } catch (err) {
       toast.error(t('modals.aiStyle.applyFailed', { err: String(err) }));
+      return false;
     } finally {
       setBusy(null);
       setApplyProgress(null);
@@ -991,6 +1036,50 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     } finally {
       setBusy(null);
       setApplyProgress(null);
+    }
+  };
+
+  const handleSaveSuggestedProfile = async (profile: StyleProfile) => {
+    const copy: StyleProfile = {
+      ...profile,
+      id: `user-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      name: `${profile.name} — my style`,
+      builtIn: false,
+      subject: null,
+      intensity,
+    };
+    setBusy(`save-suggestion:${profile.id}`);
+    try {
+      const list = await invoke<StyleProfile[]>(Invokes.SaveStyleProfile, { profile: copy });
+      setProfiles(list);
+      setSelectedId(copy.id);
+      toast.success(t('modals.aiStyle.saved'));
+    } catch (err) {
+      toast.error(t('modals.aiStyle.saveFailed', { err: String(err) }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleRenameProfile = async (profile: StyleProfile) => {
+    const name = profileRename.trim();
+    if (!name) {
+      toast.error(t('modals.aiStyle.learnNameRequired'));
+      return;
+    }
+    setBusy(`rename:${profile.id}`);
+    try {
+      const list = await invoke<StyleProfile[]>(Invokes.SaveStyleProfile, {
+        profile: { ...profile, name },
+      });
+      setProfiles(list);
+      setRenamingProfileId(null);
+      setProfileRename('');
+      toast.success(t('modals.aiStyle.saved'));
+    } catch (err) {
+      toast.error(t('modals.aiStyle.saveFailed', { err: String(err) }));
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -1619,9 +1708,43 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Text variant={TextVariants.label} className="truncate">
-                      {profile.name}
-                    </Text>
+                    {renamingProfileId === profile.id ? (
+                      <div className="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
+                        <Input
+                          value={profileRename}
+                          onChange={(event) => setProfileRename(event.target.value)}
+                          className="h-7 w-48 text-xs"
+                          autoFocus
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') void handleRenameProfile(profile);
+                            if (event.key === 'Escape') setRenamingProfileId(null);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="rounded p-1 text-accent hover:bg-surface"
+                          onClick={() => void handleRenameProfile(profile)}
+                          disabled={busy === `rename:${profile.id}`}
+                        >
+                          {busy === `rename:${profile.id}` ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Check size={14} />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded p-1 text-text-secondary hover:bg-surface"
+                          onClick={() => setRenamingProfileId(null)}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <Text variant={TextVariants.label} className="truncate">
+                        {profile.name}
+                      </Text>
+                    )}
                     {profile.builtIn && <TagChip label={t('modals.aiStyle.builtIn')} />}
                     {profile.subject && <TagChip label={profile.subject} />}
                     {profile.lut?.name && <TagChip label={`LUT · ${profile.lut.name}`} />}
@@ -1644,6 +1767,19 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {active && <Check size={18} className="text-accent" />}
+                  {!profile.builtIn && (
+                    <button
+                      className="p-1 rounded hover:bg-surface text-text-secondary hover:text-accent transition-colors"
+                      title={t('modals.aiStyle.renameProfile')}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setRenamingProfileId(profile.id);
+                        setProfileRename(profile.name);
+                      }}
+                    >
+                      <Pencil size={15} />
+                    </button>
+                  )}
                   {!profile.builtIn && (
                     <button
                       className="p-1 rounded hover:bg-surface text-text-secondary hover:text-red-400 transition-colors"
@@ -1701,6 +1837,233 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     </div>
   );
 
+  const renderInteractive = () => {
+    if (!currentSuggestion) {
+      return (
+        <div className="flex items-center justify-center py-20 text-text-secondary">
+          {suggestionsLoading ? <Loader2 size={22} className="animate-spin" /> : t('modals.aiStyle.noPreview')}
+        </div>
+      );
+    }
+    const currentPath = currentSuggestion.path;
+    const currentStyle = styleGroups.find((group) => group.paths.includes(currentPath))?.profile;
+    const largePreview = currentAssignment
+      ? suggestionPreviews[currentAssignment]
+      : thumbnails[currentPath];
+    const fileName = currentPath.split(/[\\/]/).pop() ?? '';
+
+    return (
+      <div className="grid min-h-[62vh] grid-cols-1 gap-4 lg:grid-cols-[250px_minmax(0,1fr)]">
+        <aside className="max-h-[72vh] overflow-y-auto rounded-lg border border-border-color bg-bg-primary p-2">
+          <div className="mb-2 flex items-center justify-between gap-2 px-1">
+            <Text variant={TextVariants.label}>{t('modals.aiStyle.assignedStyles')}</Text>
+            <span className="text-[10px] text-text-secondary">{styleGroups.length}</span>
+          </div>
+          {styleGroups.length === 0 && (
+            <Text variant={TextVariants.small} className="px-1 text-text-secondary">
+              {t('modals.aiStyle.noAssignments')}
+            </Text>
+          )}
+          <div className="space-y-2">
+            {styleGroups.map((group) => (
+              <div key={group.profile.id} className="rounded-md border border-border-color/70 bg-surface/60 p-1.5">
+                <button
+                  type="button"
+                  className="mb-1 flex w-full items-center justify-between gap-2 rounded px-1 py-0.5 text-left transition-colors hover:bg-surface"
+                  onClick={() => {
+                    const index = suggestions.findIndex((suggestion) => suggestion.path === group.paths[0]);
+                    if (index >= 0) selectSuggestion(index);
+                  }}
+                >
+                  <span className="truncate text-[10px] font-medium text-text-primary">{group.profile.name}</span>
+                  <span className="shrink-0 rounded-full bg-bg-primary px-1.5 py-0.5 text-[9px] text-text-secondary">
+                    {group.paths.length}
+                  </span>
+                </button>
+                <div className="grid grid-cols-3 gap-1">
+                  {group.paths.map((path) => {
+                    const index = suggestions.findIndex((suggestion) => suggestion.path === path);
+                    return (
+                      <button
+                        key={path}
+                        type="button"
+                        title={path.split(/[\\/]/).pop()}
+                        onClick={() => {
+                          if (index >= 0) selectSuggestion(index);
+                        }}
+                        className={`aspect-square overflow-hidden rounded-sm border bg-black/30 ${
+                          path === currentPath ? 'border-accent ring-1 ring-accent' : 'border-border-color/60'
+                        }`}
+                      >
+                        {thumbnails[path] ? (
+                          <img src={thumbnails[path]} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="flex h-full w-full items-center justify-center">
+                            <ImageIcon size={12} />
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        <div className="min-w-0 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Text variant={TextVariants.label} className="truncate">
+              {fileName}
+            </Text>
+            <span className="rounded-full border border-border-color bg-bg-primary px-2 py-0.5 text-[10px] capitalize text-text-secondary">
+              {currentSuggestion.scene.scene}
+            </span>
+            <span className="text-[10px] text-text-secondary">
+              {t('modals.aiStyle.interactiveStep', {
+                current: suggestionIndex + 1,
+                total: suggestions.length,
+              })}
+            </span>
+            <div className="ml-auto w-52">
+              <Slider
+                label={t('modals.aiStyle.styleCount')}
+                min={1}
+                max={16}
+                step={1}
+                value={styleCount}
+                defaultValue={4}
+                onChange={(event) => setStyleCount(Number(event.target.value))}
+                onPointerUp={() => void loadSuggestions(targetPaths)}
+                fillOrigin="min"
+              />
+            </div>
+          </div>
+
+          <div className="relative flex min-h-[45vh] items-center justify-center overflow-hidden rounded-lg border border-border-color bg-black/45">
+            {largePreview ? (
+              <img
+                src={largePreview}
+                alt={currentStyle?.name ?? fileName}
+                className="max-h-[62vh] w-full cursor-zoom-in object-contain"
+                onClick={() => setPreviewLightbox({ src: largePreview, title: currentStyle?.name ?? fileName })}
+              />
+            ) : (
+              <div className="flex flex-col items-center gap-2 text-xs text-text-secondary">
+                {suggestionPreviewLoading || suggestionsLoading ? (
+                  <Loader2 size={24} className="animate-spin" />
+                ) : (
+                  <ImageIcon size={24} />
+                )}
+                {t('modals.aiStyle.promptPreviewPending')}
+              </div>
+            )}
+            <div className="absolute left-2 top-2 max-w-[70%] truncate rounded bg-black/70 px-2 py-1 text-[10px] text-white">
+              {currentStyle?.name ?? t('modals.aiStyle.noStyleAssigned')}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-4 xl:grid-cols-6 max-h-[34vh]">
+            {currentSuggestion.candidates.slice(0, styleCount).map((candidate) => {
+              const preview = suggestionPreviews[candidate.profile.id];
+              const assigned = currentAssignment === candidate.profile.id;
+              return (
+                <div
+                  key={candidate.profile.id}
+                  className={`overflow-hidden rounded-md border bg-bg-primary ${
+                    assigned ? 'border-accent ring-1 ring-accent/40' : 'border-border-color'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    className="relative block h-20 w-full bg-black/30"
+                    onClick={() =>
+                      preview && setPreviewLightbox({ src: preview, title: candidate.profile.name })
+                    }
+                  >
+                    {preview ? (
+                      <img src={preview} alt={candidate.profile.name} className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="flex h-full w-full items-center justify-center text-[10px] text-text-secondary">
+                        {suggestionPreviewLoading ? <Loader2 size={12} className="animate-spin" /> : t('modals.aiStyle.noPreview')}
+                      </span>
+                    )}
+                    {assigned && (
+                      <span className="absolute right-1 top-1 rounded-full bg-accent p-0.5 text-bg-primary">
+                        <Check size={9} />
+                      </span>
+                    )}
+                  </button>
+                  <div className="space-y-1 p-1.5">
+                    <div className="truncate text-[10px] font-medium text-text-primary">{candidate.profile.name}</div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        onClick={() => assignLook(candidate.profile.id)}
+                        disabled={!!busy}
+                        className="h-5 flex-1 px-1 text-[9px]"
+                      >
+                        {assigned ? t('modals.aiStyle.candidateAssigned') : t('modals.aiStyle.candidateAssign')}
+                      </Button>
+                      <button
+                        type="button"
+                        title={t('modals.aiStyle.saveProfile')}
+                        disabled={!!busy}
+                        onClick={() => void handleSaveSuggestedProfile(candidate.profile)}
+                        className="rounded p-1 text-text-secondary transition-colors hover:bg-surface hover:text-accent"
+                      >
+                        {busy === `save-suggestion:${candidate.profile.id}` ? (
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : (
+                          <Save size={11} />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-color/60 pt-2">
+            <Text variant={TextVariants.small} className="text-text-secondary">
+              {t('modals.aiStyle.assignedCount', { assigned: assignedCount, total: suggestions.length })}
+            </Text>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                onClick={toggleCurrentAssignment}
+                disabled={!!busy}
+                className="h-7 px-2 text-[10px]"
+              >
+                {currentAssignment ? t('modals.aiStyle.skipPhoto') : t('modals.aiStyle.includePhoto')}
+              </Button>
+              <Button
+                onClick={() => void applyCurrentSuggestion(true)}
+                disabled={!currentAssignment || !!busy || intensity <= 0}
+                className="flex h-7 items-center gap-1 px-2 text-[10px]"
+              >
+                {busy === `apply-current:${currentPath}` ? (
+                  <Loader2 size={11} className="animate-spin" />
+                ) : (
+                  <Play size={11} />
+                )}
+                {t('modals.aiStyle.applyAndNext')}
+              </Button>
+              <Button
+                onClick={() => void applyAssignments()}
+                disabled={assignedCount === 0 || !!busy || intensity <= 0}
+                className="flex h-7 items-center gap-1 px-2 text-[10px]"
+              >
+                {busy === 'apply-assigned' ? <Loader2 size={11} className="animate-spin" /> : <Wand2 size={11} />}
+                {t('modals.aiStyle.applyAssigned', { n: assignedCount })}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderSceneSuggestions = () => {
     if (!currentSuggestion) return null;
     const scene = currentSuggestion.scene;
@@ -1751,6 +2114,20 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
           </div>
         )}
 
+        <div className="rounded-md bg-bg-primary px-2 py-1.5">
+          <Slider
+            label={t('modals.aiStyle.styleCount')}
+            min={1}
+            max={16}
+            step={1}
+            value={styleCount}
+            defaultValue={4}
+            onChange={(event) => setStyleCount(Number(event.target.value))}
+            onPointerUp={() => void loadSuggestions(targetPaths)}
+            fillOrigin="min"
+          />
+        </div>
+
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
           <Text variant={TextVariants.small} className="text-text-secondary">
             {t('modals.aiStyle.suggestedLooks')}
@@ -1759,7 +2136,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
             {suggestions.length > 1 && (
               <select
                 value={suggestionIndex}
-                onChange={(event) => setSuggestionIndex(Number(event.target.value))}
+                onChange={(event) => selectSuggestion(Number(event.target.value))}
                 aria-label={t('modals.aiStyle.suggestionPhoto')}
                 className="h-6 max-w-[12rem] rounded border border-border-color bg-bg-primary px-1 text-[9px] text-text-secondary"
               >
@@ -1777,7 +2154,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
         </div>
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {currentSuggestion.candidates.slice(0, 4).map((candidate) => {
+          {currentSuggestion.candidates.slice(0, styleCount).map((candidate) => {
             const preview = suggestionPreviews[candidate.profile.id];
             const assigned = currentAssignment === candidate.profile.id;
             const kindLabel =
@@ -1797,10 +2174,19 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
               >
                 <div className="relative h-20 bg-black/30">
                   {preview ? (
-                    <img src={preview} alt={candidate.profile.name} className="h-full w-full object-cover" />
+                    <img
+                      src={preview}
+                      alt={candidate.profile.name}
+                      className="h-full w-full cursor-zoom-in object-cover"
+                      onClick={() => setPreviewLightbox({ src: preview, title: candidate.profile.name })}
+                    />
                   ) : (
                     <div className="flex h-full items-center justify-center text-[10px] text-text-secondary">
-                      {suggestionsLoading ? <Loader2 size={14} className="animate-spin" /> : t('modals.aiStyle.noPreview')}
+                      {suggestionPreviewLoading || suggestionsLoading ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        t('modals.aiStyle.noPreview')
+                      )}
                     </div>
                   )}
                   <span className="absolute left-1 top-1 rounded bg-black/70 px-1 py-0.5 text-[8px] uppercase tracking-wide text-white">
@@ -2071,6 +2457,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     { key: 'profiles' as Tab, label: t('modals.aiStyle.tabProfiles'), icon: <Palette size={15} /> },
     { key: 'prompt' as Tab, label: t('modals.aiStyle.tabPrompt'), icon: <Wand2 size={15} /> },
     { key: 'matches' as Tab, label: t('modals.aiStyle.tabMatches'), icon: <Sparkles size={15} /> },
+    { key: 'interactive' as Tab, label: t('modals.aiStyle.tabInteractive'), icon: <Play size={15} /> },
     { key: 'learn' as Tab, label: t('modals.aiStyle.tabLearn'), icon: <GraduationCap size={15} /> },
   ];
 
@@ -2084,7 +2471,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
       aria-modal="true"
     >
       <div
-        className={`bg-surface rounded-lg shadow-xl p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto transform transition-all duration-300 ease-out ${
+        className={`bg-surface rounded-lg shadow-xl p-5 w-[96vw] max-w-[1600px] h-[92vh] max-h-[92vh] overflow-y-auto transform transition-all duration-300 ease-out ${
           show ? 'scale-100 opacity-100 translate-y-0' : 'scale-95 opacity-0 -translate-y-4'
         }`}
         onClick={(e) => e.stopPropagation()}
@@ -2165,12 +2552,43 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
                 {tab === 'profiles' && renderProfiles()}
                 {tab === 'prompt' && renderPrompt()}
                 {tab === 'matches' && renderMatches()}
+                {tab === 'interactive' && renderInteractive()}
                 {tab === 'learn' && renderLearn()}
               </>
             )}
           </>
         )}
       </div>
+
+      {previewLightbox && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 p-6"
+          onClick={(event) => {
+            event.stopPropagation();
+            setPreviewLightbox(null);
+          }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <button
+            type="button"
+            className="absolute right-4 top-4 rounded-full bg-black/70 p-2 text-white transition-colors hover:bg-black"
+            onClick={() => setPreviewLightbox(null)}
+            aria-label={t('modals.aiStyle.close')}
+          >
+            <X size={20} />
+          </button>
+          <img
+            src={previewLightbox.src}
+            alt={previewLightbox.title}
+            className="max-h-[90vh] max-w-[95vw] object-contain"
+            onClick={(event) => event.stopPropagation()}
+          />
+          <div className="absolute bottom-4 left-1/2 max-w-[90vw] -translate-x-1/2 truncate rounded bg-black/70 px-3 py-1 text-xs text-white">
+            {previewLightbox.title}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
