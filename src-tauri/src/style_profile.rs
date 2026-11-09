@@ -13,7 +13,7 @@
 //! sidecar, so no extra inference is needed. Applying a profile reuses the
 //! existing `apply_adjustments_to_paths` pipeline (merge + thumbnail refresh).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -120,6 +120,39 @@ pub struct StyleMatch {
     pub profile_name: String,
     pub score: f64,
     pub matched_tags: Vec<String>,
+}
+
+/// What the automatic style picker thinks it is looking at. The scene name is
+/// a small, stable vocabulary (`concert`, `portrait`, `landscape`, ...), not a
+/// translated label; the UI translates it.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneAnalysis {
+    pub scene: String,
+    /// `person`, `group`, `performer`, `wildlife` or `scene`.
+    pub subject: String,
+    pub has_person: bool,
+    pub confidence: f64,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct StyleCandidate {
+    pub profile: StyleProfile,
+    pub score: f64,
+    pub matched_tags: Vec<String>,
+    pub reason: String,
+    /// `recommended`, `color`, `film` or `monochrome`.
+    pub kind: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct StyleSuggestion {
+    pub path: String,
+    pub scene: SceneAnalysis,
+    pub candidates: Vec<StyleCandidate>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -1174,6 +1207,284 @@ pub fn builtin_style_profiles() -> Vec<StyleProfile> {
                 "Warm, appetising Kodak Gold look with richer reds and oranges and a soft vignette.".to_string(),
             ),
         },
+        StyleProfile {
+            id: "builtin-concert-color".to_string(),
+            name: "Concert — Clean Color".to_string(),
+            detect_tags: tag_list(&[
+                "concert",
+                "live music",
+                "stage",
+                "stage lighting",
+                "stage lights",
+                "spotlight",
+                "musician",
+                "band",
+                "singer",
+                "vocalist",
+                "guitarist",
+                "drummer",
+                "performer",
+                "audience",
+                "club concert",
+                "arena concert",
+                "festival",
+            ]),
+            subject: None,
+            adjustments: json!({
+                "contrast": 7.0,
+                "highlights": -16.0,
+                "shadows": 12.0,
+                "whites": 4.0,
+                "blacks": -7.0,
+                "clarity": 5.0,
+                "structure": 3.0,
+                "dehaze": 3.0,
+                "vibrance": 12.0,
+                "temperature": 1.0,
+                "tint": 1.0,
+                "hsl": hsl_look([
+                    (2.0, 6.0, 2.0),
+                    (3.0, 8.0, 4.0),
+                    (0.0, -4.0, 2.0),
+                    (0.0, -10.0, -2.0),
+                    (0.0, -4.0, 0.0),
+                    (0.0, 2.0, -2.0),
+                    (0.0, 5.0, 0.0),
+                    (0.0, 7.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (205.0, 10.0, 0.0),
+                    (20.0, 3.0, 0.0),
+                    (40.0, 8.0, 0.0),
+                    -4.0,
+                    45.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 2.0), (48.0, 50.0), (128.0, 132.0), (208.0, 216.0), (255.0, 253.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
+                "glowAmount": 3.0,
+                "halationAmount": 3.0,
+                "vignetteAmount": -11.0,
+                "vignetteFeather": 55.0,
+                "grainAmount": 3.0,
+                "lumaNoiseReduction": 8.0,
+                "colorNoiseReduction": 14.0,
+            }),
+            lut: film_lut(LUT_VISION_250D, 28.0),
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "A clean colour treatment for concerts where the dark/punchy look would flatten faces or lose the stage palette. Keeps skin natural while taming high-ISO noise.".to_string(),
+            ),
+        },
+        StyleProfile {
+            id: "builtin-portrait-cinematic".to_string(),
+            name: "Portrait — Cinematic Color".to_string(),
+            detect_tags: tag_list(&[
+                "portrait",
+                "person",
+                "people",
+                "face",
+                "woman",
+                "man",
+                "couple",
+                "candid",
+                "cinematic",
+                "moody",
+                "low-key",
+                "natural light",
+                "soft light",
+                "backlighting",
+                "night",
+                "neon",
+            ]),
+            subject: None,
+            adjustments: json!({
+                "contrast": 8.0,
+                "highlights": -20.0,
+                "shadows": 12.0,
+                "whites": 2.0,
+                "blacks": -6.0,
+                "clarity": -2.0,
+                "structure": -2.0,
+                "vibrance": 8.0,
+                "saturation": -2.0,
+                "temperature": 3.0,
+                "tint": 1.0,
+                "hsl": hsl_look([
+                    (2.0, 4.0, 3.0),
+                    (4.0, 7.0, 7.0),
+                    (0.0, -5.0, 3.0),
+                    (0.0, -8.0, 0.0),
+                    (0.0, -4.0, 0.0),
+                    (0.0, 2.0, -2.0),
+                    (0.0, 2.0, 0.0),
+                    (0.0, 2.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (215.0, 10.0, 0.0),
+                    (25.0, 3.0, 0.0),
+                    (42.0, 8.0, 0.0),
+                    0.0,
+                    50.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 3.0), (52.0, 54.0), (132.0, 136.0), (210.0, 214.0), (255.0, 253.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
+                "glowAmount": 4.0,
+                "halationAmount": 2.0,
+                "vignetteAmount": -13.0,
+                "grainAmount": 3.0,
+                "lumaNoiseReduction": 10.0,
+                "colorNoiseReduction": 16.0,
+            }),
+            lut: film_lut(LUT_VISION_250D, 24.0),
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "Teal shadows, warm skin and a gentle film curve: a portrait look with colour and depth instead of a black-and-white treatment.".to_string(),
+            ),
+        },
+        StyleProfile {
+            id: "builtin-night-portrait".to_string(),
+            name: "Night — Neon Portrait".to_string(),
+            detect_tags: tag_list(&[
+                "night",
+                "neon",
+                "portrait",
+                "person",
+                "people",
+                "face",
+                "couple",
+                "candid",
+                "low-key",
+                "city",
+                "street",
+                "club concert",
+                "stage lighting",
+                "singer",
+                "musician",
+            ]),
+            subject: None,
+            adjustments: json!({
+                "contrast": 10.0,
+                "highlights": -22.0,
+                "shadows": 7.0,
+                "whites": 3.0,
+                "blacks": -9.0,
+                "clarity": 5.0,
+                "dehaze": 4.0,
+                "vibrance": 14.0,
+                "saturation": -2.0,
+                "temperature": -2.0,
+                "tint": 3.0,
+                "hsl": hsl_look([
+                    (2.0, 6.0, 2.0),
+                    (4.0, 6.0, 5.0),
+                    (0.0, -6.0, 0.0),
+                    (0.0, -10.0, -2.0),
+                    (-4.0, 8.0, 0.0),
+                    (-6.0, 12.0, -2.0),
+                    (0.0, 10.0, 0.0),
+                    (0.0, 12.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (225.0, 16.0, 0.0),
+                    (275.0, 4.0, 0.0),
+                    (315.0, 10.0, 0.0),
+                    0.0,
+                    50.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 1.0), (40.0, 40.0), (128.0, 132.0), (216.0, 224.0), (255.0, 255.0)],
+                    &[],
+                    &[],
+                    &[(0.0, 8.0), (128.0, 128.0), (255.0, 255.0)],
+                ),
+                "glowAmount": 6.0,
+                "halationAmount": 4.0,
+                "vignetteAmount": -17.0,
+                "grainAmount": 4.0,
+                "lumaNoiseReduction": 14.0,
+                "colorNoiseReduction": 22.0,
+            }),
+            lut: film_lut(LUT_VISION_500T, 30.0),
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "A colour night portrait: cool ambient shadows, warm neon accents and enough noise reduction to keep faces clean without turning the scene into black and white.".to_string(),
+            ),
+        },
+        StyleProfile {
+            id: "builtin-documentary-natural".to_string(),
+            name: "Documentary — Natural Color".to_string(),
+            detect_tags: tag_list(&[
+                "street",
+                "candid",
+                "event",
+                "people",
+                "person",
+                "crowd",
+                "city",
+                "urban",
+                "market",
+                "travel",
+                "reportage",
+                "documentary",
+                "celebration",
+                "natural light",
+                "daylight",
+            ]),
+            subject: None,
+            adjustments: json!({
+                "contrast": 4.0,
+                "highlights": -9.0,
+                "shadows": 9.0,
+                "whites": 2.0,
+                "blacks": -3.0,
+                "clarity": 3.0,
+                "structure": 2.0,
+                "vibrance": 8.0,
+                "temperature": 1.0,
+                "hsl": hsl_look([
+                    (1.0, 4.0, 2.0),
+                    (2.0, 4.0, 4.0),
+                    (0.0, -2.0, 2.0),
+                    (0.0, -4.0, 0.0),
+                    (0.0, 0.0, 0.0),
+                    (0.0, 2.0, 0.0),
+                    (0.0, 0.0, 0.0),
+                    (0.0, 0.0, 0.0),
+                ]),
+                "colorGrading": grading(
+                    (210.0, 4.0, 0.0),
+                    (30.0, 2.0, 0.0),
+                    (45.0, 4.0, 0.0),
+                    4.0,
+                    55.0,
+                ),
+                "curves": curves(
+                    &[(0.0, 2.0), (64.0, 68.0), (160.0, 166.0), (255.0, 252.0)],
+                    &[],
+                    &[],
+                    &[],
+                ),
+                "vignetteAmount": -6.0,
+                "grainAmount": 2.0,
+            }),
+            lut: None,
+            intensity: 100.0,
+            built_in: true,
+            description: Some(
+                "Natural colour with a gentle film curve for candid people, markets, travel and documentary work. Subtle enough to preserve what actually happened.".to_string(),
+            ),
+        },
     ]
 }
 
@@ -1742,6 +2053,565 @@ fn best_profile_for_tags<'a>(
 }
 
 // ---------------------------------------------------------------------------
+// Scene analysis and ranked suggestions
+// ---------------------------------------------------------------------------
+
+const PERSON_TAGS: &[&str] = &[
+    "person",
+    "people",
+    "man",
+    "woman",
+    "child",
+    "baby",
+    "boy",
+    "girl",
+    "teenager",
+    "adult",
+    "senior",
+    "family",
+    "couple",
+    "portrait",
+    "self-portrait",
+    "face",
+    "smile",
+    "candid",
+    "crowd",
+    "group",
+    "audience",
+];
+
+const PERFORMER_TAGS: &[&str] = &[
+    "musician",
+    "band",
+    "guitarist",
+    "bassist",
+    "singer",
+    "vocalist",
+    "drummer",
+    "performer",
+    "dj",
+];
+
+/// Which scene(s) a CLIP tag supports. A tag may support more than one (a
+/// festival is also a concert; a candid street photo is also people).
+fn tag_scenes(tag: &str) -> &'static [&'static str] {
+    match tag {
+        "concert" | "live music" | "live concert" | "stage" | "stage lighting" | "stage lights"
+        | "spotlight" | "gig" | "encore" | "mosh pit" | "headbanging" | "crowd surfing"
+        | "laser lights" | "smoke machine" | "pyrotechnics" | "light show" | "arena concert"
+        | "club concert" | "stadium concert" | "musician" | "band" | "rock band" | "guitarist"
+        | "bassist" | "singer" | "vocalist" | "drummer" | "performer" | "dj" | "turntable"
+        | "saxophone" | "trumpet" | "microphone stand" | "soundboard" | "mixing console"
+        | "backstage" | "rehearsal" => &["concert"],
+        "festival" | "festival crowd" | "open air concert" | "confetti" => &["festival", "concert"],
+        "wedding" | "bride" | "groom" | "bridesmaid" | "bouquet" | "ceremony" | "reception" => {
+            &["wedding", "portrait"]
+        }
+        "portrait" | "self-portrait" | "face" | "candid" | "smile" | "person" | "people"
+        | "man" | "woman" | "child" | "baby" | "boy" | "girl" | "family" | "couple" | "group"
+        | "model" => &["portrait"],
+        "landscape" | "nature" | "mountain" | "mountains" | "hill" | "valley" | "canyon"
+        | "desert" | "forest" | "woods" | "jungle" | "tree" | "trees" | "field" | "meadow"
+        | "beach" | "coast" | "shore" | "ocean" | "sea" | "river" | "lake" | "waterfall"
+        | "island" | "glacier" | "iceberg" | "snow" | "sky" | "clouds" | "sunset" | "sunrise"
+        | "dawn" | "dusk" | "twilight" | "golden hour" | "aerial view" | "drone shot" => {
+            &["landscape"]
+        }
+        "street" | "urban" | "city" | "cityscape" | "skyline" | "downtown" | "alley"
+        | "sidewalk" | "road" | "architecture" | "building" | "skyscraper" | "market"
+        | "street art" | "graffiti" | "train station" | "subway" => &["street"],
+        "night" | "night sky" | "neon" | "low-key" | "blue hour" => &["night", "concert"],
+        "food" | "meal" | "dish" | "plate" | "drink" | "coffee" | "restaurant" | "still life" => {
+            &["food"]
+        }
+        "sports" | "running" | "jogging" | "cycling" | "swimming" | "skiing" | "snowboarding"
+        | "skating" | "soccer" | "football" | "basketball" | "action" => &["sports"],
+        "wildlife" | "animal" | "bird" | "dog" | "cat" | "horse" | "deer" | "fox" | "lion"
+        | "tiger" | "bear" | "eagle" | "owl" => &["wildlife"],
+        "event" | "celebration" | "party" | "birthday" | "parade" | "protest" | "meeting"
+        | "conference" => &["event"],
+        _ => &[],
+    }
+}
+
+fn is_person_tag(tag: &str) -> bool {
+    PERSON_TAGS.contains(&tag)
+}
+
+fn is_performer_tag(tag: &str) -> bool {
+    PERFORMER_TAGS.contains(&tag)
+}
+
+/// Use the content tags first; only when they do not describe a scene, fall
+/// back to measurable light/ISO/colour hints. This keeps a tagged concert or
+/// portrait reliable while still giving an untagged folder a sensible start.
+pub(crate) fn analyze_scene(
+    tags: &[String],
+    stats: Option<&PhotoStats>,
+    exif: &Option<HashMap<String, String>>,
+) -> SceneAnalysis {
+    let normalized: HashSet<String> = tags.iter().map(|tag| normalize_tag(tag)).collect();
+    let has_performer = normalized.iter().any(|tag| is_performer_tag(tag));
+    let has_person = has_performer || normalized.iter().any(|tag| is_person_tag(tag));
+
+    let mut scores: HashMap<&'static str, f64> = HashMap::new();
+    for tag in &normalized {
+        for scene in tag_scenes(tag) {
+            *scores.entry(scene).or_insert(0.0) += tag_weight(tag);
+        }
+    }
+
+    let mut ranked: Vec<(&'static str, f64)> = scores.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let (mut scene, mut confidence) = ranked
+        .first()
+        .map(|(scene, score)| (*scene, (*score / 2.0).min(1.0)))
+        .unwrap_or(("general", 0.0));
+
+    let mut reasons = Vec::new();
+    if let Some(stats) = stats {
+        if let Some(iso) = stats.iso {
+            if iso >= 800 {
+                reasons.push(format!("ISO {iso}"));
+            }
+        }
+        if stats.luma_median < 0.22 {
+            reasons.push("low-key exposure".to_string());
+        } else if stats.luma_median > 0.62 {
+            reasons.push("bright exposure".to_string());
+        }
+        if stats.highlight_clip > 0.02 {
+            reasons.push("bright highlights".to_string());
+        }
+        if stats.colorfulness > 0.45 {
+            reasons.push("colourful scene".to_string());
+        }
+    }
+    if has_person {
+        reasons.push("person/people detected".to_string());
+    }
+    if has_performer {
+        reasons.push("performer detected".to_string());
+    }
+
+    if confidence < 0.3 {
+        let fallback = stats.and_then(|stats| {
+            let iso = stats.iso.unwrap_or(0);
+            if iso >= 1600 && stats.luma_median < 0.28 && stats.colorfulness > 0.28 {
+                Some("concert")
+            } else if iso >= 800 && stats.luma_median < 0.32 {
+                Some("night")
+            } else if stats.colorfulness > 0.55 && stats.luma_median > 0.40 {
+                Some("landscape")
+            } else if has_person {
+                Some("portrait")
+            } else {
+                None
+            }
+        });
+        if let Some(fallback) = fallback {
+            scene = fallback;
+            confidence = 0.35;
+            reasons.push("inferred from exposure, ISO and colour".to_string());
+        }
+    }
+
+    let scene_tags: Vec<String> = normalized
+        .iter()
+        .filter(|tag| tag_scenes(tag).contains(&scene))
+        .take(4)
+        .cloned()
+        .collect();
+    if !scene_tags.is_empty() {
+        reasons.insert(0, format!("tags: {}", scene_tags.join(", ")));
+    }
+    let focal = exif
+        .as_ref()
+        .and_then(|map| map.get("FocalLength"))
+        .and_then(|value| value.split_whitespace().next())
+        .and_then(|value| value.parse::<f64>().ok());
+    if has_person
+        && focal.is_some_and(|mm| (50.0..=135.0).contains(&mm))
+        && !reasons.iter().any(|reason| reason.starts_with("tags:"))
+    {
+        reasons.push(format!(
+            "portrait focal length {} mm",
+            focal.unwrap_or_default() as i32
+        ));
+    }
+
+    let subject = if has_performer {
+        "performer"
+    } else if normalized.iter().any(|tag| {
+        matches!(
+            tag.as_str(),
+            "crowd" | "group" | "audience" | "festival crowd"
+        )
+    }) {
+        "group"
+    } else if has_person {
+        "person"
+    } else if scene == "wildlife" {
+        "wildlife"
+    } else {
+        "scene"
+    };
+
+    SceneAnalysis {
+        scene: scene.to_string(),
+        subject: subject.to_string(),
+        has_person,
+        confidence: confidence.min(1.0),
+        reasons,
+    }
+}
+
+fn style_family(profile: &StyleProfile) -> &'static str {
+    let id = profile.id.as_str();
+    if id.contains("concert-color") {
+        "concert-color"
+    } else if id.contains("concert") {
+        "concert"
+    } else if id.contains("festival") {
+        "festival"
+    } else if id.contains("night-portrait") {
+        "night-portrait"
+    } else if id.contains("night") {
+        "night"
+    } else if id.contains("portrait-cinematic") {
+        "portrait-cinematic"
+    } else if id.contains("portrait") {
+        "portrait"
+    } else if id.contains("wedding") {
+        "wedding"
+    } else if id.contains("golden") {
+        "golden"
+    } else if id.contains("landscape") {
+        "landscape"
+    } else if id.contains("cinematic") {
+        "cinematic"
+    } else if id.contains("street") {
+        "street"
+    } else if id.contains("documentary") {
+        "documentary"
+    } else if id.contains("food") {
+        "food"
+    } else if id.contains("sports") {
+        "sports"
+    } else if id.contains("wildlife") {
+        "wildlife"
+    } else if profile.built_in {
+        "other"
+    } else {
+        "user"
+    }
+}
+
+fn profile_is_monochrome(profile: &StyleProfile) -> bool {
+    profile
+        .adjustments
+        .get("saturation")
+        .and_then(Value::as_f64)
+        .is_some_and(|value| value <= -80.0)
+        || profile.name.to_ascii_lowercase().contains("monochrome")
+        || profile.name.to_ascii_lowercase().contains("b&w")
+        || profile.name.to_ascii_lowercase().contains("black & white")
+}
+
+fn scene_affinity(scene: &str, family: &str, has_person: bool) -> f64 {
+    match scene {
+        "concert" => match family {
+            "concert-color" => 0.38,
+            "concert" => 0.34,
+            "festival" => 0.14,
+            "night-portrait" if has_person => 0.12,
+            "cinematic" => 0.08,
+            "portrait" if has_person => 0.06,
+            "portrait-cinematic" if has_person => 0.05,
+            _ => 0.0,
+        },
+        "festival" => match family {
+            "festival" => 0.40,
+            "concert-color" => 0.22,
+            "concert" => 0.16,
+            "documentary" => 0.08,
+            "cinematic" => 0.06,
+            _ => 0.0,
+        },
+        "portrait" => match family {
+            "portrait" => 0.36,
+            "portrait-cinematic" => 0.35,
+            "wedding" => 0.16,
+            "night-portrait" => 0.14,
+            "documentary" => 0.08,
+            "cinematic" => 0.08,
+            "concert-color" => 0.03,
+            _ => 0.0,
+        },
+        "wedding" => match family {
+            "wedding" => 0.40,
+            "portrait" => 0.22,
+            "portrait-cinematic" => 0.18,
+            "golden" => 0.12,
+            "cinematic" => 0.08,
+            _ => 0.0,
+        },
+        "landscape" => match family {
+            "landscape" => 0.40,
+            "golden" => 0.30,
+            "cinematic" => 0.10,
+            "documentary" => 0.04,
+            _ => 0.0,
+        },
+        "street" => match family {
+            "street" => 0.35,
+            "documentary" => 0.33,
+            "portrait" => 0.12,
+            "portrait-cinematic" => 0.10,
+            "cinematic" => 0.08,
+            "night" => 0.04,
+            _ => 0.0,
+        },
+        "night" => match family {
+            "night" => 0.40,
+            "night-portrait" => 0.38,
+            "concert" => 0.12,
+            "concert-color" => 0.10,
+            "cinematic" => 0.08,
+            "street" => 0.05,
+            _ => 0.0,
+        },
+        "food" => match family {
+            "food" => 0.50,
+            "documentary" => 0.06,
+            _ => 0.0,
+        },
+        "sports" => match family {
+            "sports" => 0.50,
+            "wildlife" => 0.02,
+            _ => 0.0,
+        },
+        "wildlife" => match family {
+            "wildlife" => 0.50,
+            _ => 0.0,
+        },
+        "event" => match family {
+            "documentary" => 0.30,
+            "festival" => 0.20,
+            "concert-color" => 0.15,
+            "portrait" => 0.08,
+            _ => 0.0,
+        },
+        _ => match family {
+            "documentary" => 0.06,
+            "portrait" => 0.05,
+            "cinematic" => 0.04,
+            "landscape" => 0.03,
+            "concert-color" => 0.02,
+            _ => 0.01,
+        },
+    }
+}
+
+/// Rank several looks for one photo. The first candidate is the recommended
+/// one; the rest are deliberately different (colour / film / one monochrome)
+/// instead of three near-identical concert variants.
+fn recommend_candidates<'a>(
+    image_tags: &[String],
+    scene: &SceneAnalysis,
+    profiles: &'a [StyleProfile],
+    limit: usize,
+) -> Vec<(f64, Vec<String>, &'a StyleProfile)> {
+    let normalized: HashSet<String> = image_tags.iter().map(|tag| normalize_tag(tag)).collect();
+    let mono_requested = normalized.iter().any(|tag| {
+        matches!(
+            tag.as_str(),
+            "monochrome" | "black and white" | "b&w" | "noir" | "silhouette"
+        )
+    });
+
+    let mut ranked: Vec<(f64, f64, Vec<String>, &StyleProfile)> = profiles
+        .iter()
+        .filter_map(|profile| {
+            let (base, matched) = match_score(image_tags, profile);
+            if base == 0.0 && profile.detect_tags.is_empty() {
+                return None;
+            }
+            if base == 0.0 && style_family(profile) == "user" {
+                return None;
+            }
+            let mut score =
+                base + scene_affinity(&scene.scene, style_family(profile), scene.has_person);
+            if profile_is_monochrome(profile) && !mono_requested {
+                // Monochrome is a deliberate choice, not the default for every
+                // low-key stage photo; keep it as an alternative, not first.
+                score -= 0.28;
+            }
+            (score > 0.01).then_some((score.min(1.0), base, matched, profile))
+        })
+        .collect();
+
+    ranked.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
+            .then(a.3.built_in.cmp(&b.3.built_in))
+    });
+
+    // If the ranking starts with a monochrome look but colour candidates
+    // exist, lead with colour. This is the "not just black and white" rule.
+    if !mono_requested
+        && ranked
+            .first()
+            .is_some_and(|candidate| profile_is_monochrome(candidate.3))
+        && let Some(index) = ranked
+            .iter()
+            .position(|candidate| !profile_is_monochrome(candidate.3))
+    {
+        ranked.swap(0, index);
+    }
+
+    let mono_is_reasonable = mono_requested
+        || normalized.iter().any(|tag| {
+            matches!(
+                tag.as_str(),
+                "low-key" | "dark" | "dramatic" | "silhouette" | "noir" | "moody"
+            )
+        });
+    let mono_candidate = ranked
+        .iter()
+        .find(|candidate| profile_is_monochrome(candidate.3))
+        .map(|(score, _, matched, profile)| (*score, matched.clone(), *profile));
+
+    let mut chosen: Vec<(f64, Vec<String>, &StyleProfile)> = Vec::new();
+    let mut families: HashMap<&'static str, usize> = HashMap::new();
+    let mut monochrome_count = 0usize;
+    for (score, _, matched, profile) in &ranked {
+        if chosen.len() >= limit {
+            break;
+        }
+        let family = style_family(profile);
+        if families.get(family).copied().unwrap_or(0) >= 2 {
+            continue;
+        }
+        if profile_is_monochrome(profile) {
+            if monochrome_count >= 1 {
+                continue;
+            }
+            // Keep at least two colour looks ahead of the monochrome option.
+            if chosen.len() < 2 {
+                continue;
+            }
+        }
+        *families.entry(family).or_insert(0) += 1;
+        if profile_is_monochrome(profile) {
+            monochrome_count += 1;
+        }
+        chosen.push((*score, matched.clone(), *profile));
+    }
+
+    // A very small folder library may not yield enough distinct families;
+    // fill with the remaining colour candidates before ever returning nothing.
+    if chosen.len() < limit {
+        for (score, _, matched, profile) in ranked {
+            if chosen.len() >= limit {
+                break;
+            }
+            if chosen
+                .iter()
+                .any(|(_, _, existing)| existing.id == profile.id)
+            {
+                continue;
+            }
+            chosen.push((score, matched, profile));
+        }
+    }
+
+    // Keep one monochrome direction as an alternative when the light/mood
+    // makes it credible, but never at the cost of the colour recommendations.
+    if mono_is_reasonable
+        && chosen.len() >= 3
+        && !chosen
+            .iter()
+            .any(|(_, _, profile)| profile_is_monochrome(profile))
+        && let Some(mono) = mono_candidate
+        && !chosen.iter().any(|(_, _, profile)| profile.id == mono.2.id)
+    {
+        chosen.pop();
+        chosen.push(mono);
+    }
+    chosen
+}
+
+fn candidate_reason(scene: &SceneAnalysis, matched: &[String], profile: &StyleProfile) -> String {
+    let mut detail = if matched.is_empty() {
+        format!("{} fit", scene.scene)
+    } else {
+        matched.join(", ")
+    };
+    if profile.lut.is_some() {
+        detail.push_str(" · film LUT");
+    }
+    if scene.has_person {
+        detail.push_str(" · person-aware");
+    }
+    detail
+}
+
+/// The automatic multi-look picker used by the AI Style modal. Unlike the
+/// single-match command, this returns several deliberately different looks per
+/// photo with the scene/subject reasoning the UI can show.
+#[tauri::command]
+pub async fn suggest_style_profiles_for_paths(
+    paths: Vec<String>,
+    limit: Option<usize>,
+    app_handle: AppHandle,
+) -> Result<Vec<StyleSuggestion>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let profiles = all_style_profiles(&app_handle);
+        let limit = limit.unwrap_or(4).clamp(2, 6);
+        let mut suggestions = Vec::with_capacity(paths.len());
+        for path in paths {
+            let (_, sidecar_path) = parse_virtual_path(&path);
+            let sidecar = crate::exif_processing::load_sidecar(&sidecar_path);
+            let tags = sidecar.tags.unwrap_or_default();
+            let stats = stats_for_path(&app_handle, &path);
+            let scene = analyze_scene(&tags, stats.as_deref(), &sidecar.exif);
+            let candidates = recommend_candidates(&tags, &scene, &profiles, limit)
+                .into_iter()
+                .enumerate()
+                .map(|(index, (score, matched, profile))| {
+                    let mono = profile_is_monochrome(profile);
+                    StyleCandidate {
+                        profile: profile.clone(),
+                        score,
+                        matched_tags: matched.clone(),
+                        reason: candidate_reason(&scene, &matched, profile),
+                        kind: if index == 0 {
+                            "recommended".to_string()
+                        } else if mono {
+                            "monochrome".to_string()
+                        } else if profile.lut.is_some() {
+                            "film".to_string()
+                        } else {
+                            "color".to_string()
+                        },
+                    }
+                })
+                .collect();
+            suggestions.push(StyleSuggestion {
+                path,
+                scene,
+                candidates,
+            });
+        }
+        Ok(suggestions)
+    })
+    .await
+    .map_err(|error| format!("Style suggestion task failed: {error}"))?
+}
+
+// ---------------------------------------------------------------------------
 // Learning a profile from edited images
 // ---------------------------------------------------------------------------
 
@@ -2195,9 +3065,22 @@ pub async fn match_style_profiles_for_paths(
         let mut matches = Vec::new();
         for path in &paths {
             let tags = tags_for_path(path);
-            if let Some((score, matched, profile)) =
-                best_profile_for_tags(&tags, &profiles, min_score)
-            {
+            let (_, sidecar_path) = parse_virtual_path(path);
+            let sidecar = crate::exif_processing::load_sidecar(&sidecar_path);
+            // The per-image grid only needs the tag scene; decoding 480 px
+            // previews for every file here would make a big folder slow.
+            let scene = analyze_scene(&tags, None, &sidecar.exif);
+            let fallback_match = best_profile_for_tags(&tags, &profiles, min_score);
+            let recommended = if fallback_match.is_some() || scene.confidence >= 0.30 {
+                recommend_candidates(&tags, &scene, &profiles, 1)
+                    .into_iter()
+                    .next()
+                    .map(|(score, matched, profile)| (score, matched, profile))
+            } else {
+                None
+            };
+            let matched = recommended.or(fallback_match);
+            if let Some((score, matched, profile)) = matched {
                 matches.push(StyleMatch {
                     path: path.clone(),
                     profile_id: profile.id.clone(),
@@ -2618,12 +3501,12 @@ fn profile_luma_range(profile: &StyleProfile) -> (f64, f64) {
     match profile.id.as_str() {
         "builtin-concert-dark" | "builtin-concert-mono" => (0.085, 0.55),
         "builtin-concert-neon" => (0.085, 0.55),
-        "builtin-concert-warm" => (0.095, 0.58),
-        "builtin-night-neon" => (0.080, 0.50),
+        "builtin-concert-warm" | "builtin-concert-color" => (0.095, 0.58),
+        "builtin-night-neon" | "builtin-night-portrait" => (0.080, 0.52),
         "builtin-cinematic" => (0.100, 0.60),
-        "builtin-street-mono" => (0.100, 0.65),
+        "builtin-street-mono" | "builtin-documentary-natural" => (0.100, 0.68),
         "builtin-golden-hour" => (0.120, 0.66),
-        "builtin-portrait-natural" => (0.150, 0.70),
+        "builtin-portrait-natural" | "builtin-portrait-cinematic" => (0.150, 0.70),
         "builtin-festival-pop" | "builtin-sports-crisp" => (0.140, 0.70),
         "builtin-wedding-airy" => (0.200, 0.75),
         "builtin-food-warm" => (0.180, 0.72),
@@ -3104,11 +3987,23 @@ pub async fn auto_style_paths_with_ai(
                 json!({ "stage": "analyzing", "current": index, "total": total }),
             );
             let tags = tags_for_path(&path);
-            let matched = best_profile_for_tags(&tags, &profiles_for_task, min_score);
-            let chosen = matched
-                .as_ref()
-                .map(|(_, _, profile)| *profile)
-                .or(fallback.as_ref());
+            let (_, sidecar_path) = crate::file_management::parse_virtual_path(&path);
+            let sidecar = crate::exif_processing::load_sidecar(&sidecar_path);
+            let stats = stats_for_path(&task_handle, &path);
+            let scene = analyze_scene(&tags, stats.as_deref(), &sidecar.exif);
+            // Untagged but measurable frames may still get a scene-based look
+            // (night, concert, landscape); a completely unknown frame waits for
+            // the user rather than receiving a random preset.
+            let has_match = best_profile_for_tags(&tags, &profiles_for_task, min_score).is_some();
+            let recommended = if has_match || scene.confidence >= 0.30 {
+                recommend_candidates(&tags, &scene, &profiles_for_task, 1)
+                    .into_iter()
+                    .next()
+                    .map(|(_, _, profile)| profile)
+            } else {
+                None
+            };
+            let chosen = recommended.or(fallback.as_ref());
 
             let Some(profile) = chosen else {
                 skipped.push(path);
@@ -3121,16 +4016,12 @@ pub async fn auto_style_paths_with_ai(
             *counts.entry(profile.id.clone()).or_insert(0) += 1;
 
             let look_intensity = intensity.unwrap_or(profile.intensity).clamp(0.0, 100.0);
-            let (_, sidecar_path) = crate::file_management::parse_virtual_path(&path);
-            let unedited = crate::exif_processing::load_sidecar(&sidecar_path)
-                .adjustments
-                .is_null();
+            let unedited = sidecar.adjustments.is_null();
             let auto_baseline = if unedited {
                 auto_baseline_for_path(&path, &task_handle)
             } else {
                 None
             };
-            let stats = stats_for_path(&task_handle, &path);
             let adjustments = build_look_overlay(
                 profile,
                 Some(look_intensity),
@@ -4786,5 +5677,99 @@ mod real_edit_targets {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scene_analysis_detects_concert_and_performer() {
+        let tags = vec![
+            "concert".to_string(),
+            "stage lighting".to_string(),
+            "guitarist".to_string(),
+            "person".to_string(),
+        ];
+        let exif: Option<HashMap<String, String>> = None;
+        let scene = super::analyze_scene(&tags, None, &exif);
+        assert_eq!(scene.scene, "concert");
+        assert!(scene.has_person);
+        assert_eq!(scene.subject, "performer");
+        assert!(scene.confidence > 0.3);
+        assert!(
+            scene
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("guitarist"))
+        );
+    }
+
+    #[test]
+    fn scene_analysis_detects_portrait_without_a_concert() {
+        let tags = vec![
+            "portrait".to_string(),
+            "woman".to_string(),
+            "soft light".to_string(),
+        ];
+        let exif: Option<HashMap<String, String>> = None;
+        let scene = super::analyze_scene(&tags, None, &exif);
+        assert_eq!(scene.scene, "portrait");
+        assert!(scene.has_person);
+        assert_eq!(scene.subject, "person");
+    }
+
+    #[test]
+    fn suggestions_lead_with_colour_and_offer_different_families() {
+        let profiles = super::builtin_style_profiles();
+        let tags = vec![
+            "concert".to_string(),
+            "stage".to_string(),
+            "low-key".to_string(),
+            "person".to_string(),
+        ];
+        let exif: Option<HashMap<String, String>> = None;
+        let scene = super::analyze_scene(&tags, None, &exif);
+        let candidates = super::recommend_candidates(&tags, &scene, &profiles, 4);
+        assert!(candidates.len() >= 3);
+        assert!(
+            !super::profile_is_monochrome(candidates[0].2),
+            "a concert suggestion must start with colour: {}",
+            candidates[0].2.name
+        );
+        let families: std::collections::HashSet<&str> = candidates
+            .iter()
+            .map(|(_, _, profile)| super::style_family(profile))
+            .collect();
+        assert!(
+            families.len() >= 2,
+            "suggestions must not all be the same family"
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|(_, _, profile)| super::profile_is_monochrome(profile)),
+            "monochrome should remain available as an alternative"
+        );
+    }
+
+    #[test]
+    fn portrait_suggestions_include_portrait_and_cinematic_colour() {
+        let profiles = super::builtin_style_profiles();
+        let tags = vec![
+            "portrait".to_string(),
+            "person".to_string(),
+            "night".to_string(),
+        ];
+        let exif: Option<HashMap<String, String>> = None;
+        let scene = super::analyze_scene(&tags, None, &exif);
+        let candidates = super::recommend_candidates(&tags, &scene, &profiles, 4);
+        let ids: Vec<&str> = candidates
+            .iter()
+            .map(|(_, _, profile)| profile.id.as_str())
+            .collect();
+        assert!(ids.iter().any(|id| id.contains("portrait")), "ids: {ids:?}");
+        assert!(
+            candidates
+                .iter()
+                .all(|(_, _, profile)| !super::profile_is_monochrome(profile)
+                    || candidates.len() > 2)
+        );
     }
 }

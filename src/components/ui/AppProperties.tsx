@@ -59,6 +59,7 @@ export enum Invokes {
   DeleteStyleProfile = 'delete_style_profile',
   DeriveStyleProfileFromPaths = 'derive_style_profile_from_paths',
   MatchStyleProfilesForPaths = 'match_style_profiles_for_paths',
+  SuggestStyleProfilesForPaths = 'suggest_style_profiles_for_paths',
   ApplyStyleProfileToPaths = 'apply_style_profile_to_paths',
   ApplyCustomStyleProfile = 'apply_custom_style_profile',
   SnapshotSidecars = 'snapshot_sidecars',
@@ -620,6 +621,28 @@ export interface StyleMatch {
   profileName: string;
   score: number;
   matchedTags: string[];
+}
+
+export interface SceneAnalysis {
+  scene: string;
+  subject: string;
+  hasPerson: boolean;
+  confidence: number;
+  reasons: string[];
+}
+
+export interface StyleCandidate {
+  profile: StyleProfile;
+  score: number;
+  matchedTags: string[];
+  reason: string;
+  kind: 'recommended' | 'color' | 'film' | 'monochrome' | string;
+}
+
+export interface StyleSuggestion {
+  path: string;
+  scene: SceneAnalysis;
+  candidates: StyleCandidate[];
 }
 
 export interface ProfileUsage {

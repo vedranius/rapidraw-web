@@ -2,6 +2,13 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.15.3
+
+- **AI Style now reads the scene and the people, then proposes several directions.** It recognises concert, festival, portrait, wedding, landscape, street, night, food, sports and wildlife from the content tags, and falls back to ISO, exposure and colourfulness when a folder has not been AI-tagged yet. Person and performer tags are surfaced as a separate subject signal.
+- **Four different looks instead of one, with colour first.** Each photo gets a recommended colour/film treatment plus alternatives; monochrome stays available when the light or the tags make it credible, but it can no longer become the automatic default for every low-key stage photo. The auto pass now uses the same colour-first ranking.
+- **New built-in looks that use the full editor:** *Concert — Clean Color* (skin-safe colour for high-ISO shows), *Portrait — Cinematic Color*, *Night — Neon Portrait* and *Documentary — Natural Color*. They combine HSL, three-way colour grading, curves, film LUTs, halation and RGB/luma noise reduction rather than a single preset slider.
+- The Matches tab shows the scene, subject, confidence and the reasoning tags, then renders previews for the suggested looks so the choice can be made before applying.
+
 ## 1.15.2
 
 - **Fixed AI Editor denoise failing with `Command batch_denoise_images not found`.** RapidRAW 1.6.9 removed the command that wrote denoised TIFF/PNG copies. The `photo.denoise` step now enables RapidRAW's non-destructive AI/BM3D denoise on the same photo and sets its amount, so it works with the new render pipeline and `Undo plan` restores the sidecar.

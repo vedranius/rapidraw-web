@@ -3120,6 +3120,7 @@ pub fn run() {
             style_profile::derive_style_profile_from_paths,
             style_profile::assign_artist_to_paths,
             style_profile::match_style_profiles_for_paths,
+            style_profile::suggest_style_profiles_for_paths,
             style_profile::apply_style_profile_to_paths,
             style_profile::apply_custom_style_profile,
             style_profile::snapshot_sidecars,

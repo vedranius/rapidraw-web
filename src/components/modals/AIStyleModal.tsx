@@ -30,6 +30,7 @@ import {
   SidecarSnapshot,
   StyleMatch,
   StyleProfile,
+  StyleSuggestion,
 } from '../ui/AppProperties';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
@@ -258,6 +259,9 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   const [matches, setMatches] = useState<StyleMatch[]>([]);
   const [minScore, setMinScore] = useState(0.12);
   const [useFallback, setUseFallback] = useState(false);
+  const [suggestions, setSuggestions] = useState<StyleSuggestion[]>([]);
+  const [suggestionPreviews, setSuggestionPreviews] = useState<Record<string, string>>({});
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
 
   const [learnName, setLearnName] = useState('');
   const [learnSubject, setLearnSubject] = useState('');
@@ -309,6 +313,7 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     }
   });
   const previewRequest = useRef(0);
+  const suggestionPreviewRequest = useRef(0);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const candidatesRef = useRef<HTMLDivElement>(null);
 
@@ -334,6 +339,12 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     };
   }, [profilePreview]);
 
+  useEffect(() => {
+    return () => {
+      Object.values(suggestionPreviews).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [suggestionPreviews]);
+
   // Bring the freshly generated looks into view instead of leaving the user
   // at the prompt box with the cards hidden below the fold.
   useEffect(() => {
@@ -344,6 +355,15 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
 
   const pathCount = targetPaths.length;
   const targetKey = useMemo(() => targetPaths.join('\n'), [targetPaths]);
+  const firstSuggestion = suggestions[0] ?? null;
+  const suggestionProfiles = useMemo(
+    () => firstSuggestion?.candidates.slice(0, 4).map((candidate) => candidate.profile) ?? [],
+    [firstSuggestion],
+  );
+  const suggestionKey = useMemo(
+    () => suggestionProfiles.map((profile) => profile.id).join('|'),
+    [suggestionProfiles],
+  );
 
   useEffect(() => {
     if (isOpen) {
@@ -435,6 +455,27 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     setMatches(result);
   }, [pathCount, targetPaths, minScore]);
 
+  const loadSuggestions = useCallback(async (paths: string[]) => {
+    if (paths.length === 0) {
+      setSuggestions([]);
+      return;
+    }
+    setSuggestionsLoading(true);
+    setSuggestions([]);
+    try {
+      const result = await invoke<StyleSuggestion[]>(Invokes.SuggestStyleProfilesForPaths, {
+        paths,
+        limit: 4,
+      });
+      setSuggestions(result);
+    } catch (err) {
+      console.error('Could not suggest style profiles:', err);
+      setSuggestions([]);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }, []);
+
   // Full reload: only when the modal opens or the selection changes. Deliberately
   // not tied to minScore/loadMatches so dragging the threshold slider does not
   // re-scan thousands of sidecars on every tick.
@@ -455,8 +496,10 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
             minScore,
           });
           if (!cancelled) setMatches(result);
+          await loadSuggestions(targetPaths);
         } else {
           setMatches([]);
+          setSuggestions([]);
         }
       } catch (err) {
         if (!cancelled) setError(String(err));
@@ -515,6 +558,39 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     }, 350);
     return () => clearTimeout(timer);
   }, [isOpen, tab, selectedProfile, intensity, targetKey]);
+
+  useEffect(() => {
+    if (!isOpen || tab !== 'matches' || !targetPaths[0] || suggestionProfiles.length === 0) {
+      setSuggestionPreviews({});
+      return;
+    }
+    const request = ++suggestionPreviewRequest.current;
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const batch = await invoke<{ base: number[]; looks: number[][] }>(Invokes.PreviewStyleProfiles, {
+            path: targetPaths[0],
+            profiles: suggestionProfiles,
+            intensity,
+          });
+          if (request !== suggestionPreviewRequest.current) return;
+          const next: Record<string, string> = {};
+          suggestionProfiles.forEach((profile, index) => {
+            const data = batch.looks[index];
+            if (data && data.length > 0) {
+              next[profile.id] = URL.createObjectURL(new Blob([new Uint8Array(data)], { type: 'image/jpeg' }));
+            }
+          });
+          setSuggestionPreviews(next);
+        } catch (err) {
+          if (request !== suggestionPreviewRequest.current) return;
+          console.error('Could not render the suggested style previews:', err);
+          setSuggestionPreviews({});
+        }
+      })();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [isOpen, tab, targetKey, suggestionKey, intensity, suggestionProfiles]);
 
   const takeSidecarSnapshot = useCallback(async (): Promise<SidecarSnapshot[]> => {
     try {
@@ -1530,11 +1606,130 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     </div>
   );
 
+  const renderSceneSuggestions = () => {
+    if (!firstSuggestion) return null;
+    const scene = firstSuggestion.scene;
+    const sceneSubject = scene.hasPerson
+      ? scene.subject === 'performer'
+        ? t('modals.aiStyle.subjectPerformer')
+        : scene.subject === 'group'
+          ? t('modals.aiStyle.subjectGroup')
+          : t('modals.aiStyle.subjectPerson')
+      : scene.subject === 'wildlife'
+        ? t('modals.aiStyle.subjectWildlife')
+        : t('modals.aiStyle.subjectScene');
+    return (
+      <div className="rounded-lg border border-accent/30 bg-accent/5 p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <Sparkles size={14} className="text-accent" />
+          <Text variant={TextVariants.label}>{t('modals.aiStyle.sceneAnalysis')}</Text>
+          <span className="ml-auto text-[10px] text-text-secondary">
+            {t('modals.aiStyle.sceneConfidence', { value: Math.round(scene.confidence * 100) })}
+          </span>
+          {suggestionsLoading && <Loader2 size={12} className="animate-spin text-text-secondary" />}
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          <span className="rounded-full border border-border-color bg-bg-primary px-2 py-0.5 text-[10px] font-medium capitalize text-text-primary">
+            {scene.scene}
+          </span>
+          <span className="rounded-full border border-border-color bg-bg-primary px-2 py-0.5 text-[10px] text-text-secondary">
+            {sceneSubject}
+          </span>
+          {scene.hasPerson && (
+            <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300">
+              {t('modals.aiStyle.personDetected')}
+            </span>
+          )}
+        </div>
+
+        {scene.reasons.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {scene.reasons.slice(0, 4).map((reason) => (
+              <span
+                key={reason}
+                className="rounded bg-bg-primary px-1.5 py-0.5 text-[9px] text-text-secondary"
+              >
+                {reason}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <Text variant={TextVariants.small} className="text-text-secondary">
+            {t('modals.aiStyle.suggestedLooks')}
+          </Text>
+          <Text variant={TextVariants.small} className="text-text-secondary/70">
+            {suggestions.length > 1
+              ? t('modals.aiStyle.suggestionFirstOnly', { n: suggestions.length })
+              : t('modals.aiStyle.suggestionHint')}
+          </Text>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {firstSuggestion.candidates.slice(0, 4).map((candidate) => {
+            const preview = suggestionPreviews[candidate.profile.id];
+            const kindLabel =
+              candidate.kind === 'recommended'
+                ? t('modals.aiStyle.recommended')
+                : candidate.kind === 'monochrome'
+                  ? t('modals.aiStyle.candidateMonochrome')
+                  : candidate.kind === 'film'
+                    ? t('modals.aiStyle.candidateFilm')
+                    : t('modals.aiStyle.candidateColor');
+            return (
+              <div
+                key={candidate.profile.id}
+                className="overflow-hidden rounded-md border border-border-color bg-bg-primary"
+              >
+                <div className="relative h-20 bg-black/30">
+                  {preview ? (
+                    <img src={preview} alt={candidate.profile.name} className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-[10px] text-text-secondary">
+                      {suggestionsLoading ? <Loader2 size={14} className="animate-spin" /> : t('modals.aiStyle.noPreview')}
+                    </div>
+                  )}
+                  <span className="absolute left-1 top-1 rounded bg-black/70 px-1 py-0.5 text-[8px] uppercase tracking-wide text-white">
+                    {kindLabel}
+                  </span>
+                </div>
+                <div className="space-y-1 p-1.5">
+                  <div className="truncate text-[10px] font-medium text-text-primary">{candidate.profile.name}</div>
+                  <div className="line-clamp-2 min-h-[22px] text-[9px] leading-tight text-text-secondary">
+                    {candidate.reason}
+                  </div>
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[9px] text-text-secondary">{Math.round(candidate.score * 100)}%</span>
+                    <Button
+                      onClick={() => void handleApplyCandidate(candidate.profile)}
+                      disabled={!!busy || intensity <= 0}
+                      className="h-5 px-1.5 text-[9px]"
+                    >
+                      {busy === `apply-candidate:${candidate.profile.id}` ? (
+                        <Loader2 size={10} className="animate-spin" />
+                      ) : (
+                        t('modals.aiStyle.candidateApply')
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   const renderMatches = () => (
     <div className="space-y-4">
       <Text variant={TextVariants.small} className="text-text-secondary">
         {t('modals.aiStyle.matchesHint')}
       </Text>
+
+      {renderSceneSuggestions()}
 
       <div className="rounded-lg bg-bg-primary p-3">
         <Slider
