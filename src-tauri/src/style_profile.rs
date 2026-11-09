@@ -2374,7 +2374,8 @@ fn scene_affinity(scene: &str, family: &str, has_person: bool) -> f64 {
         },
         "night" => match family {
             "night" => 0.40,
-            "night-portrait" => 0.38,
+            "night-portrait" if has_person => 0.38,
+            "night-portrait" => 0.04,
             "concert" => 0.12,
             "concert-color" => 0.10,
             "cinematic" => 0.08,
