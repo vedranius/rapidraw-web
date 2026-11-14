@@ -4,6 +4,8 @@ use crate::metadata::sidecar::load_sidecar;
 use image::{GenericImageView, GrayImage, imageops};
 use image_hasher::{HashAlg, HasherConfig};
 use rayon::prelude::*;
+
+const MAX_CULLING_THREADS: usize = 4;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -390,23 +392,31 @@ pub async fn cull_images(
         .hash_size(16, 16)
         .to_hasher();
 
-    let analysis_results: Vec<Result<ImageAnalysisData, (String, String)>> = paths
-        .par_iter()
-        .map(|path| {
-            let completed = completed_count.fetch_add(1, Ordering::Relaxed) + 1;
-            let _ = app_handle.emit(
-                "culling-progress",
-                CullingProgress {
-                    current: completed,
-                    total: total_count,
-                    stage: "Analyzing images...".to_string(),
-                },
-            );
+    // A full RAW decode per worker adds up fast on a 12+ core machine, so the
+    // analysis runs on a small pool of its own instead of every core.
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(MAX_CULLING_THREADS.min(rayon::current_num_threads()).max(1))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let analysis_results: Vec<Result<ImageAnalysisData, (String, String)>> = pool.install(|| {
+        paths
+            .par_iter()
+            .map(|path| {
+                let completed = completed_count.fetch_add(1, Ordering::Relaxed) + 1;
+                let _ = app_handle.emit(
+                    "culling-progress",
+                    CullingProgress {
+                        current: completed,
+                        total: total_count,
+                        stage: "Analyzing images...".to_string(),
+                    },
+                );
 
-            analyze_image(path, &hasher, &app_settings, settings.full_decode)
-                .map_err(|e| (path.to_string(), e))
-        })
-        .collect();
+                analyze_image(path, &hasher, &app_settings, settings.full_decode)
+                    .map_err(|e| (path.to_string(), e))
+            })
+            .collect()
+    });
 
     let mut successful_analyses = Vec::new();
     let mut failed_paths = Vec::new();
