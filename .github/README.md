@@ -91,6 +91,16 @@ To use folders from other computers **on demand** (see [below](#use-a-folder-fro
 2. The app is not notarized by Apple: the first time, right-click it → *Open*, or allow it under *System Settings → Privacy & Security → Open Anyway*.
 3. Same as on Windows from here: it opens RapidRAW in your browser and asks for your photo library. Allow *rrweb-node* to accept incoming network connections to use it from other devices.
 
+### Docker (NAS, home server)
+
+```bash
+docker run -d --name rapidraw-web --restart unless-stopped -p 8780:8780 \
+  -v /path/to/photos:/photos -v rapidraw-data:/data \
+  --device /dev/dri ghcr.io/vedranius/rapidraw-web:latest     # Intel/AMD GPU; NVIDIA: --gpus all instead
+```
+
+Then open `http://<server>:8780`. Without a GPU it renders with Mesa's software Vulkan (slow, but it works). A ready [`compose.yml`](../rrweb/docker/compose.yml) is in `rrweb/docker/`. To update, pull the new image (`docker compose pull && docker compose up -d`); a new image is published with every release (amd64 and arm64).
+
 ### Linux: one package
 
 **Quickest:** one command picks the right package for your distribution and CPU, checks it and installs it (add `-s -- --server` at the end to also start it as a service on a machine without a screen, or `-s -- --appimage` to install without sudo):
