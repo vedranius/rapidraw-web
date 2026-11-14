@@ -1781,6 +1781,8 @@
       "bestImage": "Nejlepší snímek",
       "blurThreshold": "Práh rozmazání",
       "blurThresholdDesc": "Snímky se skóre ostrosti pod touto hodnotou jsou označeny. Vyšší hodnota je přísnější.",
+      "fullDecode": "Full RAW decode (slower)",
+      "fullDecodeDesc": "Measure sharpness on the full RAW instead of the camera's embedded preview. Same ranking in tests, about 3–4× slower.",
       "blurryImagesTab": "Rozmazané snímky",
       "cancel": "Zrušit",
       "close": "Zavřít",

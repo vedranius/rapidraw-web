@@ -1779,6 +1779,8 @@
       "bestImage": "Best Image",
       "blurThreshold": "Blur Threshold",
       "blurThresholdDesc": "Images with a sharpness score below this value are flagged. Higher is stricter.",
+      "fullDecode": "Full RAW decode (slower)",
+      "fullDecodeDesc": "Measure sharpness on the full RAW instead of the camera's embedded preview. Same ranking in tests, about 3–4× slower.",
       "blurryImagesTab": "Blurry Images",
       "cancel": "Cancel",
       "close": "Close",

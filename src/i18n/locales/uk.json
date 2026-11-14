@@ -1698,6 +1698,8 @@
       "bestImage": "Найкращий кадр",
       "blurThreshold": "Поріг розмиття",
       "blurThresholdDesc": "Зображення з оцінкою різкості нижче цього значення буде позначено. Що вище значення, то суворіший відбір.",
+      "fullDecode": "Full RAW decode (slower)",
+      "fullDecodeDesc": "Measure sharpness on the full RAW instead of the camera's embedded preview. Same ranking in tests, about 3–4× slower.",
       "blurryImagesTab": "Розмиті зображення",
       "cancel": "Скасувати",
       "close": "Закрити",

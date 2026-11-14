@@ -385,7 +385,7 @@ pub fn safe_embedded_preview_fallback(bytes: &[u8], path: &str) -> Option<Dynami
     }
 }
 
-fn linearize_embedded_preview(preview: DynamicImage) -> DynamicImage {
+pub(crate) fn linearize_embedded_preview(preview: DynamicImage) -> DynamicImage {
     let preview = DynamicImage::ImageRgb32F(preview.to_rgb32f());
     let mut linear_preview = apply_srgb_to_linear(preview).into_rgb32f();
     for pixel in linear_preview.pixels_mut() {

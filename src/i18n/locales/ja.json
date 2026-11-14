@@ -1707,6 +1707,8 @@
       "bestImage": "ベスト画像",
       "blurThreshold": "ブレのしきい値",
       "blurThresholdDesc": "この値以下のシャープネススコアを持つ画像にフラグを立てます。高いほど厳密になります。",
+      "fullDecode": "Full RAW decode (slower)",
+      "fullDecodeDesc": "Measure sharpness on the full RAW instead of the camera's embedded preview. Same ranking in tests, about 3–4× slower.",
       "blurryImagesTab": "ぼやけた画像",
       "cancel": "キャンセル",
       "close": "閉じる",

@@ -21,6 +21,9 @@ pub struct CullingSettings {
     /// Also return the scores of every analysed photo (MCP ranking), not only the suggestions
     #[serde(default)]
     pub include_scores: bool,
+    /// Measure sharpness on the full RAW decode instead of the camera's embedded preview (slower)
+    #[serde(default)]
+    pub full_decode: bool,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -75,6 +78,16 @@ struct ImageAnalysisData {
     hash: image_hasher::ImageHash,
     result: ImageAnalysisResult,
 }
+
+const ANALYSIS_DIM: u32 = 720; // FIXME: How should we calculate good focus if it's downscaled?!?
+/// Smallest embedded preview (long edge) that sharpness is measured on instead of the RAW
+const MIN_PREVIEW_EDGE: u32 = 1280;
+/// Size the camera preview is reduced to for exposure/colour statistics and the duplicate hash
+const STATS_DIM: u32 = 1024;
+/// Laplacian variance of the linearised embedded preview is ~1.2–1.7× that of the
+/// fast RAW decode at the same 720 px size (Canon 5D II / 40D sRAW / M-series,
+/// Nikon D3S/D4; median 1.46); scaled back so `blur_threshold` keeps its meaning.
+const PREVIEW_SHARPNESS_SCALE: f64 = 0.68;
 
 const WEIGHT_SHARPNESS: f64 = 0.35;
 const WEIGHT_CENTER_FOCUS: f64 = 0.30;
@@ -214,28 +227,15 @@ fn analyze_image(
     path: &str,
     hasher: &image_hasher::Hasher,
     settings: &crate::app::settings::AppSettings,
+    full_decode: bool,
 ) -> Result<ImageAnalysisData, String> {
-    const ANALYSIS_DIM: u32 = 720; // FIXME: How should we calculate good focus if it's downscaled?!?
-
     let (source_path, _) = crate::library::sidecars::parse_virtual_path(path);
     if crate::library::file_ops::is_cloud_placeholder(&source_path) {
         return Err(format!("'{}' is stored in iCloud and not downloaded", path));
     }
 
     let file_bytes = std::fs::read(&source_path).map_err(|e| e.to_string())?;
-
-    let img = image_loader::load_base_image_from_bytes(
-        &file_bytes,
-        &source_path.to_string_lossy(),
-        true,
-        settings,
-        None,
-    )
-    .map_err(|e| e.to_string())?;
-
-    let (width, height) = img.dimensions();
-    let thumbnail = crate::decode::image_loader::downscale_for_analysis(&img, ANALYSIS_DIM);
-    let gray_thumbnail = thumbnail.to_luma8();
+    let source_name = source_path.to_string_lossy();
 
     // Brightness, clipping, saturation, colourfulness and cast are measured on
     // the *display-referred* image, not the linear RAW base: the base is flat
@@ -243,15 +243,60 @@ fn analyze_image(
     // The camera's embedded preview is already tone-mapped and, for non-RAW
     // files, the decoded image is. This also keeps the numbers consistent with
     // the 480 px thumbnails AI Style analyses.
+    let preview = crate::decode::image_loader::safe_embedded_preview_fallback(&file_bytes, path);
+
+    // Sharpness: a RAW with a large enough embedded preview is measured on that
+    // preview (linearised like the RAW base), which skips the full RAW decode
+    // and makes culling several times faster. The scale keeps the numbers on the
+    // full-decode scale, so the blur threshold means the same in both modes.
+    let fast = !full_decode
+        && crate::decode::formats::is_raw_file(&*source_name)
+        && preview
+            .as_ref()
+            .is_some_and(|p| p.width().max(p.height()) >= MIN_PREVIEW_EDGE);
+    let (thumbnail, width, height, sharpness_scale) = match (&preview, fast) {
+        (Some(p), true) => {
+            let small = crate::decode::image_loader::downscale_for_analysis(p, ANALYSIS_DIM);
+            let (w, h) = p.dimensions();
+            (
+                crate::decode::image_loader::linearize_embedded_preview(small),
+                w,
+                h,
+                PREVIEW_SHARPNESS_SCALE,
+            )
+        }
+        _ => {
+            let img = image_loader::load_base_image_from_bytes(
+                &file_bytes,
+                &source_name,
+                true,
+                settings,
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+            let (w, h) = img.dimensions();
+            (
+                crate::decode::image_loader::downscale_for_analysis(&img, ANALYSIS_DIM),
+                w,
+                h,
+                1.0,
+            )
+        }
+    };
+    let gray_thumbnail = thumbnail.to_luma8();
+
     let iso = crate::metadata::exif_processing::read_iso(path, &file_bytes);
-    let stats_image =
-        crate::decode::image_loader::safe_embedded_preview_fallback(&file_bytes, path)
-            .unwrap_or_else(|| thumbnail.clone());
+    // A 1024 px copy of the preview gives the same statistics and hash as the
+    // full-size one (AI Style measures 480 px thumbnails) at a fraction of the cost
+    let stats_image = match preview {
+        Some(p) => crate::decode::image_loader::downscale_for_analysis(&p, STATS_DIM),
+        None => thumbnail.clone(),
+    };
     let stats = crate::photo_analysis::analyze_image(&stats_image, iso);
     let exposure_metric = crate::photo_analysis::exposure_quality(&stats);
     let color_metric = crate::photo_analysis::color_quality(&stats);
 
-    let sharpness_metric = calculate_laplacian_variance(&gray_thumbnail);
+    let sharpness_metric = calculate_laplacian_variance(&gray_thumbnail) * sharpness_scale;
 
     let (thumb_w, thumb_h) = gray_thumbnail.dimensions();
     let center_crop = imageops::crop_imm(
@@ -262,7 +307,7 @@ fn analyze_image(
         thumb_h / 2,
     )
     .to_image();
-    let center_focus_metric = calculate_laplacian_variance(&center_crop);
+    let center_focus_metric = calculate_laplacian_variance(&center_crop) * sharpness_scale;
 
     let normalized_sharpness = ((sharpness_metric + 1.0).log10() / 3.5).min(1.0);
     let normalized_center_focus = ((center_focus_metric + 1.0).log10() / 3.5).min(1.0);
@@ -358,7 +403,8 @@ pub async fn cull_images(
                 },
             );
 
-            analyze_image(path, &hasher, &app_settings).map_err(|e| (path.to_string(), e))
+            analyze_image(path, &hasher, &app_settings, settings.full_decode)
+                .map_err(|e| (path.to_string(), e))
         })
         .collect();
 
@@ -643,7 +689,7 @@ mod real_photos {
 
         for path in &sample {
             let path_str = path.to_string_lossy();
-            match analyze_image(&path_str, &hasher, &settings) {
+            match analyze_image(&path_str, &hasher, &settings, false) {
                 Ok(analysis) => {
                     let result = &analysis.result;
                     let is_pick = picks.iter().any(|pick| pick == path);
@@ -732,5 +778,60 @@ mod real_photos {
             "AI scores are suspiciously flat (std {:.4}) — the ranking would be useless",
             variance.sqrt()
         );
+    }
+}
+
+#[cfg(test)]
+mod preview_calibration {
+    use super::*;
+
+    // Compares culling on the embedded preview with the full RAW decode on a folder of RAWs:
+    //   RR_CULL_SAMPLES=/dir cargo test --release --lib preview_calibration -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn preview_and_full_decode_rank_alike() {
+        let dir = std::env::var("RR_CULL_SAMPLES").expect("RR_CULL_SAMPLES");
+        let settings = crate::app::settings::AppSettings::default();
+        let hasher = HasherConfig::new()
+            .hash_alg(HashAlg::DoubleGradient)
+            .hash_size(16, 16)
+            .to_hasher();
+        let mut paths: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path().to_string_lossy().to_string())
+            .collect();
+        paths.sort();
+        let run = |full: bool| {
+            let t = std::time::Instant::now();
+            let r: Vec<ImageAnalysisResult> = paths
+                .iter()
+                .map(|p| analyze_image(p, &hasher, &settings, full).unwrap().result)
+                .collect();
+            (r, t.elapsed().as_secs_f64())
+        };
+        let (full, tf) = run(true);
+        let (fast, tp) = run(false);
+        let order = |r: &[ImageAnalysisResult]| {
+            let mut i: Vec<usize> = (0..r.len()).collect();
+            i.sort_by(|&a, &b| r[b].quality_score.partial_cmp(&r[a].quality_score).unwrap());
+            i
+        };
+        for (a, b) in full.iter().zip(&fast) {
+            println!(
+                "{}\tsharp {:.1} / {:.1}\tquality {:.3} / {:.3}",
+                a.path.rsplit('/').next().unwrap(),
+                a.sharpness_metric,
+                b.sharpness_metric,
+                a.quality_score,
+                b.quality_score
+            );
+        }
+        println!(
+            "full decode {:.2}s, preview {:.2}s ({:.1}x)",
+            tf,
+            tp,
+            tf / tp
+        );
+        assert_eq!(order(&full), order(&fast), "ranking by quality differs");
     }
 }

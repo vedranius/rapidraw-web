@@ -1747,6 +1747,8 @@
       "bestImage": "Millor imatge",
       "blurThreshold": "Llindar de desenfocament",
       "blurThresholdDesc": "Les imatges amb una puntuació de nitidesa per sota d'aquest valor es marcaran. Un valor més alt és més estricte.",
+      "fullDecode": "Full RAW decode (slower)",
+      "fullDecodeDesc": "Measure sharpness on the full RAW instead of the camera's embedded preview. Same ranking in tests, about 3–4× slower.",
       "blurryImagesTab": "Imatges borroses",
       "cancel": "Cancel·lar",
       "close": "Tancar",

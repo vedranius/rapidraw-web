@@ -1713,6 +1713,8 @@
       "bestImage": "Beste afbeelding",
       "blurThreshold": "Onscherptedrempel",
       "blurThresholdDesc": "Afbeeldingen met een scherptewaarde onder deze waarde worden gemarkeerd. Hoger is strenger.",
+      "fullDecode": "Full RAW decode (slower)",
+      "fullDecodeDesc": "Measure sharpness on the full RAW instead of the camera's embedded preview. Same ranking in tests, about 3–4× slower.",
       "blurryImagesTab": "Onscherpe afbeeldingen",
       "cancel": "Annuleren",
       "close": "Sluiten",

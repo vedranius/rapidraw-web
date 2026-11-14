@@ -110,6 +110,7 @@ export interface CullingSettings {
   blurThreshold: number;
   groupSimilar: boolean;
   filterBlurry: boolean;
+  fullDecode?: boolean;
 }
 
 interface ImageAnalysisResult {
