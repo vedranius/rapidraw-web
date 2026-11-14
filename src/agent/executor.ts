@@ -1,8 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'react-toastify';
 import { Adjustments, INITIAL_ADJUSTMENTS, INITIAL_MASK_ADJUSTMENTS } from '../utils/adjustments';
-import { CullingSuggestions, Invokes, Preset, StyleProfile } from '../components/ui/AppProperties';
-import { Status } from '../components/ui/ExportImportProperties';
+import { Invokes } from '../types/invokes';
+import type { CullingSuggestions } from '../types/library';
+import type { Preset } from '../types/editor';
+import type { StyleProfile } from '../types/ai';
+import { Status } from '../types/export';
 import { useEditorStore } from '../store/useEditorStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useProcessStore } from '../store/useProcessStore';
@@ -10,7 +13,7 @@ import { useUIStore } from '../store/useUIStore';
 import { globalImageCache } from '../utils/ImageLRUCache';
 import { calculateCenteredCrop } from '../utils/cropUtils';
 import { withRotation } from '../hooks/useEditorActions';
-import { Mask, SubMaskMode } from '../components/panel/right/Masks';
+import { Mask, SubMaskMode } from '../types/masks';
 import type { AgentExecutionHooks, AgentStepResult } from './types';
 import { computeHistogramFromUrl } from './context';
 

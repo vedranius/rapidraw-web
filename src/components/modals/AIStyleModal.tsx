@@ -24,9 +24,9 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
-import {
+import { Invokes } from '../../types/invokes';
+import type {
   AutoStyleSummary,
-  Invokes,
   PromptAiConfig,
   PromptAiStatus,
   SidecarSnapshot,
@@ -34,7 +34,7 @@ import {
   StyleMatch,
   StyleProfile,
   StyleSuggestion,
-} from '../ui/AppProperties';
+} from '../../types/ai';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
 import Slider from '../ui/Slider';

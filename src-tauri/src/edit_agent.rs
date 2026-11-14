@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tauri::AppHandle;
 
-use crate::app_settings::{PromptAiConfig, load_settings};
+use crate::app::settings::{PromptAiConfig, load_settings};
 use crate::prompt_ai;
 
 const MAX_STEPS: usize = 24;
