@@ -1,0 +1,71 @@
+# Fast checks for every pull request and every push to main (a few minutes, unlike the full platform builds in
+# pr-ci.yml / rrweb-release.yml): the web layer, its tests, the web UI and bridge builds, and the Rust tests.
+name: rapidraw-web CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: rrweb-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: Web layer, UI build and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 } # tags for the release-notes check
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: node rrweb/check-shims.mjs
+      - run: npm ci --no-audit --no-fund
+      - name: Relay tests
+        run: |
+          npm ci --omit=dev --no-audit --no-fund --prefix rrweb/relay
+          node --test rrweb/relay/test/*.test.mjs
+      - name: Relay starts and serves the UI
+        run: |
+          npx vite build --config rrweb/vite.web.config.mjs
+          mkdir -p /tmp/photos
+          RR_ROOTS=/tmp/photos RR_PORT=8791 RR_NO_UPDATE=1 node rrweb/relay/relay.mjs > relay.log 2>&1 &
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:8791/ -o /dev/null && break; sleep 0.5; done
+          curl -fsS http://127.0.0.1:8791/ | grep -q '<div id="root"' || { cat relay.log; exit 1; }
+          js=$(cd rrweb/dist-web && ls assets/index-*.js | head -1)
+          curl -fsS -H 'Accept-Encoding: br' -D - -o /dev/null "http://127.0.0.1:8791/$js" | grep -qi '^content-encoding: br' || { echo 'UI not compressed'; exit 1; }
+          kill %1
+      - name: Bridge page builds
+        run: node rrweb/gen-events.mjs && npx vite build --config rrweb/vite.bridge.config.mjs
+      - name: Desktop UI builds
+        run: npx vite build
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Release notes render
+        run: node rrweb/release-notes.mjs "rapidraw-v$(jq -r .version src-tauri/tauri.conf.json)-web-v$(tr -d '[:space:]' < rrweb/VERSION)" > notes.md && grep -q "What's new" notes.md
+        env: { GH_TOKEN: '${{ github.token }}' }
+
+  rust:
+    name: Rust tests
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: src-tauri, key: rrweb-ci }
+      - name: System deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+      # tauri::generate_context! needs the frontend folder to exist
+      - run: mkdir -p dist
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test --lib --locked
+      - name: rrweb-fuse builds
+        run: cargo build --manifest-path rrweb/fuse/Cargo.toml

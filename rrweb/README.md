@@ -43,6 +43,8 @@ GPU + photo storage
 - **Editing comes first.** The relay takes over RapidRAW's thumbnail requests and hands them to RapidRAW a few at a time, the visible tiles first. While a photo is open in the editor, it works only in short pauses between edits: quick thumbnails (unedited RAWs, from the embedded preview) for every photo, full renders only for the photos next to the open one in the filmstrip (the next ones first). How many at a time and how long it waits adapts to the server: it times slider previews and photo opening with and without thumbnails running, and backs off when editing gets slower. For folders on the browsing computer, the photo you open is fetched first, ahead of thumbnails and the background copy.
 - **You can see what is happening**: progress while a photo opens (download, then decoding), labels on thumbnails that aren't ready (*Queued #3 · ~5 s*, *Rendering…*), the number left in the top bar, and a ring with a percentage next to the slider you just moved while its preview renders. RapidRAW renders in one GPU pass without reporting progress, so the ring fills by the measured time of the same slider on this server, then the transfer.
 - **Connection badge**: measures download, upload and ping, and recommends RapidRAW's *preview size* and *live preview quality* for the connection, or lets you pick them. If the connection dies silently, it shows *Reconnecting…*; the browser opens a new connection within about 20 s and repeats the requests that were waiting.
+- **One-click updates**: when a newer release is published, an *Update* badge appears next to the version at the top (and in the bridge window on the server). It shows what's new; *Update now* downloads the installer for the server's platform, checks its SHA-256 and installs it, and RapidRAW Web restarts while the page reconnects. Windows uses the installer in passive mode, macOS replaces the app, a Linux AppImage replaces itself; `.deb`/`.rpm` install through `pkexec` on a desktop or passwordless `sudo` on a server (otherwise the badge shows the command to run). Only the installed packages update themselves; `run.sh`/`run.ps1` just show the badge.
+- **Compressed web UI**: the relay serves the UI's scripts and styles brotli- or gzip-compressed (about 1.4 MB instead of 5.5 MB), so the first load over Wi-Fi, a VPN or a tunnel is several times faster.
 - **Fuji RAF EXIF without reading whole files**: the library reads the EXIF of every photo in a folder; for RAF files the relay gives RapidRAW just the embedded JPEG's EXIF header (about 65 KB) instead of the whole 30–45 MB file, which matters most for folders on the browsing computer.
 
 ## Building
@@ -94,6 +96,8 @@ Folders from the browsing computer need a secure page (HTTPS or `localhost`), be
 | `RR_BRIDGE_BIN` | auto-detect | Path to `rapidraw-web-bridge` (`run.sh`/`run.ps1`) |
 | `RR_VERBOSE` | off | Log every IPC call with its timing, and the file operations of on-demand folders |
 | `RR_LOG` | `<data dir>/logs/relay.log` | Copy of the relay's log (up to 5 MB, then `.1`) |
+| `RR_NO_UPDATE` | off | Don't check GitHub for new releases (no update badge, no one-click update) |
+| `RR_UPDATE_REPO` | `vedranius/rapidraw-web` | Where to look for new releases |
 | `RR_NO_BROWSER` | off (on in the Linux service and under `xvfb-run`) | Don't open a browser when the bridge starts its bundled relay |
 
 For Vulkan inside a Docker container with an NVIDIA GPU, set `NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility` (not just `compute`).

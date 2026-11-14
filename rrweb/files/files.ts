@@ -7,6 +7,7 @@ import { mountNetwork } from './network';
 import { mountProgress } from './progress';
 import { mountAdjustProgress } from './adjust';
 import { mountRemote } from './remote';
+import { mountUpdate } from './update';
 import './files.css';
 
 declare const __RR_VERSION__: string;
@@ -92,6 +93,7 @@ mountProgress(tabs);
 mountAdjustProgress();
 // the exact version, as the tag and release on GitHub
 tabs.append(el('a', { class: 'rrf-tag', href: `https://github.com/vedranius/rapidraw-web/releases/tag/${TAG}`, target: '_blank', rel: 'noopener', title: 'rapidraw-web version: open the release on GitHub' }, TAG));
+mountUpdate(tabs);
 mountRemote(remoteBox, { open: (p) => load(p), refresh: () => { if (isOpen) load(listing.path, [...selected]); } });
 
 function setMessage(text = '', error = false) {
