@@ -16,6 +16,7 @@ import ImportSettingsModal from './ImportSettingsModal';
 import CullingModal from './CullingModal';
 import AIStyleModal from './AIStyleModal';
 import EditAgentModal from './EditAgentModal';
+import McpHost from '../../agent/McpHost';
 import CollageModal from './CollageModal';
 import { AppSettings, Invokes, ImageFlag, AlbumItem, Album, AlbumGroup } from '../ui/AppProperties';
 import { CopyPasteSettings } from '../../utils/adjustments';
@@ -314,6 +315,7 @@ export default function AppModals(props: AppModalsProps) {
           await props.refreshImageList();
         }}
       />
+      <McpHost handleImageSelect={props.handleImageSelect} refreshImageList={props.refreshImageList} />
       <EditAgentModal
         isOpen={editAgentModalState.isOpen}
         onClose={() => setUI({ editAgentModalState: { isOpen: false, targetPaths: [] } })}

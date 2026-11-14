@@ -1,0 +1,13 @@
+{
+  "name": "rapidraw-web",
+  "owner": { "name": "vedranius" },
+  "metadata": { "description": "RapidRAW Web for AI clients: the rapidraw MCP server and photo editing skills" },
+  "plugins": [
+    {
+      "name": "rapidraw",
+      "source": "./plugins/rapidraw",
+      "description": "Edit photos in RapidRAW Web with AI: MCP server connection plus editing skills (concert, portrait, HDR, panorama, high ISO, noir, export, culling)",
+      "category": "productivity"
+    }
+  ]
+}

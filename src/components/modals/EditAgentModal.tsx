@@ -13,6 +13,7 @@ import {
   KeyRound,
   Loader2,
   Play,
+  Plug,
   Plus,
   Save,
   Send,
@@ -35,7 +36,15 @@ import type { AgentContext, AgentMessage, AgentPlanResponse, AgentSkill, AgentSt
 import { ADJUSTMENT_REFERENCE, AGENT_TOOL_CATALOG, getTool } from '../../agent/catalog';
 import { buildAgentContext } from '../../agent/context';
 import { describeLocalFallback, planLocally, planWithAi } from '../../agent/planner';
-import { deleteCustomSkill, getAllSkills, matchSkill, parseSkillMarkdown, saveCustomSkill } from '../../agent/skills';
+import McpPanel from './McpPanel';
+import {
+  deleteCustomSkill,
+  getAllSkills,
+  loadInstalledSkills,
+  matchSkill,
+  parseSkillMarkdown,
+  saveCustomSkill,
+} from '../../agent/skills';
 import { announceFailure, executePlan, restoreSnapshots, snapshotPaths } from '../../agent/executor';
 
 interface EditAgentModalProps {
@@ -155,7 +164,7 @@ export default function EditAgentModal({
 }: EditAgentModalProps) {
   const [isMounted, setIsMounted] = useState(false);
   const [show, setShow] = useState(false);
-  const [tab, setTab] = useState<'agent' | 'skills' | 'tools' | 'provider'>('agent');
+  const [tab, setTab] = useState<'agent' | 'skills' | 'tools' | 'provider' | 'mcp'>('agent');
   const [toolQuery, setToolQuery] = useState('');
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<AgentMessage[]>([]);
@@ -270,6 +279,7 @@ export default function EditAgentModal({
     setSnapshotPathsList([]);
     setSessionPaths(targetPaths);
     setSkills(getAllSkills());
+    void loadInstalledSkills().then(() => setSkills(getAllSkills()));
     void refreshAiStatus();
   }, [isOpen, refreshAiStatus, targetPaths]);
 
@@ -721,6 +731,7 @@ export default function EditAgentModal({
             { id: 'skills' as const, label: `Skills (${skills.length})`, icon: <BookOpen size={13} /> },
             { id: 'tools' as const, label: `Commands (${AGENT_TOOL_CATALOG.length})`, icon: <Cpu size={13} /> },
             { id: 'provider' as const, label: 'AI provider', icon: <Server size={13} /> },
+            { id: 'mcp' as const, label: 'AI clients (MCP)', icon: <Plug size={13} /> },
           ].map((entry) => (
             <button
               key={entry.id}
@@ -739,7 +750,7 @@ export default function EditAgentModal({
           <div className="ml-auto hidden items-center gap-3 text-[10px] text-text-secondary sm:flex">
             <span>{AGENT_TOOL_CATALOG.length} tools</span>
             <span>all sliders</span>
-            <span>MCP-ready JSON</span>
+            <span>MCP server</span>
           </div>
         </div>
 
@@ -1231,7 +1242,7 @@ export default function EditAgentModal({
                           </span>
                         ) : (
                           <span className="rounded-full border border-accent/40 px-1.5 text-[8px] uppercase text-accent">
-                            custom
+                            {skill.installed ? 'installed' : 'custom'}
                           </span>
                         )}
                       </div>
@@ -1245,7 +1256,7 @@ export default function EditAgentModal({
                         {skill.allowedTools.length ? `${skill.allowedTools.length} allowed tools` : 'all tools'}
                       </p>
                     </div>
-                    {!skill.builtIn && (
+                    {!skill.builtIn && !skill.installed && (
                       <button
                         type="button"
                         onClick={(event) => {
@@ -1346,6 +1357,8 @@ export default function EditAgentModal({
             </details>
           </div>
         )}
+
+        {tab === 'mcp' && <McpPanel onSkillsChanged={() => setSkills(getAllSkills())} />}
 
         {tab === 'provider' && (
           <div className="min-h-0 flex-1 overflow-y-auto p-4">

@@ -13,6 +13,9 @@ depth blur, relight, fog, metapodatke, culling i izvoz.
 
 ---
 
+> **AI klijenti (MCP):** iste naredbe mogu pokretati i vanjske AI aplikacije (Claude Code, Claude Desktop,
+> Cursor, VS Code…) kroz MCP server RapidRAW Weba. Vidi [`AI_MCP.md`](AI_MCP.md).
+
 ## 1. Gdje se nalazi
 
 - Desni klik na fotografiju → **Productivity → AI Editor (any command)**
