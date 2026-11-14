@@ -1736,6 +1736,8 @@
       "bestImage": "Geriausia nuotrauka",
       "blurThreshold": "Suliejimo slenkstis",
       "blurThresholdDesc": "Nuotraukos, kurių ryškumo įvertis nesiekia šios vertės, pažymimos. Didesnė vertė – griežtesnė atranka.",
+      "fullDecode": "Full RAW decode (slower)",
+      "fullDecodeDesc": "Measure sharpness on the full RAW instead of the camera's embedded preview. Same ranking in tests, about 3–4× slower.",
       "blurryImagesTab": "Neryškios nuotraukos",
       "cancel": "Atšaukti",
       "close": "Uždaryti",

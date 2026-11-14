@@ -1746,6 +1746,8 @@
       "bestImage": "Migliore Immagine",
       "blurThreshold": "Soglia Sfocatura",
       "blurThresholdDesc": "Le immagini con un punteggio di nitidezza inferiore a questo valore vengono contrassegnate. Più alto è più severo.",
+      "fullDecode": "Full RAW decode (slower)",
+      "fullDecodeDesc": "Measure sharpness on the full RAW instead of the camera's embedded preview. Same ranking in tests, about 3–4× slower.",
       "blurryImagesTab": "Immagini Sfocate",
       "cancel": "Annulla",
       "close": "Chiudi",

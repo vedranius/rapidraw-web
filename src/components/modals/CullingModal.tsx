@@ -104,6 +104,7 @@ export default function CullingModal({
     similarityThreshold: 28,
     filterBlurry: true,
     blurThreshold: 100.0,
+    fullDecode: false,
   });
 
   const [selectedRejects, setSelectedRejects] = useState<Set<string>>(new Set());
@@ -284,6 +285,16 @@ export default function CullingModal({
               </Text>
             </div>
           )}
+        </div>
+        <div>
+          <Switch
+            label={t('modals.culling.fullDecode')}
+            checked={!!settings.fullDecode}
+            onChange={(v) => setSettings((s) => ({ ...s, fullDecode: v }))}
+          />
+          <Text variant={TextVariants.small} className="mt-1">
+            {t('modals.culling.fullDecodeDesc')}
+          </Text>
         </div>
         <Text variant={TextVariants.small} className="text-text-secondary">
           {t('modals.culling.aiHint')}

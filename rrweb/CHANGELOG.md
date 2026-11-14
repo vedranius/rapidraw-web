@@ -2,6 +2,13 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.16.2
+
+- **AI culling is about 3–4× faster on RAW files.** Sharpness and focus are now measured on the full-size JPEG preview that the camera embeds in every RAW, instead of developing the whole RAW first. Exposure, colour and the duplicate check use a 1024 px copy of that preview. In tests on Canon (5D Mark II, 40D sRAW, EOS M) and Nikon RAWs, five photos took 0.96 s instead of 3.5 s, the photos were ranked in exactly the same order, and the scores differed by at most 0.015. The numbers are scaled so the *blur threshold* keeps the same meaning.
+  - When a RAW has no embedded preview, or one smaller than 1280 px, culling develops the RAW as before. JPEG, TIFF and other non-RAW files are unchanged.
+  - *Full RAW decode (slower)* in the culling dialog brings back the old way of measuring.
+  - The MCP ranking tool (`rapidraw_rank`) and the AI Editor's culling get the same speed-up.
+
 ## 1.16.1
 
 - **AI picks the best photos of a whole shoot.** The new MCP tool `rapidraw_rank` scores a folder with content-aware culling. It keeps the best frame of each burst, drops soft frames and returns the top N with ISO. `rapidraw_set_library` flags picks and sets stars, colour labels and tags on many photos at once, also without an open tab. The new **Concert Best Of** skill chains it all: pick the best 50, edit them together, denoise only high-ISO frames, flag them as picks. Example prompt: "Go through the concert in folder X, pick the best 50, edit them consistently, denoise where the ISO is high and flag them as picked."

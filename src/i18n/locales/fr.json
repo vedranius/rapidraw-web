@@ -1747,6 +1747,8 @@
       "bestImage": "Meilleure image",
       "blurThreshold": "Seuil de flou",
       "blurThresholdDesc": "Les images avec un score de netteté inférieur à cette valeur sont signalées. Une valeur plus élevée est plus stricte.",
+      "fullDecode": "Full RAW decode (slower)",
+      "fullDecodeDesc": "Measure sharpness on the full RAW instead of the camera's embedded preview. Same ranking in tests, about 3–4× slower.",
       "blurryImagesTab": "Images floues",
       "cancel": "Annuler",
       "close": "Fermer",

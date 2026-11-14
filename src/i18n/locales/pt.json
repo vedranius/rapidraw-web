@@ -1746,6 +1746,8 @@
       "bestImage": "Melhor Imagem",
       "blurThreshold": "Limiar de Desfoque",
       "blurThresholdDesc": "Imagens com pontuação de nitidez abaixo deste valor são sinalizadas. Maior é mais rigoroso.",
+      "fullDecode": "Full RAW decode (slower)",
+      "fullDecodeDesc": "Measure sharpness on the full RAW instead of the camera's embedded preview. Same ranking in tests, about 3–4× slower.",
       "blurryImagesTab": "Imagens Desfocadas",
       "cancel": "Cancelar",
       "close": "Fechar",

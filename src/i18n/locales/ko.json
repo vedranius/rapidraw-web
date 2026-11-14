@@ -1706,6 +1706,8 @@
       "bestImage": "최고의 이미지",
       "blurThreshold": "흐림 임계값",
       "blurThresholdDesc": "선명도 점수가 이 값보다 낮은 이미지가 표시됩니다. 값이 높을수록 더 엄격합니다.",
+      "fullDecode": "Full RAW decode (slower)",
+      "fullDecodeDesc": "Measure sharpness on the full RAW instead of the camera's embedded preview. Same ranking in tests, about 3–4× slower.",
       "blurryImagesTab": "흐릿한 이미지",
       "cancel": "취소",
       "close": "닫기",

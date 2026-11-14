@@ -1780,6 +1780,8 @@
       "bestImage": "Najlepszy obraz",
       "blurThreshold": "Próg rozmycia",
       "blurThresholdDesc": "Obrazy z oceną ostrości poniżej tej wartości są oznaczane. Wyższa wartość = ostrzejsze kryteria.",
+      "fullDecode": "Full RAW decode (slower)",
+      "fullDecodeDesc": "Measure sharpness on the full RAW instead of the camera's embedded preview. Same ranking in tests, about 3–4× slower.",
       "blurryImagesTab": "Rozmyte obrazy",
       "cancel": "Anuluj",
       "close": "Zamknij",
