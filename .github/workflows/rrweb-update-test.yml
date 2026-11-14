@@ -2,9 +2,12 @@
 # updater (the installed relay/update.mjs, run by the installed Node.js), then check the new version is in place.
 name: rapidraw-web update test
 
+# The release is published by rrweb-release.yml with GITHUB_TOKEN, which does not trigger `release` events,
+# so this runs when that workflow has finished successfully.
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ['rapidraw-web release']
+    types: [completed]
   workflow_dispatch:
     inputs:
       from:
@@ -21,6 +24,7 @@ env:
 
 jobs:
   plan:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       from: ${{ steps.p.outputs.from }}

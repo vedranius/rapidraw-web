@@ -2,9 +2,12 @@
 # built from the release's .deb (rrweb/docker/Dockerfile).
 name: rapidraw-web docker
 
+# The release is published by rrweb-release.yml with GITHUB_TOKEN, which does not trigger `release` events,
+# so this runs when that workflow has finished successfully.
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ['rapidraw-web release']
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -17,6 +20,7 @@ permissions:
 
 jobs:
   image:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,7 +28,7 @@ jobs:
         id: rel
         env: { GH_TOKEN: '${{ github.token }}' }
         run: |
-          TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
+          TAG="${{ github.event.inputs.tag }}"
           [ -n "$TAG" ] || TAG=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/$(echo "$GITHUB_REPOSITORY_OWNER" | tr A-Z a-z)/rapidraw-web" >> "$GITHUB_OUTPUT"
