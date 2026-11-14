@@ -71,6 +71,8 @@ i učitaj u *Settings → Capabilities → Skills*.
 | `rapidraw_get_edit` | trenutno uređivanje, samo vrijednosti različite od zadanih (malo tokena) | ne |
 | `rapidraw_preview` | render s GPU-a kao JPEG (`maxEdge`), može prikazati i patch bez spremanja | ne |
 | `rapidraw_apply_adjustments` | deep-merge patcha bilo kojih adjustmenta (slideri, krivulje, HSL, color grading, maske) | ne |
+| `rapidraw_rank` | boduje cijelu mapu AI cullingom (kompozicija, svjetlo, oštrina, scena), izbacuje duplikate iz burstova i mutne, vraća najboljih N s ISO-m | ne |
+| `rapidraw_set_library` | oznaka pick/reject, zvjezdice, boja, tagovi za više fotki odjednom | ne |
 | `rapidraw_commands` | katalog naredbi AI Editora i (s `reference: true`) svi ključevi i rasponi | ne |
 | `rapidraw_run` | plan naredbi AI Editora, korak po korak, sa snapshotom za undo | **da** |
 | `rapidraw_undo` | vraća sidecare na stanje prije `rapidraw_run` | **da** |
@@ -83,6 +85,12 @@ Skillovi su dostupni i kao **MCP prompti** (u Claude Codeu npr. `/mcp__rapidraw_
 Primjer: *"Otvori zadnji koncert iz biblioteke, odšumi, podigni pjevača +0.3 EV maskom subjekta, topliji look,
 pokaži mi prije i poslije."* AI tada zove `rapidraw_list_images` → `rapidraw_preview` → `rapidraw_run`
 (`photo.denoise`, `photo.ai-mask`, `photo.prompt-style`) → `rapidraw_preview`.
+
+Primjer za cijelo snimanje: *"Pregledaj sve fotke s koncerta u mapi Koncerti/2026-11-08, odaberi najboljih 50,
+obradi ih ujednačeno, napravi denoise gdje je ISO visok i označi ih kao picked."* AI tada koristi skill
+`concert-best-of`: `rapidraw_rank` (top 50) → `rapidraw_run` na svih 50 (`photo.auto-tone`, `photo.denoise` samo za
+visoki ISO, `photo.prompt-style`) → `rapidraw_set_library` s `flag: "pick"` → nekoliko `rapidraw_preview` za
+provjeru. Analiza velike mape traje (svaka datoteka se dekodira), pa je za stotine RAW-ova normalno nekoliko minuta.
 
 ### Sigurnost
 

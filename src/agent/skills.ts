@@ -10,6 +10,7 @@ import documentaryNoir from './skills/documentary-noir.md?raw';
 import editorialColour from './skills/editorial-colour.md?raw';
 import socialExport from './skills/social-export.md?raw';
 import cullBurst from './skills/cull-burst.md?raw';
+import concertBestOf from './skills/concert-best-of.md?raw';
 
 const CUSTOM_SKILLS_KEY = 'rapidraw.editAgent.customSkills.v1';
 
@@ -83,6 +84,7 @@ export const BUILT_IN_SKILLS: AgentSkill[] = [
   editorialColour,
   socialExport,
   cullBurst,
+  concertBestOf,
 ].map((raw) => parseSkill(raw, true));
 
 export function loadCustomSkills(): AgentSkill[] {

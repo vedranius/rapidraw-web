@@ -14,6 +14,12 @@ const bridge = async (cmd, args) => {
   if (cmd === 'load_metadata') return { rating: 3, tags: ['band'], adjustments: { exposure: 0.5, hsl: { reds: { saturation: 10 } } } };
   if (cmd === 'generate_preview_for_path') return Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
   if (cmd === 'list_images_in_dir') return [{ path: '/photos/a.raf', rating: 2, is_raw: true, is_edited: false, tags: [] }];
+  if (cmd === 'cull_images') {
+    const sc = (p, aiScore, sharpnessMetric = 300) => ({ path: p, aiScore, sharpnessMetric, exposureMetric: 0.5, highlightClip: 0, shadowClip: 0, tags: ['stage'] });
+    return { similarGroups: [{ representative: sc('/photos/b1', 0.9), duplicates: [sc('/photos/b2', 0.8)] }], blurryImages: [sc('/photos/soft', 0.95, 10)], failedPaths: [],
+      scores: [sc('/photos/b1', 0.9), sc('/photos/b2', 0.8), sc('/photos/soft', 0.95, 10), sc('/photos/c', 0.7), sc('/photos/d', 0.6)] };
+  }
+  if (cmd === 'read_exif_for_paths') return { '/photos/b1': { PhotographicSensitivity: '6400' } };
   return null;
 };
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-mcp-test-'));
@@ -143,6 +149,36 @@ test('installed skills override built-in ones and can be removed', async () => {
   assert.equal(mcp.commands.__rr_skills_list().length, 1);
   await mcp.commands.__rr_skills_remove({ id: 'concert-hero' });
   assert.equal(mcp.commands.__rr_skills_list().length, 0);
+});
+
+test('rank keeps the best of a burst, drops soft frames, adds ISO', async () => {
+  calls.length = 0;
+  const r = await call('rapidraw_rank', { paths: ['/photos/b1', '/photos/b2', '/photos/soft', '/photos/c', '/photos/d'], top: 2 });
+  assert.ok(!r.isError, r.content[0].text);
+  const out = JSON.parse(r.content[0].text);
+  assert.deepEqual(out.best.map((x) => x.path), ['/photos/b1', '/photos/c']);
+  assert.equal(out.best[0].iso, 6400);
+  assert.equal(out.droppedDuplicates, 1);
+  assert.equal(out.droppedSoft, 1);
+  assert.equal(calls.find(([c]) => c === 'cull_images')[1].settings.includeScores, true);
+  const all = JSON.parse((await call('rapidraw_rank', { paths: ['/photos/b1'], top: 10, keepDuplicates: true, keepSoft: true })).content[0].text);
+  assert.equal(all.best.length, 5);
+});
+
+test('set_library flags headless, or through the open tab', async () => {
+  calls.length = 0;
+  let r = await call('rapidraw_set_library', { paths: ['/photos/b1', '/photos/c'], flag: 'pick', rating: 4, addTags: ['concert'] });
+  assert.ok(!r.isError, r.content[0].text);
+  assert.deepEqual(calls.find(([c]) => c === 'set_flag_for_paths')[1], { paths: ['/photos/b1', '/photos/c'], flag: 'pick' });
+  assert.equal(calls.find(([c]) => c === 'set_rating_for_paths')[1].rating, 4);
+  assert.equal(calls.find(([c]) => c === 'add_tag_for_paths')[1].tag, 'concert');
+  const sent = [];
+  const ws = { readyState: 1, send: (s) => { const { payload } = JSON.parse(s); sent.push(payload); setImmediate(() => mcp.commands.__rr_mcp_result({ rid: payload.rid, result: { ok: true } })); } };
+  mcp.commands.__rr_mcp_hello({ state: {} }, ws);
+  r = await call('rapidraw_set_library', { paths: ['/photos/b1'], flag: 'none' });
+  assert.ok(!r.isError);
+  assert.deepEqual(sent[0].steps, [{ tool: 'library.flag', params: { paths: ['/photos/b1'], flag: null } }]);
+  mcp.dropClient(ws);
 });
 
 test('helpers', () => {
