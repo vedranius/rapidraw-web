@@ -23,9 +23,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::file_management::{
-    apply_adjustments_to_paths_map, cached_analysis_source, parse_virtual_path,
-};
+use crate::library::sidecars::{apply_adjustments_to_paths_map, parse_virtual_path};
+use crate::library::thumbnails::cached_analysis_source;
 use crate::photo_analysis::{PhotoStats, analyze_thumbnail_cached};
 
 /// Values that are pure "look" scalars and have a neutral (0) default, so they
@@ -1606,13 +1605,14 @@ fn save_user_style_profiles(
 /// hard-coded; if the resource is missing (e.g. a stripped build) the path is
 /// left empty and the look is applied without the LUT instead of breaking.
 pub(crate) fn resolve_builtin_lut_paths(app_handle: &AppHandle, profiles: &mut [StyleProfile]) {
-    let Some(dir) = crate::lut_processing::film_luts_dir(app_handle) else {
+    let Some(dir) = crate::adjustments::lut_processing::film_luts_dir(app_handle) else {
         log::warn!(
             "Built-in film LUT directory is unavailable; style profiles will run without LUTs"
         );
         return;
     };
-    let entries = crate::lut_processing::list_luts_in_dir(&dir, true).unwrap_or_default();
+    let entries =
+        crate::adjustments::lut_processing::list_luts_in_dir(&dir, true).unwrap_or_default();
 
     for profile in profiles {
         let Some(lut) = profile.lut.as_mut() else {
@@ -2098,7 +2098,7 @@ fn match_score(image_tags: &[String], profile: &StyleProfile) -> (f64, Vec<Strin
 
 fn tags_for_path(path: &str) -> Vec<String> {
     let (_, sidecar_path) = parse_virtual_path(path);
-    crate::exif_processing::load_sidecar(&sidecar_path)
+    crate::metadata::sidecar::load_sidecar(&sidecar_path)
         .tags
         .unwrap_or_default()
 }
@@ -2677,7 +2677,7 @@ pub async fn suggest_style_profiles_for_paths(
         let mut suggestions = Vec::with_capacity(paths.len());
         for path in paths {
             let (_, sidecar_path) = parse_virtual_path(&path);
-            let sidecar = crate::exif_processing::load_sidecar(&sidecar_path);
+            let sidecar = crate::metadata::sidecar::load_sidecar(&sidecar_path);
             let tags = sidecar.tags.unwrap_or_default();
             let stats = stats_for_path(&app_handle, &path);
             let scene = analyze_scene(&tags, stats.as_deref(), &sidecar.exif);
@@ -3011,7 +3011,7 @@ fn collect_lut(paths: &[String]) -> Option<StyleProfileLut> {
 
     for path in paths {
         let (_, sidecar_path) = parse_virtual_path(path);
-        let adjustments = crate::exif_processing::load_sidecar(&sidecar_path).adjustments;
+        let adjustments = crate::metadata::sidecar::load_sidecar(&sidecar_path).adjustments;
         let Some(lut_path) = adjustments.get("lutPath").and_then(Value::as_str) else {
             continue;
         };
@@ -3068,7 +3068,7 @@ pub fn derive_profile_from_paths(
     let mut stats = LookStats::default();
     for path in paths {
         let (_, sidecar_path) = parse_virtual_path(path);
-        let metadata = crate::exif_processing::load_sidecar(&sidecar_path);
+        let metadata = crate::metadata::sidecar::load_sidecar(&sidecar_path);
         if !metadata.adjustments.is_null() {
             collect_look_stats(&metadata.adjustments, &mut stats);
         }
@@ -3173,7 +3173,7 @@ pub fn assign_artist_to_paths(
     if tag == "user:artist:" {
         return Err("Artist name cannot be empty".to_string());
     }
-    crate::tagging::add_tag_for_paths(paths, tag.clone(), app_handle)?;
+    crate::library::tagging::add_tag_for_paths(paths, tag.clone(), app_handle)?;
     Ok(tag)
 }
 
@@ -3196,7 +3196,7 @@ pub async fn match_style_profiles_for_paths(
         for path in &paths {
             let tags = tags_for_path(path);
             let (_, sidecar_path) = parse_virtual_path(path);
-            let sidecar = crate::exif_processing::load_sidecar(&sidecar_path);
+            let sidecar = crate::metadata::sidecar::load_sidecar(&sidecar_path);
             // The per-image grid only needs the tag scene; decoding 480 px
             // previews for every file here would make a big folder slow.
             let scene = analyze_scene(&tags, None, &sidecar.exif);
@@ -3298,7 +3298,7 @@ pub(crate) async fn apply_profile_object_to_paths(
         for (index, path) in paths.into_iter().enumerate() {
             let tags = tags_for_path(&path);
             let (_, sidecar_path) = parse_virtual_path(&path);
-            let unedited = crate::exif_processing::load_sidecar(&sidecar_path)
+            let unedited = crate::metadata::sidecar::load_sidecar(&sidecar_path)
                 .adjustments
                 .is_null();
             let auto_baseline = if unedited {
@@ -3372,7 +3372,7 @@ pub async fn apply_style_assignments(
         for (index, (path, profile)) in resolved.into_iter().enumerate() {
             let tags = tags_for_path(&path);
             let (_, sidecar_path) = parse_virtual_path(&path);
-            let unedited = crate::exif_processing::load_sidecar(&sidecar_path)
+            let unedited = crate::metadata::sidecar::load_sidecar(&sidecar_path)
                 .adjustments
                 .is_null();
             let auto_baseline = if unedited {
@@ -3418,24 +3418,26 @@ pub(crate) fn auto_baseline_for_image(
     image: &image::DynamicImage,
     is_raw: bool,
     base_adjustments: &Value,
-    as_shot: crate::as_shot::AsShot,
-    settings: &crate::app_settings::AppSettings,
+    as_shot: crate::decode::as_shot::AsShot,
+    settings: &crate::app::settings::AppSettings,
 ) -> Value {
     let base_for_exposure = if base_adjustments
         .as_object()
         .map_or(true, |object| object.is_empty())
     {
-        crate::image_processing::default_adjustments()
+        // No source path here: the camera-specific develop defaults are
+        // already part of `base_adjustments` whenever they apply.
+        crate::render::adjustment_utils::default_adjustments(std::path::Path::new(""))
     } else {
         base_adjustments.clone()
     };
-    let render = crate::image_processing::resolve_render_options(settings, is_raw);
-    let exposure = crate::image_processing::effective_baseline_exposure(
+    let render = crate::render::options::resolve_render_options(settings, is_raw);
+    let exposure = crate::render::adjustment_utils::effective_baseline_exposure(
         &base_for_exposure,
         as_shot,
         render.baseline,
     );
-    let results = crate::image_processing::perform_auto_analysis(image, exposure);
+    let results = crate::adjustments::auto_adjust::perform_auto_analysis(image, exposure);
     // Take most, but not all, of the auto lift: the result should still look
     // graded rather than like a flat auto-correct.
     json!({
@@ -3460,7 +3462,7 @@ static AUTO_BASELINE_CACHE: OnceLock<Mutex<HashMap<String, Value>>> = OnceLock::
 
 fn auto_baseline_cache_key(
     source_path: &std::path::Path,
-    settings: &crate::app_settings::AppSettings,
+    settings: &crate::app::settings::AppSettings,
 ) -> Option<String> {
     let modified = fs::metadata(source_path).ok()?.modified().ok()?;
     let mtime = modified.duration_since(UNIX_EPOCH).ok()?.as_nanos();
@@ -3484,11 +3486,11 @@ fn auto_baseline_cache_key(
 fn auto_baseline_for_path(path: &str, app_handle: &AppHandle) -> Option<Value> {
     let (source_path, _) = parse_virtual_path(path);
     let source_path_str = source_path.to_string_lossy().to_string();
-    let is_raw = crate::formats::is_raw_file(&source_path_str);
+    let is_raw = crate::decode::formats::is_raw_file(&source_path_str);
     if !is_raw {
         return None;
     }
-    let settings = crate::app_settings::load_settings(app_handle.clone()).ok()?;
+    let settings = crate::app::settings::load_settings(app_handle.clone()).ok()?;
     let cache_key = auto_baseline_cache_key(&source_path, &settings);
     if let Some(key) = &cache_key
         && let Ok(cache) = AUTO_BASELINE_CACHE
@@ -3499,12 +3501,14 @@ fn auto_baseline_for_path(path: &str, app_handle: &AppHandle) -> Option<Value> {
         return Some(cached.clone());
     }
 
-    let as_shot = crate::as_shot::as_shot(&source_path_str);
-    let base = crate::image_processing::default_adjustments();
+    let as_shot = crate::decode::as_shot::as_shot(&source_path_str);
+    let base = crate::render::adjustment_utils::default_adjustments(&source_path);
     let bytes = fs::read(&source_path)
-        .or_else(|_| crate::file_management::read_file_mapped(&source_path).map(|map| map.to_vec()))
+        .or_else(|_| {
+            crate::library::file_ops::read_file_mapped(&source_path).map(|map| map.to_vec())
+        })
         .ok()?;
-    let image = crate::image_loader::load_and_composite(
+    let (image, _) = crate::decode::image_loader::load_and_composite(
         &bytes,
         &source_path_str,
         &base,
@@ -3513,7 +3517,7 @@ fn auto_baseline_for_path(path: &str, app_handle: &AppHandle) -> Option<Value> {
         None,
     )
     .ok()?;
-    let preview = crate::image_loader::downscale_for_analysis(&image, 900);
+    let preview = crate::decode::image_loader::downscale_for_analysis(&image, 900);
     let baseline = auto_baseline_for_image(&preview, is_raw, &base, as_shot, &settings);
 
     if let Some(key) = cache_key
@@ -3606,10 +3610,10 @@ pub(crate) fn preview_adjustments_for_profile(
     auto_baseline: Option<&Value>,
     app_handle: &AppHandle,
 ) -> Value {
-    let (_, sidecar_path) = parse_virtual_path(path);
-    let existing = crate::exif_processing::load_sidecar(&sidecar_path).adjustments;
+    let (source_path, sidecar_path) = parse_virtual_path(path);
+    let existing = crate::metadata::sidecar::load_sidecar(&sidecar_path).adjustments;
     let mut base = if existing.is_null() {
-        crate::image_processing::default_adjustments()
+        crate::render::adjustment_utils::default_adjustments(&source_path)
     } else {
         existing
     };
@@ -3618,7 +3622,7 @@ pub(crate) fn preview_adjustments_for_profile(
     let stats = stats_for_path(app_handle, path);
     let overlay = build_look_overlay(profile, intensity, &tags, auto_baseline, stats.as_deref());
 
-    crate::file_management::merge_adjustments_value(&mut base, &overlay);
+    crate::library::sidecars::merge_adjustments_value(&mut base, &overlay);
 
     // The preview renderer deliberately skips mask bitmaps (they are expensive
     // and irrelevant for judging a colour treatment), so drop the definitions
@@ -4192,8 +4196,8 @@ pub async fn auto_style_paths_with_ai(
                 json!({ "stage": "analyzing", "current": index, "total": total }),
             );
             let tags = tags_for_path(&path);
-            let (_, sidecar_path) = crate::file_management::parse_virtual_path(&path);
-            let sidecar = crate::exif_processing::load_sidecar(&sidecar_path);
+            let (_, sidecar_path) = crate::library::sidecars::parse_virtual_path(&path);
+            let sidecar = crate::metadata::sidecar::load_sidecar(&sidecar_path);
             let stats = stats_for_path(&task_handle, &path);
             let scene = analyze_scene(&tags, stats.as_deref(), &sidecar.exif);
             // Untagged but measurable frames may still get a scene-based look
@@ -4292,7 +4296,7 @@ pub fn snapshot_sidecars(paths: Vec<String>) -> Vec<SidecarSnapshot> {
     let mut seen = std::collections::HashSet::new();
     let mut snapshots = Vec::with_capacity(paths.len());
     for path in paths {
-        let (_, sidecar_path) = crate::file_management::parse_virtual_path(&path);
+        let (_, sidecar_path) = crate::library::sidecars::parse_virtual_path(&path);
         let sidecar_path = sidecar_path.to_string_lossy().to_string();
         if !seen.insert(sidecar_path.clone()) {
             continue;
@@ -4457,7 +4461,7 @@ mod tests {
             "lutName": "old",
             "lutIntensity": 80.0,
         });
-        crate::file_management::merge_adjustments_value(&mut base, &overlay);
+        crate::library::sidecars::merge_adjustments_value(&mut base, &overlay);
         assert_eq!(base["lutPath"], json!(""));
         assert_eq!(base["lutName"], json!(""));
         assert_eq!(base["lutIntensity"], json!(0.0));
@@ -4533,7 +4537,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let image = dir.join("test.raf");
         std::fs::write(&image, b"raw").unwrap();
-        let sidecar = crate::exif_processing::get_primary_sidecar_path(&image);
+        let sidecar = crate::metadata::sidecar::get_primary_sidecar_path(&image);
         std::fs::write(&sidecar, "{\"flag\":\"pick\"}").unwrap();
 
         let snapshots = snapshot_sidecars(vec![image.to_string_lossy().to_string()]);
@@ -5143,7 +5147,7 @@ mod tests {
 #[cfg(test)]
 mod real_photos {
     use super::*;
-    use crate::image_processing::ImageMetadata;
+    use crate::metadata::sidecar::ImageMetadata;
     use crate::photo_analysis::PhotoStats;
     use std::path::{Path, PathBuf};
 
@@ -5198,7 +5202,8 @@ mod real_photos {
 
     fn resolve_test_luts(profiles: &mut [StyleProfile]) {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/film_luts");
-        let entries = crate::lut_processing::list_luts_in_dir(&dir, true).unwrap_or_default();
+        let entries =
+            crate::adjustments::lut_processing::list_luts_in_dir(&dir, true).unwrap_or_default();
         for profile in profiles {
             if let Some(lut) = profile.lut.as_mut()
                 && lut.path.is_empty()
@@ -5274,9 +5279,9 @@ mod real_photos {
             let raf_str = raf.to_string_lossy().into_owned();
             // Mirror the production lookup: prefer the untouched render, then
             // fall back to the camera preview for graded files.
-            let settings = crate::app_settings::AppSettings::default();
+            let settings = crate::app::settings::AppSettings::default();
             let find_small = |bytes: &[u8]| -> Option<PathBuf> {
-                let hash = crate::file_management::compute_thumbnail_cache_hash(
+                let hash = crate::library::thumbnails::compute_thumbnail_cache_hash(
                     &raf_str, bytes, &settings,
                 )?;
                 thumb_dirs
@@ -5285,8 +5290,9 @@ mod real_photos {
                     .find(|candidate| candidate.exists())
             };
             let untouched = find_small(br#"{}"#).or_else(|| {
-                let reset = serde_json::to_vec(&crate::image_processing::default_adjustments())
-                    .unwrap_or_default();
+                let reset =
+                    serde_json::to_vec(&crate::render::adjustment_utils::default_adjustments(&raf))
+                        .unwrap_or_default();
                 find_small(&reset)
             });
             let iso = parse_iso(&metadata.exif);
@@ -5301,7 +5307,7 @@ mod real_photos {
                     .map(|stats| (*stats).clone())
             } else if edited {
                 let preview = std::fs::read(&raf).ok().and_then(|bytes| {
-                    crate::image_loader::safe_embedded_preview_fallback(&bytes, &raf_str)
+                    crate::decode::image_loader::safe_embedded_preview_fallback(&bytes, &raf_str)
                 });
                 preview.map(|preview| {
                     default_previews += 1;
@@ -5519,7 +5525,7 @@ mod real_photos {
             if !sidecar.to_string_lossy().ends_with(".rrdata") {
                 continue;
             }
-            let metadata = crate::exif_processing::load_sidecar(&sidecar);
+            let metadata = crate::metadata::sidecar::load_sidecar(&sidecar);
             let edited = metadata
                 .adjustments
                 .as_object()
@@ -5627,7 +5633,7 @@ mod real_photos {
 #[cfg(test)]
 mod real_edit_targets {
     use super::real_photos::{real_photos_dir, thumb_cache_dirs};
-    use crate::image_processing::ImageMetadata;
+    use crate::metadata::sidecar::ImageMetadata;
     use crate::photo_analysis::{PhotoStats, analyze_image, analyze_thumbnail_cached};
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
@@ -5666,8 +5672,8 @@ mod real_edit_targets {
         let metadata = serde_json::from_str::<ImageMetadata>(&content).ok()?;
         let adjustments = serde_json::to_vec(&metadata.adjustments).unwrap_or_default();
         let raf_str = raf.to_string_lossy().into_owned();
-        let settings = crate::app_settings::AppSettings::default();
-        let hash = crate::file_management::compute_thumbnail_cache_hash(
+        let settings = crate::app::settings::AppSettings::default();
+        let hash = crate::library::thumbnails::compute_thumbnail_cache_hash(
             &raf_str,
             &adjustments,
             &settings,
@@ -5832,12 +5838,12 @@ mod real_edit_targets {
         if !std::path::Path::new(path).exists() {
             return;
         }
-        let (source_path, _) = crate::file_management::parse_virtual_path(path);
+        let (source_path, _) = crate::library::sidecars::parse_virtual_path(path);
         let source_path_str = source_path.to_string_lossy().to_string();
         let bytes = std::fs::read(&source_path).unwrap();
-        let settings = crate::app_settings::AppSettings::default();
-        let base = crate::image_processing::default_adjustments();
-        let image = crate::image_loader::load_and_composite(
+        let settings = crate::app::settings::AppSettings::default();
+        let base = crate::render::adjustment_utils::default_adjustments(&source_path);
+        let (image, _) = crate::decode::image_loader::load_and_composite(
             &bytes,
             &source_path_str,
             &base,
@@ -5846,12 +5852,12 @@ mod real_edit_targets {
             None,
         )
         .unwrap();
-        let preview = crate::image_loader::downscale_for_analysis(&image, 900);
+        let preview = crate::decode::image_loader::downscale_for_analysis(&image, 900);
         let baseline = super::auto_baseline_for_image(
             &preview,
             true,
             &base,
-            crate::as_shot::as_shot(&source_path_str),
+            crate::decode::as_shot::as_shot(&source_path_str),
             &settings,
         );
         println!("auto baseline for DSCF5001: {baseline}");
@@ -5867,7 +5873,7 @@ mod real_edit_targets {
         let second = dir.join("second.raw");
         std::fs::write(&first, b"first").unwrap();
         std::fs::write(&second, b"second").unwrap();
-        let settings = crate::app_settings::AppSettings::default();
+        let settings = crate::app::settings::AppSettings::default();
 
         let first_key = super::auto_baseline_cache_key(&first, &settings).unwrap();
         let second_key = super::auto_baseline_cache_key(&second, &settings).unwrap();

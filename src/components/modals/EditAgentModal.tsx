@@ -27,7 +27,8 @@ import {
 } from 'lucide-react';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
-import { Invokes, PromptAiConfig, PromptAiStatus } from '../ui/AppProperties';
+import { Invokes } from '../../types/invokes';
+import type { PromptAiConfig, PromptAiStatus } from '../../types/ai';
 import { useEditorStore } from '../../store/useEditorStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { reloadAdjustmentsForPaths } from '../../hooks/useEditorActions';
