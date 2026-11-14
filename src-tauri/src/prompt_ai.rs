@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::AppHandle;
 
-use crate::app_settings::{PromptAiConfig, load_settings};
+use crate::app::settings::{PromptAiConfig, load_settings};
 
 const DEFAULT_OLLAMA_URL: &str = "http://127.0.0.1:11434";
 const DEFAULT_OPENAI_URL: &str = "https://api.openai.com/v1";

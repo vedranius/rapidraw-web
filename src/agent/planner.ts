@@ -3,7 +3,7 @@ import type { AgentContext, AgentPlanResponse, AgentSkill, AgentStep } from './t
 import { buildToolCatalogText, AGENT_TOOL_IDS } from './catalog';
 import { formatContextForPlanner } from './context';
 import { buildSkillsText } from './skills';
-import { Invokes } from '../components/ui/AppProperties';
+import { Invokes } from '../types/invokes';
 
 const STYLE_WORDS = [
   'cinematic',
