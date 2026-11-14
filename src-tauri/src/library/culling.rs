@@ -18,6 +18,9 @@ pub struct CullingSettings {
     pub blur_threshold: f64,
     pub group_similar: bool,
     pub filter_blurry: bool,
+    /// Also return the scores of every analysed photo (MCP ranking), not only the suggestions
+    #[serde(default)]
+    pub include_scores: bool,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -56,6 +59,9 @@ pub struct CullingSuggestions {
     pub similar_groups: Vec<CullGroup>,
     pub blurry_images: Vec<ImageAnalysisResult>,
     pub failed_paths: Vec<String>,
+    /// Every analysed photo, only with `include_scores`
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scores: Vec<ImageAnalysisResult>,
 }
 
 #[derive(Serialize, Clone)]
@@ -480,6 +486,13 @@ pub async fn cull_images(
                 .partial_cmp(&b.sharpness_metric)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+    }
+
+    if settings.include_scores {
+        suggestions.scores = successful_analyses
+            .iter()
+            .map(|item| item.result.clone())
+            .collect();
     }
 
     log::info!(

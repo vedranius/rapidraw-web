@@ -209,6 +209,25 @@ export const TOOLS = [
     description: 'Deep-merges an adjustments patch (any slider, curves, hsl, colorGrading, masks, ...; see rapidraw_commands reference) into the edits of the given photos and saves them. Non-destructive (sidecars).',
     inputSchema: obj({ paths: { type: 'array', items: { type: 'string' }, minItems: 1 }, adjustments: { type: 'object' } }, ['paths', 'adjustments']),
     annotations: { destructiveHint: false, idempotentHint: true } },
+  { name: 'rapidraw_rank', title: 'Rank photos (AI culling)',
+    description: 'Scores every photo of a folder (or the given paths) with RapidRAW\'s content-aware culling (composition, light, sharpness, scene and subject), drops near-duplicates of a burst and soft frames, and returns the best ones with ISO, so an AI can pick e.g. the 50 best concert shots without looking at every photo. Slow for large folders (it analyses every file).',
+    inputSchema: obj({
+      folder: str('Absolute folder; default the photo library'), recursive: { type: 'boolean' },
+      paths: { type: 'array', items: { type: 'string' }, description: 'Instead of folder' },
+      top: { type: 'integer', minimum: 1, maximum: 1000, default: 50 },
+      keepDuplicates: { type: 'boolean', default: false, description: 'Keep every frame of a burst, not only its best one' },
+      keepSoft: { type: 'boolean', default: false, description: 'Keep frames culling marks as soft' },
+      similarityThreshold: { type: 'integer', minimum: 0, maximum: 64, default: 28 },
+      blurThreshold: { type: 'number', default: 100 },
+    }), annotations: { readOnlyHint: true } },
+  { name: 'rapidraw_set_library', title: 'Flag, rate, label, tag',
+    description: 'Sets the pick/reject flag, star rating, colour label and/or adds or removes tags on photos. Works without an open tab.',
+    inputSchema: obj({
+      paths: { type: 'array', items: { type: 'string' }, minItems: 1 },
+      flag: { enum: ['pick', 'reject', 'none'] }, rating: { type: 'integer', minimum: 0, maximum: 5 },
+      color: { enum: ['red', 'yellow', 'green', 'blue', 'purple', 'none'] },
+      addTags: { type: 'array', items: { type: 'string' } }, removeTags: { type: 'array', items: { type: 'string' } },
+    }, ['paths']), annotations: { destructiveHint: false, idempotentHint: true } },
   { name: 'rapidraw_commands', title: 'RapidRAW command catalog',
     description: 'The AI Editor commands rapidraw_run accepts (id, parameters, risk), and with reference=true every adjustment key and its range.',
     inputSchema: obj({ category: str('inspect|tone|colour|detail|geometry|mask|ai|operations|library|app'), id: str('One command id for full detail'), reference: { type: 'boolean' } }),
@@ -342,6 +361,53 @@ export function createMcp({ bridge, within, library, version, configFile, config
       }
       return text({ ok: true, updated: paths.length, note: 'Saved headless; open RapidRAW tabs show it after reopening the photo.' });
     },
+    async rapidraw_rank({ folder, recursive, paths, top = 50, keepDuplicates, keepSoft, similarityThreshold = 28, blurThreshold = 100 }) {
+      let list = paths;
+      if (!list?.length) {
+        const dir = folder || library();
+        if (!dir) throw new Error('No photo library is set; pass folder or paths');
+        await checkPath(dir);
+        list = ((await bridge(recursive ? 'list_images_recursive' : 'list_images_in_dir', { path: dir })) ?? []).map((f) => f.path);
+      }
+      for (const p of list) await checkPath(p);
+      if (!list.length) return text({ total: 0, best: [] });
+      const t0 = Date.now();
+      const r = await bridge('cull_images', { paths: list, settings: { groupSimilar: true, similarityThreshold, filterBlurry: true, blurThreshold, includeScores: true } });
+      const scores = r?.scores ?? [];
+      if (!scores.length && list.length) throw new Error('This RapidRAW bridge is too old to return culling scores; update RapidRAW Web.');
+      const drop = new Set();
+      if (!keepDuplicates) for (const g of r.similarGroups ?? []) for (const d of g.duplicates ?? []) drop.add(d.path);
+      if (!keepSoft) for (const b of r.blurryImages ?? []) drop.add(b.path);
+      const best = scores.filter((x) => !drop.has(x.path)).sort((a, b) => b.aiScore - a.aiScore).slice(0, top);
+      let exif = {};
+      try { exif = (await bridge('read_exif_for_paths', { paths: best.map((x) => x.path) })) ?? {}; } catch { /* ISO stays unknown */ }
+      const iso = (p) => { const e = exif[p] ?? {}; const v = e.PhotographicSensitivity ?? e.ISOSpeedRatings ?? e.ISO; const n = parseInt(String(v ?? ''), 10); return Number.isFinite(n) ? n : undefined; };
+      const r2 = (v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v);
+      return text({
+        analysed: scores.length, failed: r.failedPaths?.length ?? 0, droppedDuplicates: keepDuplicates ? 0 : [...(r.similarGroups ?? [])].reduce((n, g) => n + (g.duplicates?.length ?? 0), 0),
+        droppedSoft: keepSoft ? 0 : (r.blurryImages?.length ?? 0), seconds: Math.round((Date.now() - t0) / 1000),
+        best: best.map((x, i) => ({ rank: i + 1, path: x.path, score: r2(x.aiScore), iso: iso(x.path), sharpness: r2(x.sharpnessMetric), exposure: r2(x.exposureMetric),
+          highlightClip: r2(x.highlightClip), shadowClip: r2(x.shadowClip), tags: x.tags?.slice(0, 6) })),
+      });
+    },
+    async rapidraw_set_library({ paths, flag, rating, color, addTags = [], removeTags = [] }) {
+      for (const p of paths) await checkPath(p);
+      if (host) {
+        const steps = [];
+        if (flag) steps.push({ tool: 'library.flag', params: { paths, flag: flag === 'none' ? null : flag } });
+        if (rating !== undefined) steps.push({ tool: 'library.rate', params: { paths, rating } });
+        if (color) steps.push({ tool: 'library.color', params: { paths, color: color === 'none' ? null : color } });
+        if (addTags.length || removeTags.length) steps.push({ tool: 'library.tag', params: { paths, tags: addTags, remove: removeTags } });
+        if (!steps.length) throw new Error('Nothing to set');
+        return text(await hostRequest('run', { steps, paths }));
+      }
+      if (flag) await bridge('set_flag_for_paths', { paths, flag: flag === 'none' ? null : flag });
+      if (rating !== undefined) await bridge('set_rating_for_paths', { paths, rating });
+      if (color) await bridge('set_color_label_for_paths', { paths, color: color === 'none' ? null : color });
+      for (const tag of addTags) await bridge('add_tag_for_paths', { paths, tag });
+      for (const tag of removeTags) await bridge('remove_tag_for_paths', { paths, tag });
+      return text({ ok: true, updated: paths.length });
+    },
     async rapidraw_commands({ category, id, reference }) {
       if (id) { const t = catalog.get(id); if (!t) throw new Error(`Unknown command ${id}`); return text(t); }
       const lines = [...catalog.values()].filter((t) => !category || t.category === category)
@@ -391,7 +457,7 @@ export function createMcp({ bridge, within, library, version, configFile, config
     throw rpcError(-32002, `Unknown resource ${uri}`);
   }
 
-  const INSTRUCTIONS = 'RapidRAW Web: a GPU RAW photo editor. Start with rapidraw_status and rapidraw_list_images. Read edits with rapidraw_get_edit, look with rapidraw_preview, ' +
+  const INSTRUCTIONS = 'RapidRAW Web: a GPU RAW photo editor. Start with rapidraw_status and rapidraw_list_images. To choose the best photos of a shoot use rapidraw_rank, then rapidraw_set_library to flag picks. Read edits with rapidraw_get_edit, look with rapidraw_preview, ' +
     'change sliders with rapidraw_apply_adjustments, and use rapidraw_run for everything else (AI masks, denoise, HDR, panorama, crop, styles, export...). ' +
     'Check results with rapidraw_preview. Edits are non-destructive; rapidraw_undo reverts a run. Ask the user before exports or resets. Prompts are editing recipes.';
 
