@@ -93,7 +93,13 @@ To use folders from other computers **on demand** (see [below](#use-a-folder-fro
 
 ### Linux: one package
 
-Download **one** file for your distribution (arm64: `…_linux_arm64.*`). Each contains everything: RapidRAW, the web UI, Node.js and the helper for on-demand folders.
+**Quickest:** one command picks the right package for your distribution and CPU, checks it and installs it (add `-s -- --server` at the end to also start it as a service on a machine without a screen, or `-s -- --appimage` to install without sudo):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vedranius/rapidraw-web/main/rrweb/install.sh | sh
+```
+
+Or download **one** file for your distribution (arm64: `…_linux_arm64.*`). Each contains everything: RapidRAW, the web UI, Node.js and the helper for on-demand folders.
 
 ```bash
 sudo apt install ./*_linux_x64.deb      # Debian / Ubuntu

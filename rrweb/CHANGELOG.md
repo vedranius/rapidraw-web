@@ -2,6 +2,12 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.16.1
+
+- **AI picks the best photos of a whole shoot.** The new MCP tool `rapidraw_rank` scores a folder with content-aware culling. It keeps the best frame of each burst, drops soft frames and returns the top N with ISO. `rapidraw_set_library` flags picks and sets stars, colour labels and tags on many photos at once, also without an open tab. The new **Concert Best Of** skill chains it all: pick the best 50, edit them together, denoise only high-ISO frames, flag them as picks. Example prompt: "Go through the concert in folder X, pick the best 50, edit them consistently, denoise where the ISO is high and flag them as picked."
+- **Install on Linux with one command.** `curl -fsSL https://raw.githubusercontent.com/vedranius/rapidraw-web/main/rrweb/install.sh | sh` picks the `.deb`, `.rpm` or AppImage for your distribution and CPU, checks its SHA-256 and installs it. Add `-s -- --server` to also start RapidRAW Web as a service on a machine without a screen (now and at boot), or `-s -- --appimage` to install into `~/.local/bin` without sudo.
+- **Fixed: one-click update of a `.deb`/`.rpm` failed when RapidRAW Web runs as root** (for example in Docker), because it looked for `sudo`. Running as root, it now installs directly.
+
 ## 1.16.0
 
 - **MCP server for AI apps.** RapidRAW Web now serves MCP at `http://<server>:8780/mcp`. Claude Code, Claude Desktop, Cursor, VS Code, Codex and other MCP clients can list photos, look at GPU previews, read and change any adjustment, and run every AI Editor command (AI masks, denoise, HDR, panorama, focus stack, crop, styles, LUTs, rating, culling, export) in the open RapidRAW Web tab. Every run is snapshotted and can be undone. Exports and resets need explicit confirmation. Local programs need no token; other computers, tunnels and proxies use the token shown in the app.
