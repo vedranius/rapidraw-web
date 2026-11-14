@@ -138,10 +138,11 @@ export function createUpdater({ work, headless = false, quitBridge = () => {}, n
         : ['rpm', '-U', file];
     const manual = `sudo ${cmd.join(' ')}${headless ? ' && systemctl --user restart rapidraw-web' : ''}`;
     const graphical = !headless && (process.env.DISPLAY || process.env.WAYLAND_DISPLAY) && has('pkexec');
-    const elevate = graphical ? ['pkexec'] : spawnSync('sudo', ['-n', 'true'], { stdio: 'ignore' }).status === 0 ? ['sudo', '-n'] : null;
+    const elevate = process.getuid?.() === 0 ? [] : graphical ? ['pkexec'] : spawnSync('sudo', ['-n', 'true'], { stdio: 'ignore' }).status === 0 ? ['sudo', '-n'] : null;
     if (!elevate) { const e = new Error('installing needs administrator rights'); e.manual = manual; throw e; }
     set({ phase: 'installing' });
-    const r = spawnSync(elevate[0], [...elevate.slice(1), ...cmd], { stdio: 'inherit' });
+    const [bin, ...args] = [...elevate, ...cmd];
+    const r = spawnSync(bin, args, { stdio: 'inherit' });
     if (r.status !== 0) { const e = new Error(`${cmd[0]} failed (exit ${r.status})`); e.manual = manual; throw e; }
     if (headless && process.env.INVOCATION_ID) { // systemd service: it restarts the whole unit, relay included
       detached('systemctl', ['--user', 'restart', '--no-block', 'rapidraw-web']);
