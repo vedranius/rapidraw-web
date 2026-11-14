@@ -1,6 +1,6 @@
 {
   "name": "rapidraw",
-  "version": "1.16.2",
+  "version": "1.16.3",
   "description": "Edit photos in RapidRAW Web with AI: connects to the RapidRAW MCP server and adds editing skills",
   "author": {
     "name": "vedranius"
