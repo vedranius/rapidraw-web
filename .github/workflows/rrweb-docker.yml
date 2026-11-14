@@ -1,0 +1,56 @@
+# Docker image for every release: ghcr.io/<owner>/rapidraw-web:<tag> and :latest (linux/amd64 and linux/arm64),
+# built from the release's .deb (rrweb/docker/Dockerfile).
+name: rapidraw-web docker
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (default: latest release)'
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release
+        id: rel
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
+          [ -n "$TAG" ] || TAG=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/$(echo "$GITHUB_REPOSITORY_OWNER" | tr A-Z a-z)/rapidraw-web" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: '${{ github.actor }}', password: '${{ github.token }}' }
+      - uses: docker/build-push-action@v6
+        with:
+          context: rrweb/docker
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            TAG=${{ steps.rel.outputs.tag }}
+            REPO=${{ github.repository }}
+          tags: |
+            ${{ steps.rel.outputs.image }}:${{ steps.rel.outputs.tag }}
+            ${{ steps.rel.outputs.image }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.rel.outputs.tag }}
+            org.opencontainers.image.licenses=AGPL-3.0
+          push: true
+      - name: Smoke test (amd64)
+        run: |
+          docker run -d --name rr -p 8780:8780 "${{ steps.rel.outputs.image }}:${{ steps.rel.outputs.tag }}"
+          for i in $(seq 1 60); do curl -fsS -o /dev/null http://127.0.0.1:8780/ && break; sleep 2; done
+          curl -fsS http://127.0.0.1:8780/ | grep -q '<div id="root"' || { docker logs rr; exit 1; }
+          for i in $(seq 1 30); do docker exec rr sh -c 'grep -q "bridge connected" /data/*/logs/relay.log' && exit 0; sleep 2; done
+          docker logs rr; exit 1

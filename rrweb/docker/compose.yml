@@ -1,0 +1,26 @@
+# RapidRAW Web with Docker Compose:  docker compose up -d   then open http://<server>:8780
+# Update to the newest release:      docker compose pull && docker compose up -d
+services:
+  rapidraw-web:
+    image: ghcr.io/vedranius/rapidraw-web:latest
+    restart: unless-stopped
+    ports:
+      - "8780:8780"
+    volumes:
+      - /path/to/your/photos:/photos   # change this to your photo folder
+      - rapidraw-data:/data            # settings, edits cache, AI models
+    # environment:
+    #   RR_AUTH: "user:password"       # recommended outside a trusted LAN
+    # Intel / AMD GPU (Vulkan through Mesa):
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # NVIDIA GPU (needs the NVIDIA Container Toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+volumes:
+  rapidraw-data:
