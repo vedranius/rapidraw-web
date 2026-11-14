@@ -39,6 +39,12 @@ jobs:
           curl -fsS http://127.0.0.1:8791/ | grep -q '<div id="root"' || { cat relay.log; exit 1; }
           js=$(cd rrweb/dist-web && ls assets/index-*.js | head -1)
           curl -fsS -H 'Accept-Encoding: br' -D - -o /dev/null "http://127.0.0.1:8791/$js" | grep -qi '^content-encoding: br' || { echo 'UI not compressed'; exit 1; }
+          # a photo the browser already has comes back as 304 Not Modified, not the whole file again
+          head -c 200000 /dev/urandom > /tmp/photos/a.jpg
+          tag=$(curl -fsS -D - -o /dev/null "http://127.0.0.1:8791/files?path=/tmp/photos/a.jpg" | tr -d '\r' | sed -n 's/^[Ee][Tt]ag: //p')
+          [ -n "$tag" ] || { echo 'no ETag'; exit 1; }
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -H "If-None-Match: $tag" "http://127.0.0.1:8791/files?path=/tmp/photos/a.jpg")
+          [ "$code" = 304 ] || { echo "expected 304, got $code"; exit 1; }
           kill %1
       - name: Bridge page builds
         run: node rrweb/gen-events.mjs && npx vite build --config rrweb/vite.bridge.config.mjs

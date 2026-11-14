@@ -1,0 +1,63 @@
+name: rapidraw-web benchmark
+
+# Times AI culling and library thumbnails on real RAW files (Canon CR2 and Nikon NEF from the rawpy test set) in a
+# release build, and writes the times to the run's summary. It fails when culling from the embedded previews is no
+# longer clearly faster than decoding every RAW, or when it ranks the photos differently.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 3 * * 1' # Mondays
+  pull_request:
+    paths:
+      - 'src-tauri/src/library/**'
+      - 'src-tauri/src/decode/**'
+      - 'src-tauri/src/render/image_processing.rs'
+      - '.github/workflows/rrweb-bench.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rrweb-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    name: Culling and thumbnails on RAW files
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      RAWS: letmaik/rawpy/2705f5b223c162c3cbc48474fe1a01c3cf09fa4f/test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: src-tauri, key: rrweb-bench }
+      - name: System deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+      - run: mkdir -p dist
+      - name: Sample RAW files
+        run: |
+          mkdir -p /tmp/raws
+          for f in M0054341_01_00005.cr2 RAW_CANON_40D_SRAW_V103.CR2 RAW_CANON_5DMARK2_PREPROD.CR2 iss030e122639.NEF iss042e297200.NEF; do
+            curl -fsSL --retry 3 -o "/tmp/raws/$f" "https://raw.githubusercontent.com/$RAWS/$f"
+          done
+          ls -l /tmp/raws
+      - name: Build (release)
+        working-directory: src-tauri
+        run: cargo test --release --lib --locked --no-run
+      - name: Benchmark
+        working-directory: src-tauri
+        env:
+          RR_CULL_SAMPLES: /tmp/raws
+          RR_BENCH_OUT: /tmp/bench.md
+        run: |
+          printf '| What | Time | Compared with | |\n|---|---|---|---|\n' > /tmp/bench.md
+          cargo test --release --lib --locked -- --ignored --nocapture --test-threads=1 \
+            library::culling::preview_calibration library::thumbnails::bench
+      - name: Summary
+        if: always()
+        run: |
+          { echo "### Benchmark on $(nproc) CPU threads"; echo; cat /tmp/bench.md 2>/dev/null || echo 'no results'; } >> "$GITHUB_STEP_SUMMARY"

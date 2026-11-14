@@ -833,5 +833,18 @@ mod preview_calibration {
             tf / tp
         );
         assert_eq!(order(&full), order(&fast), "ranking by quality differs");
+        crate::library::bench::report(&format!(
+            "| AI culling, {} RAWs | {:.2} s | {:.2} s full decode | {:.1}x faster |",
+            paths.len(),
+            tp,
+            tf,
+            tf / tp
+        ));
+        // CI benchmark (rrweb-bench.yml): the fast path must stay clearly faster than decoding every RAW
+        assert!(
+            tf / tp >= 1.5,
+            "culling from previews is only {:.1}x faster",
+            tf / tp
+        );
     }
 }

@@ -2,6 +2,14 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.17.0
+
+- **Library thumbnails are made faster.** Thumbnails are now encoded with a SIMD JPEG encoder, which takes half the time of the old one, and the small thumbnail is scaled from the medium one instead of again from the whole photo. Thumbnails of unedited RAW files, which come from the camera's embedded preview, take about 25 % less time in total: five Canon and Nikon RAWs went from 0.78 s to 0.56 s. The quality setting and chroma subsampling are the same, so the thumbnails look the same.
+- **Folders you come back to load their thumbnails from the browser's cache.** The relay now marks every file with an ETag and answers *304 Not Modified* when the browser already has it, instead of sending the same thumbnail again. Thumbnails are kept in the browser for an hour. This helps most over Wi-Fi, a VPN or a tunnel. The web UI itself gets the same treatment after a reload.
+- **Docker image.** `docker run -p 8780:8780 -v ~/Pictures:/photos ghcr.io/vedranius/rapidraw-web` runs RapidRAW Web on a server, for amd64 and arm64. Use the GPU with `--gpus all` (NVIDIA) or `--device /dev/dri` (Intel/AMD). A ready `compose.yml` with the GPU and password options is in [`rrweb/docker`](https://github.com/vedranius/rapidraw-web/tree/main/rrweb/docker). A new image is built and tested after every release.
+- **Every release tests its own one-click update.** After each release, GitHub Actions installs the previous version on Windows, macOS and Linux (`.deb` and AppImage), updates it to the new one with the same code as the *Update now* button, and checks that the new version runs. If it fails, an issue is opened.
+- **Performance benchmark in CI.** A weekly run, and every change to decoding, culling or thumbnails, times AI culling and library thumbnails on real Canon and Nikon RAW files in a release build and shows the times on the run's page. It fails if culling from the embedded previews stops being clearly faster than developing every RAW, or ranks the photos differently.
+
 ## 1.16.2
 
 - **AI culling is about 3–4× faster on RAW files.** Sharpness and focus are now measured on the full-size JPEG preview that the camera embeds in every RAW, instead of developing the whole RAW first. Exposure, colour and the duplicate check use a 1024 px copy of that preview. In tests on Canon (5D Mark II, 40D sRAW, EOS M) and Nikon RAWs, five photos took 0.96 s instead of 3.5 s, the photos were ranked in exactly the same order, and the scores differed by at most 0.015. The numbers are scaled so the *blur threshold* keeps the same meaning.
