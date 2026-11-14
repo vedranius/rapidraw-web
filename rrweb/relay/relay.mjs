@@ -15,6 +15,8 @@
 //   RR_NO_BROWSER=1           the bridge doesn't open a browser (server without a screen; detected under xvfb-run)
 //   RR_LOG                    copy of the output in a file (bridge/run.sh: <app data>/logs/relay.log; up to 5 MB, then .1)
 //   RR_VERBOSE=1              log every IPC call and the file operations of on-demand folders
+//   RR_MCP=0                  turns off the MCP server for AI clients at /mcp (mcp.mjs)
+//   RR_MCP_TOKEN              token for MCP clients on other computers (default: generated, kept in RR_CONFIG)
 // FUSE calls made by the relay itself (Files tab on a folder from a browsing computer) and their answers share the
 // libuv thread pool
 process.env.UV_THREADPOOL_SIZE ??= '64';
@@ -31,6 +33,7 @@ import { createFiles, validName } from './files.mjs';
 import { createRemote, editor } from './remote.mjs';
 import { createThumbs } from './thumbs.mjs';
 import { createExif } from './exif.mjs';
+import { createMcp } from './mcp.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -83,6 +86,10 @@ function sendFile(res, file, cache) {
 }
 
 const server = http.createServer((req, res) => {
+  if (req.url === '/mcp' || req.url.startsWith('/mcp?')) { // own token auth (mcp.mjs), AI clients can't do Basic auth prompts
+    mcp.http(req, res, new URL(req.url, 'http://x'), { isLoopback, sameOrigin }).catch((e) => { console.warn(`[mcp] ${e.message}`); if (!res.headersSent) res.writeHead(500).end(); });
+    return;
+  }
   if (!authed(req)) { res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="RapidRAW"' }).end(); return; }
   const u = new URL(req.url, 'http://x');
   if (u.pathname === '/files') {
@@ -97,6 +104,7 @@ const server = http.createServer((req, res) => {
     files.http(req, res, u);
     return;
   }
+  if (u.pathname === '/rr/skills.zip') { mcp.zip(res).catch((e) => { if (!res.headersSent) res.writeHead(500).end(e.message); }); return; } // AI Editor → AI clients (mcp.mjs)
   if (u.pathname === '/rr/speed') { // connection speed test for the preview quality recommendation (rrweb/files/network.ts)
     editor.touch(); // background transfers (folders from browsing computers) pause while it measures
     if (req.method === 'POST') { // upload: the browser sends, the relay only counts
@@ -211,7 +219,17 @@ function loadDone(f) {
   if (ms > 0 && ms < 120000) decodeMs = decodeMs ? decodeMs * 0.7 + ms * 0.3 : ms;
   if (ms > 0 && ms < 120000) thumbs.editTiming('load', ms);
 }
-const LOCAL = { ...progressCommands, __rr_home: () => os.homedir(), __rr_ping: () => Date.now(), ...files.commands, ...remote.commands };
+// MCP server for AI clients (mcp.mjs); plans run in an open RapidRAW Web tab (src/agent/McpHost.tsx)
+const mcp = createMcp({
+  bridge: bridgeCall,
+  within: (p) => files.within(p),
+  library: () => config.library ?? null,
+  configFile: CONFIG,
+  config,
+  saveConfig: () => { if (CONFIG) fs.writeFileSync(CONFIG, JSON.stringify(config, null, 2)); },
+  dataDir: process.env.RR_MCP_DIR ?? (CONFIG ? path.dirname(CONFIG) : path.join(os.homedir(), '.rapidraw-web')),
+});
+const LOCAL = { ...progressCommands, ...mcp.commands, __rr_home: () => os.homedir(), __rr_ping: () => Date.now(), ...files.commands, ...remote.commands };
 
 // A RapidRAW command called by the relay itself (Files tab: settings, delete to trash)
 function bridgeCall(cmd, args) {
@@ -422,6 +440,7 @@ wssClient.on('connection', (ws, req) => {
   ws.on('close', () => {
     clients.delete(ws);
     editor.dropView(ws);
+    mcp.dropClient(ws);
     for (const [r, f] of inflight) if (f.client === ws) { inflight.delete(r); editor.loaded(r); }
     for (const [id, owner] of channelOwners) if (owner.ws === ws) channelOwners.delete(id);
   });
@@ -474,4 +493,5 @@ server.listen(PORT, HOST, () => {
     ? Object.values(os.networkInterfaces()).flat().filter((i) => i.family === 'IPv4' && !i.internal).map((i) => i.address)
     : HOST === '127.0.0.1' || HOST === 'localhost' ? [] : [HOST];
   for (const h of ['localhost', ...lan]) console.log(`[relay] url http://${h}:${PORT}`);
+  if (mcp.enabled) console.log(`[relay] mcp http://localhost:${PORT}/mcp (AI clients; token in AI Editor → AI clients)`);
 });

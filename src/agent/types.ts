@@ -44,6 +44,8 @@ export interface AgentSkill {
   allowedTools: string[];
   content: string;
   builtIn: boolean;
+  /** installed on the RapidRAW Web server (from git), see setInstalledSkills */
+  installed?: boolean;
 }
 
 export interface AgentHistogramStats {

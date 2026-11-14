@@ -1,0 +1,41 @@
+name: MCP server and skills
+
+on:
+  pull_request:
+    paths: ['rrweb/relay/**', 'rrweb/mcp/**', 'src/agent/**', 'src/utils/defaultAdjustments.json', 'plugins/**', '.claude-plugin/**', 'rrweb/VERSION', '.github/workflows/mcp.yml']
+  push:
+    branches: [main]
+    paths: ['rrweb/relay/**', 'rrweb/mcp/**', 'src/agent/**', 'src/utils/defaultAdjustments.json', 'plugins/**', '.claude-plugin/**', 'rrweb/VERSION', '.github/workflows/mcp.yml']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Relay packages
+        run: cd rrweb/relay && npm install --omit=dev --no-audit --no-fund
+      - name: Generated catalog and skills are up to date
+        run: node rrweb/mcp/generate.mjs --check
+      - name: MCP server tests
+        run: node --test rrweb/relay/mcp.test.mjs
+      - name: Plugin manifests are valid JSON with matching versions
+        run: |
+          node -e '
+            const fs = require("fs");
+            const m = JSON.parse(fs.readFileSync(".claude-plugin/marketplace.json"));
+            const p = JSON.parse(fs.readFileSync("plugins/rapidraw/.claude-plugin/plugin.json"));
+            JSON.parse(fs.readFileSync("plugins/rapidraw/.mcp.json"));
+            const v = fs.readFileSync("rrweb/VERSION", "utf8").trim();
+            if (!m.plugins.some((x) => x.name === p.name)) throw new Error("marketplace does not list the plugin");
+            if (p.version !== v) throw new Error(`plugin.json version ${p.version} != rrweb/VERSION ${v} (run node rrweb/mcp/generate.mjs)`);
+            for (const d of fs.readdirSync("plugins/rapidraw/skills")) {
+              const t = fs.readFileSync(`plugins/rapidraw/skills/${d}/SKILL.md`, "utf8");
+              const name = /^name:\s*(.+)$/m.exec(t)?.[1];
+              if (name !== d) throw new Error(`skill ${d}: name "${name}" must equal the folder name`);
+              if (!/^[a-z0-9-]{1,64}$/.test(name)) throw new Error(`skill ${d}: invalid name`);
+            }
+            console.log("ok");
+          '
