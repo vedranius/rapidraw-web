@@ -1,0 +1,133 @@
+# After every release: install the previous release on each platform and update it to the new one with the in-app
+# updater (the installed relay/update.mjs, run by the installed Node.js), then check the new version is in place.
+name: rapidraw-web update test
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      from:
+        description: 'Installed release (default: the one before the latest)'
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  RR_UPDATE_REPO: ${{ github.repository }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      from: ${{ steps.p.outputs.from }}
+      to: ${{ steps.p.outputs.to }}
+      web: ${{ steps.p.outputs.web }}
+    steps:
+      - id: p
+        run: |
+          TO=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          FROM="${{ github.event.inputs.from }}"
+          [ -n "$FROM" ] || FROM=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=20" --jq '[.[]|select(.draft|not)|.tag_name]|map(select(test("^rapidraw-v.*-web-v")))|.[1]')
+          echo "from=$FROM" >> "$GITHUB_OUTPUT"; echo "to=$TO" >> "$GITHUB_OUTPUT"; echo "web=${TO##*-web-v}" >> "$GITHUB_OUTPUT"
+          echo "Update test: $FROM -> $TO"
+
+  windows:
+    needs: plan
+    runs-on: windows-latest
+    defaults: { run: { shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ${{ needs.plan.outputs.from }}
+        run: |
+          gh release download "${{ needs.plan.outputs.from }}" -R "$GITHUB_REPOSITORY" -p '*_windows_x64-setup.exe' -O old-setup.exe
+          ./old-setup.exe //S
+          for i in $(seq 1 60); do [ -f "$LOCALAPPDATA/RapidRAW Web Bridge/rrweb-node.exe" ] && break; sleep 2; done
+          ls "$LOCALAPPDATA/RapidRAW Web Bridge"
+      - name: Update with the installed updater
+        run: |
+          D="$LOCALAPPDATA/RapidRAW Web Bridge"
+          RR_TAG="${{ needs.plan.outputs.from }}" "$D/rrweb-node.exe" rrweb/relay/test/update-e2e.mjs "$D/_up_/rrweb/relay/update.mjs"
+      - name: New version is installed
+        run: |
+          D="$LOCALAPPDATA/RapidRAW Web Bridge"
+          for i in $(seq 1 90); do
+            grep -rqs -- "${{ needs.plan.outputs.to }}" "$D/_up_/rrweb/dist-web/assets" && { echo "updated to ${{ needs.plan.outputs.to }}"; exit 0; }
+            sleep 2
+          done
+          echo "::error::still the old version after the update"; exit 1
+      - if: always()
+        run: taskkill //F //IM rapidraw-web-bridge.exe || true
+
+  macos:
+    needs: plan
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ${{ needs.plan.outputs.from }}
+        run: |
+          gh release download "${{ needs.plan.outputs.from }}" -R "$GITHUB_REPOSITORY" -p '*_macos_arm64.dmg' -O old.dmg
+          hdiutil attach -nobrowse -readonly -mountpoint /tmp/old old.dmg
+          ditto /tmp/old/*.app "/Applications/RapidRAW Web Bridge.app"
+          hdiutil detach /tmp/old
+      - name: Update with the installed updater
+        run: |
+          A="/Applications/RapidRAW Web Bridge.app"
+          # the helper waits for its parent to exit: give it a short-lived one
+          RR_TAG="${{ needs.plan.outputs.from }}" sh -c '"$0" rrweb/relay/test/update-e2e.mjs "$1"; exit $?' \
+            "$A/Contents/MacOS/rrweb-node" "$A/Contents/Resources/_up_/rrweb/relay/update.mjs"
+      - name: New version is installed
+        run: |
+          for i in $(seq 1 90); do
+            grep -rqs -- "${{ needs.plan.outputs.to }}" "/Applications/RapidRAW Web Bridge.app/Contents/Resources/_up_/rrweb/dist-web/assets" && { echo "updated to ${{ needs.plan.outputs.to }}"; exit 0; }
+            sleep 2
+          done
+          echo "::error::still the old version after the update"; exit 1
+
+  linux:
+    needs: plan
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [deb, AppImage]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ${{ needs.plan.outputs.from }} (${{ matrix.kind }})
+        run: |
+          gh release download "${{ needs.plan.outputs.from }}" -R "$GITHUB_REPOSITORY" -p "*_linux_x64.${{ matrix.kind }}" -O "old.${{ matrix.kind }}"
+          if [ "${{ matrix.kind }}" = deb ]; then sudo apt-get update -qq && sudo apt-get install -y ./old.deb
+          else chmod +x old.AppImage && ./old.AppImage --appimage-extract >/dev/null && mv squashfs-root old-root; fi
+      - name: Update with the installed updater
+        run: |
+          if [ "${{ matrix.kind }}" = deb ]; then
+            R="/usr/lib/RapidRAW Web Bridge/_up_/rrweb/relay/update.mjs"
+            sudo -E RR_TAG="${{ needs.plan.outputs.from }}" /usr/bin/rrweb-node rrweb/relay/test/update-e2e.mjs "$R"
+          else
+            APPIMAGE="$PWD/old.AppImage" RR_TAG="${{ needs.plan.outputs.from }}" sh -c '"$0" rrweb/relay/test/update-e2e.mjs "$1"; exit $?' \
+              old-root/usr/bin/rrweb-node "$(ls -d old-root/usr/lib/*/_up_/rrweb/relay/update.mjs)"
+          fi
+      - name: New version is installed
+        run: |
+          for i in $(seq 1 60); do
+            if [ "${{ matrix.kind }}" = deb ]; then
+              dpkg-query -W -f='${Version}' rapid-raw-web-bridge | grep -q -- "web.${{ needs.plan.outputs.web }}" && exit 0
+            else
+              rm -rf new-root && ./old.AppImage --appimage-extract >/dev/null 2>&1 && mv squashfs-root new-root \
+                && grep -rqs -- "${{ needs.plan.outputs.to }}" new-root/usr/lib/*/_up_/rrweb/dist-web/assets && exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::still the old version after the update"; exit 1
+
+  report:
+    needs: [plan, windows, macos, linux]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          gh issue create -R "$GITHUB_REPOSITORY" -t "Update test ${{ needs.plan.outputs.from }} → ${{ needs.plan.outputs.to }} failed" \
+            -b "One-click update did not work on at least one platform. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
