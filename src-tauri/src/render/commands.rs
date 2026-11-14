@@ -420,6 +420,7 @@ pub async fn generate_uncropped_preview(
 pub async fn generate_preview_for_path(
     path: String,
     js_adjustments: Value,
+    max_edge: Option<u32>,
     app_handle: tauri::AppHandle,
 ) -> Result<Response, String> {
     tokio::task::spawn_blocking(move || {
@@ -510,7 +511,20 @@ pub async fn generate_preview_for_path(
             "generate_preview_for_path",
         )?;
 
-        let rgba = final_image.into_rgba8();
+        let mut rgba = final_image.into_rgba8();
+        // Smaller previews on request (MCP clients look at the photo, they don't need all pixels)
+        if let Some(edge) = max_edge.filter(|e| *e >= 64) {
+            let (w, h) = rgba.dimensions();
+            if w.max(h) > edge {
+                let scale = edge as f32 / w.max(h) as f32;
+                let (nw, nh) = (
+                    ((w as f32 * scale).round() as u32).max(1),
+                    ((h as f32 * scale).round() as u32).max(1),
+                );
+                rgba =
+                    image::imageops::resize(&rgba, nw, nh, image::imageops::FilterType::Triangle);
+            }
+        }
         let (width, height) = rgba.dimensions();
         let pixels = ImgRef::new(rgba.as_raw().as_rgba(), width as usize, height as usize);
         let bytes = crate::render::preview_jpeg::encode_rgba(pixels, 92, false)

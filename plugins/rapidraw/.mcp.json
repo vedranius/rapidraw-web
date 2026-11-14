@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "rapidraw": {
+      "type": "http",
+      "url": "${RAPIDRAW_MCP_URL:-http://localhost:8780/mcp}",
+      "headers": { "Authorization": "Bearer ${RAPIDRAW_MCP_TOKEN:-local}" }
+    }
+  }
+}

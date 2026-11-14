@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import type { AgentSkill } from './types';
 import concertHero from './skills/concert-hero.md?raw';
 import portraitClean from './skills/portrait-clean.md?raw';
@@ -41,13 +42,16 @@ function parseSkill(raw: string, builtIn: boolean): AgentSkill {
       content = trimmed.slice(end + 4).trim();
       frontmatter = {};
       for (const line of block.split('\n')) {
-        const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-        if (match) frontmatter[match[1]] = match[2].trim();
+        // nested keys (Agent Skills SKILL.md: metadata: {title, triggers, ...}) are flattened
+        const match = line.match(/^\s*([A-Za-z0-9_-]+):\s*(.*)$/);
+        if (match && match[2].trim()) frontmatter[match[1]] = match[2].trim().replace(/^["']|["']$/g, '');
       }
     }
   }
-  const name = frontmatter.name || 'Untitled skill';
-  const id = name
+  // the MCP header of the SKILL.md files (rrweb/mcp/generate.mjs) is for AI clients, not for the in-app planner
+  content = content.replace(/<!-- mcp -->[\s\S]*?<!-- \/mcp -->\s*/, '').trim();
+  const name = frontmatter.title || frontmatter.name || 'Untitled skill';
+  const id = (frontmatter.name || name)
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -58,7 +62,7 @@ function parseSkill(raw: string, builtIn: boolean): AgentSkill {
     name,
     description: frontmatter.description || '',
     triggers: parseList(frontmatter.triggers),
-    allowedTools: parseList(frontmatter['allowed-tools']),
+    allowedTools: parseList(frontmatter['allowed-tools'] || frontmatter['rapidraw-commands']),
     content,
     builtIn,
   };
@@ -107,8 +111,30 @@ export function loadCustomSkills(): AgentSkill[] {
   }
 }
 
+// Skills installed on the RapidRAW Web server (from git or a URL, rrweb/relay/mcp.mjs); they replace a built-in skill
+// with the same id, so installing from the repository also updates the recipes
+let installedSkills: AgentSkill[] = [];
+
+export function setInstalledSkills(raws: string[]): void {
+  installedSkills = raws
+    .filter((raw) => !/^\s*mcp-only:\s*["']?true/m.test(raw))
+    .map((raw) => ({ ...parseSkill(raw, false), installed: true }));
+}
+
+/** Reads the skills installed on the RapidRAW Web server; does nothing in the desktop app. */
+export async function loadInstalledSkills(): Promise<void> {
+  try {
+    const list = await invoke<Array<{ raw: string }>>('__rr_skills_list');
+    setInstalledSkills((list ?? []).map((entry) => entry.raw));
+  } catch {
+    // desktop app: no RapidRAW Web server
+  }
+}
+
 export function getAllSkills(): AgentSkill[] {
-  return [...BUILT_IN_SKILLS, ...loadCustomSkills()];
+  const byId = new Map<string, AgentSkill>();
+  for (const skill of [...BUILT_IN_SKILLS, ...installedSkills, ...loadCustomSkills()]) byId.set(skill.id, skill);
+  return [...byId.values()];
 }
 
 export function saveCustomSkill(skill: Omit<AgentSkill, 'builtIn' | 'id'> & { id?: string }): AgentSkill {

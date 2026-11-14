@@ -1,0 +1,11 @@
+{
+  "name": "rapidraw",
+  "version": "1.16.0",
+  "description": "Edit photos in RapidRAW Web with AI: connects to the RapidRAW MCP server and adds editing skills",
+  "author": {
+    "name": "vedranius"
+  },
+  "homepage": "https://github.com/vedranius/rapidraw-web/blob/main/AI_MCP.md",
+  "repository": "https://github.com/vedranius/rapidraw-web",
+  "license": "AGPL-3.0"
+}
