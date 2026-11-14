@@ -15,6 +15,8 @@
 //   RR_NO_BROWSER=1           the bridge doesn't open a browser (server without a screen; detected under xvfb-run)
 //   RR_LOG                    copy of the output in a file (bridge/run.sh: <app data>/logs/relay.log; up to 5 MB, then .1)
 //   RR_VERBOSE=1              log every IPC call and the file operations of on-demand folders
+//   RR_TAG                    this release (rapidraw-v…-web-v…), passed by the bridge: enables one-click updates (update.mjs)
+//   RR_NO_UPDATE=1            don't check GitHub for updates; RR_UPDATE_REPO (vedranius/rapidraw-web) where to check
 //   RR_MCP=0                  turns off the MCP server for AI clients at /mcp (mcp.mjs)
 //   RR_MCP_TOKEN              token for MCP clients on other computers (default: generated, kept in RR_CONFIG)
 // FUSE calls made by the relay itself (Files tab on a folder from a browsing computer) and their answers share the
@@ -26,13 +28,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { format } from 'node:util';
+import { format, promisify } from 'node:util';
 import { WebSocketServer } from 'ws';
 import { createFiles, validName } from './files.mjs';
 import { createRemote, editor } from './remote.mjs';
 import { createThumbs } from './thumbs.mjs';
 import { createExif } from './exif.mjs';
+import { createUpdater } from './update.mjs';
 import { createMcp } from './mcp.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -85,6 +89,51 @@ function sendFile(res, file, cache) {
   });
 }
 
+// The web UI (a ~5 MB script) compressed once per file and kept in memory: over a VPN, tunnel or Wi-Fi the first load
+// is several times faster (brotli ≈ 1/5 of the size). Photos and previews are already compressed and are sent as they are.
+const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.svg', '.json', '.wasm', '.ico']);
+const packed = new Map(); // file → { mtime, done: Promise<{ br, gzip }> }, compressed in the thread pool
+const brotli = promisify(zlib.brotliCompress), gzip = promisify(zlib.gzip);
+function pack(file, st) {
+  let p = packed.get(file);
+  if (p?.mtime === st.mtimeMs) return p.done;
+  const done = fs.promises.readFile(file).then(async (raw) => {
+    const [br, gz] = await Promise.all([
+      brotli(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: raw.length } }),
+      gzip(raw, { level: 9 }),
+    ]);
+    return { br, gzip: gz };
+  });
+  done.catch(() => packed.delete(file));
+  packed.set(file, { mtime: st.mtimeMs, done });
+  return done;
+}
+function sendDist(req, res, file, cache) {
+  fs.stat(file, async (err, st) => {
+    if (err || !st.isFile()) { res.writeHead(404).end(); return; }
+    const accept = String(req.headers['accept-encoding'] ?? '');
+    const enc = /\bbr\b/.test(accept) ? 'br' : /\bgzip\b/.test(accept) ? 'gzip' : null;
+    const ext = path.extname(file).toLowerCase();
+    if (!enc || !COMPRESSIBLE.has(ext) || st.size < 1024) { sendFile(res, file, cache); return; }
+    let body;
+    try { body = (await pack(file, st))[enc]; } catch { sendFile(res, file, cache); return; }
+    res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream', 'Content-Encoding': enc, Vary: 'Accept-Encoding',
+      'Content-Length': body.length, 'Cache-Control': cache, 'Last-Modified': st.mtime.toUTCString() });
+    res.end(req.method === 'HEAD' ? undefined : body);
+  });
+}
+// Compress the UI's files right away, so even the first browser gets them small
+function warmDist(dir = DIST) {
+  fs.readdir(dir, { withFileTypes: true }, (err, list) => {
+    if (err) return;
+    for (const d of list) {
+      const f = path.join(dir, d.name);
+      if (d.isDirectory()) warmDist(f);
+      else if (COMPRESSIBLE.has(path.extname(f).toLowerCase())) fs.stat(f, (e, st) => { if (!e && st.size >= 1024) pack(f, st).catch(() => {}); });
+    }
+  });
+}
+
 const server = http.createServer((req, res) => {
   if (req.url === '/mcp' || req.url.startsWith('/mcp?')) { // own token auth (mcp.mjs), AI clients can't do Basic auth prompts
     mcp.http(req, res, new URL(req.url, 'http://x'), { isLoopback, sameOrigin }).catch((e) => { console.warn(`[mcp] ${e.message}`); if (!res.headersSent) res.writeHead(500).end(); });
@@ -127,8 +176,8 @@ const server = http.createServer((req, res) => {
   const file = path.join(DIST, rel);
   if (!file.startsWith(DIST)) { res.writeHead(403).end(); return; }
   fs.stat(file, (err, st) => {
-    if (!err && st.isFile()) sendFile(res, file, rel.startsWith('assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
-    else sendFile(res, path.join(DIST, 'index.html'), 'no-cache');
+    if (!err && st.isFile()) sendDist(req, res, file, rel.startsWith('assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
+    else sendDist(req, res, path.join(DIST, 'index.html'), 'no-cache');
   });
 });
 
@@ -219,6 +268,22 @@ function loadDone(f) {
   if (ms > 0 && ms < 120000) decodeMs = decodeMs ? decodeMs * 0.7 + ms * 0.3 : ms;
   if (ms > 0 && ms < 120000) thumbs.editTiming('load', ms);
 }
+// One-click updates (update.mjs): the browser and the bridge window show a newer release; installing it closes the
+// bridge, the helper puts the new version in place and starts it again
+const updater = createUpdater({
+  work: remote.work,
+  headless: HEADLESS,
+  quitBridge: () => bridge?.send(JSON.stringify({ rr: 'quit' })),
+  notify: (st) => {
+    broadcast({ event: 'rr-update', payload: st });
+    bridge?.send(JSON.stringify({ rr: 'update', ...st }));
+  },
+});
+const updateCommands = {
+  __rr_update_status: () => updater.view(),
+  __rr_update_check: () => updater.check(true),
+  __rr_update_apply: () => updater.apply(),
+};
 // MCP server for AI clients (mcp.mjs); plans run in an open RapidRAW Web tab (src/agent/McpHost.tsx)
 const mcp = createMcp({
   bridge: bridgeCall,
@@ -229,7 +294,7 @@ const mcp = createMcp({
   saveConfig: () => { if (CONFIG) fs.writeFileSync(CONFIG, JSON.stringify(config, null, 2)); },
   dataDir: process.env.RR_MCP_DIR ?? (CONFIG ? path.dirname(CONFIG) : path.join(os.homedir(), '.rapidraw-web')),
 });
-const LOCAL = { ...progressCommands, ...mcp.commands, __rr_home: () => os.homedir(), __rr_ping: () => Date.now(), ...files.commands, ...remote.commands };
+const LOCAL = { ...progressCommands, ...updateCommands, ...mcp.commands, __rr_home: () => os.homedir(), __rr_ping: () => Date.now(), ...files.commands, ...remote.commands };
 
 // A RapidRAW command called by the relay itself (Files tab: settings, delete to trash)
 function bridgeCall(cmd, args) {
@@ -328,6 +393,7 @@ wssBridge.on('connection', (ws) => {
   quiet(ws, 'bridge');
   console.log('[relay] bridge connected');
   ws.send(JSON.stringify(libraryState()));
+  if (updater.view().available) ws.send(JSON.stringify({ rr: 'update', ...updater.view() }));
   ws.on('message', (data, isBinary) => {
     if (isBinary) {
       const r = data.readUInt32LE(0);
@@ -353,6 +419,7 @@ wssBridge.on('connection', (ws) => {
     }
     let msg;
     try { msg = JSON.parse(data); } catch { return; }
+    if (msg.rr === 'update-apply') { updater.apply().catch((e) => console.warn(`[update] ${e.message}`)); return; }
     if (msg.rr === 'set-library') {
       try { setLibrary(msg.path); } catch (e) { console.error(`[relay] photo library ${msg.path}: ${e.message}`); }
       ws.send(JSON.stringify(libraryState()));
@@ -486,6 +553,7 @@ process.on('unhandledRejection', (e) => console.error('[relay] unhandled rejecti
 
 server.on('error', (e) => { console.error(`[relay] ${e.code === 'EADDRINUSE' ? `port ${PORT} is already in use` : e.message}`); process.exit(1); });
 server.listen(PORT, HOST, () => {
+  warmDist();
   remote.sweep();
   console.log(`[relay] http://${HOST}:${PORT}  dist=${DIST}  roots=${ROOTS.join(',')}  auth=${AUTH ? 'on' : 'off'}`);
   // the bridge reads the "[relay] url …" lines (window with the addresses to open in a browser)

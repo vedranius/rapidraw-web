@@ -98,6 +98,7 @@ async function startBundledRelay() {
       RR_WORK: await join(await appCacheDir(), 'remote'),
       RR_LOG: await join(await appDataDir(), 'logs', 'relay.log'),
       RR_EXIT_WITH_PARENT: '1',
+      RR_TAG: `rapidraw-v${__RR_VERSION__}-web-v${__RR_WEB_VERSION__}`, // enables one-click updates (relay/update.mjs)
     };
     const cmd = Command.sidecar(NODE, [script], { env });
     const line = (l: string) => {
@@ -151,6 +152,8 @@ function connect() {
       showLibrary(msg.path ?? msg.env); // with a library chosen the window minimizes, without one it stays open
       return;
     }
+    if (msg.rr === 'update') { showUpdate(msg); return; }
+    if (msg.rr === 'quit') { status('Updating: RapidRAW Web restarts in a moment…'); setTimeout(() => getCurrentWindow().close(), 300); return; }
     const { id, cmd, args } = msg;
     if (cmd === 'save_settings' && args?.settings) args.settings.useWgpuRenderer = false;
     try {
@@ -182,6 +185,28 @@ el('libpick').onclick = async () => {
   const p = await pickFolder({ directory: true, title: 'Photo library folder', defaultPath: library ?? undefined });
   if (typeof p === 'string') send({ rr: 'set-library', path: p });
 };
+
+// A newer release (relay/update.mjs): one click downloads and installs it, RapidRAW Web then starts again
+type Update = { available: boolean; latest: string | null; canInstall: boolean; phase: string; progress: number;
+  error: string | null; manual: string | null; url: string | null };
+function showUpdate(u: Update) {
+  const box = el('upd');
+  box.hidden = !u.available;
+  if (!u.available) return;
+  const busy = ['downloading', 'installing', 'restarting'].includes(u.phase);
+  el('updtext').textContent = u.phase === 'downloading' ? `Downloading ${u.latest}… ${Math.round(u.progress * 100)} %`
+    : u.phase === 'installing' ? `Installing ${u.latest}…`
+      : u.phase === 'restarting' ? `Installed ${u.latest}, restarting…`
+        : u.phase === 'error' ? `Update failed: ${u.error}${u.manual ? ` · run: ${u.manual}` : ''}`
+          : `New version available: ${u.latest}`;
+  const b = el('updgo') as HTMLButtonElement;
+  b.hidden = !u.canInstall || busy;
+  b.textContent = u.phase === 'error' ? 'Try again' : 'Update now';
+  b.onclick = () => { b.disabled = true; send({ rr: 'update-apply' }); };
+  b.disabled = false;
+  const n = el('updnotes') as HTMLAnchorElement;
+  n.onclick = (e) => { e.preventDefault(); if (u.url) open(u.url); };
+}
 
 el('ver').textContent = `RapidRAW ${__RR_VERSION__} · web ${__RR_WEB_VERSION__}`;
 el('min').onclick = () => getCurrentWindow().minimize();

@@ -2,6 +2,18 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.16.0
+
+- **MCP server for AI apps.** RapidRAW Web now serves MCP at `http://<server>:8780/mcp`. Claude Code, Claude Desktop, Cursor, VS Code, Codex and other MCP clients can list photos, look at GPU previews, read and change any adjustment, and run every AI Editor command (AI masks, denoise, HDR, panorama, focus stack, crop, styles, LUTs, rating, culling, export) in the open RapidRAW Web tab. Every run is snapshotted and can be undone. Exports and resets need explicit confirmation. Local programs need no token; other computers, tunnels and proxies use the token shown in the app.
+- **AI skills, installed in one click.** The editing recipes (concert, portrait, HDR, panorama, focus stack, high ISO, noir, editorial colour, social export, culling) are Agent Skills and MCP prompts. Install everything into Claude Code with `claude plugin marketplace add vedranius/rapidraw-web` and `claude plugin install rapidraw@rapidraw-web`. You can also install from any git repository or .md URL in *AI Editor → AI clients (MCP)*, where clicking again updates them, or download a .zip for Claude.ai.
+- **New AI Editor tab "AI clients (MCP)"** with ready-to-copy configs for each AI client. Docs: [AI_MCP.md](https://github.com/vedranius/rapidraw-web/blob/main/AI_MCP.md).
+- **One-click updates.** When a new rapidraw-web release is published, a green **Update** badge appears next to the version at the top of the page, and an *Update now* button in the RapidRAW Web window on the server. Clicking it shows what's new; *Update now* downloads the right installer for the server (Windows, macOS Intel/Apple Silicon, Linux x64/arm64), checks its SHA-256 against GitHub and installs it. RapidRAW Web then restarts by itself and the browser reconnects; your edits are kept.
+  - Windows: the installer runs in passive mode and starts RapidRAW Web again. macOS: the app is replaced in place. Linux: an AppImage replaces itself; `.deb`/`.rpm` are installed through the system password prompt on a desktop, or with passwordless `sudo` on a server (otherwise the badge shows the one command to run).
+  - The server checks GitHub at start and every 6 hours. Turn it off with `RR_NO_UPDATE=1`.
+  - This is the first version that can update itself: to get it, install this release over the old one once.
+- **Faster first load over Wi-Fi, VPN or a tunnel.** The relay now sends the web UI brotli-compressed: about 1.4 MB instead of 5.5 MB, so the editor opens several times faster on slower connections. Photos and previews are unchanged.
+- **Automatic checks for every change.** A new GitHub Actions workflow (`rapidraw-web CI`) tests the relay, starts it and loads the UI, builds the web UI, the bridge page and the desktop UI, renders the release notes, and runs the Rust tests on every pull request, in a few minutes instead of the full platform builds.
+
 ## 1.15.6
 
 - When the style-count slider asks for more looks than the detected scene has distinct built-in profiles, AI Style now creates **session-only variations of the best-fitting looks** (Soft, Bold, Cinematic, Pastel, Punchy, Airy) instead of returning fewer cards or filling a concert with landscape/food presets. Save any variation as a profile to keep it permanently.

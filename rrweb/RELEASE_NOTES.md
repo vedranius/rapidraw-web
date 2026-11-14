@@ -17,6 +17,8 @@ Install on the computer that has your photos and the GPU; open it from any brows
 
 Package version: `{{PKG_VERSION}}`, so installing a newer web release over an older one upgrades it, also on the same RapidRAW version.
 
+**Updating:** from v1.16.0 on, RapidRAW Web updates itself: click the green *Update* badge at the top of the page (or *Update now* in the RapidRAW Web window on the server). Older versions: install the new package over the old one once.
+
 Setup: [README → Quick start](https://github.com/vedranius/rapidraw-web/blob/main/.github/README.md#quick-start)
 
 ### Features

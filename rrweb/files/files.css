@@ -153,3 +153,28 @@
 .rre-ring .fg { stroke: currentColor; transition: stroke-dashoffset .12s linear; }
 .rre-ring.slow { color: #e08a5a; }
 .rre-ring.done { color: #8c8; }
+
+/* one-click update (update.ts) */
+#rrf-tabs .rru-badge { background: #2f6f3a; color: #fff; }
+#rrf-tabs .rru-badge:hover { background: #3c8a49; }
+.rru-back { position: fixed; inset: 0; z-index: 2147483002; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .55); }
+.rru { width: min(640px, 92vw); max-height: 84vh; overflow: auto; padding: 20px 24px; border-radius: 12px; background: #1b1b1b; color: #ddd;
+  font-size: 13px; line-height: 1.45; box-shadow: 0 10px 40px rgba(0, 0, 0, .6); }
+.rru h2 { margin: 0 0 4px; font-size: 17px; color: #fff; }
+.rru h3 { margin: 14px 0 4px; font-size: 14px; color: #eee; }
+.rru h4 { margin: 10px 0 4px; font-size: 13px; color: #ccc; }
+.rru ul { margin: 4px 0; padding-left: 20px; list-style: disc; }
+.rru li { margin: 2px 0; }
+.rru a { color: #8bf; }
+.rru code { padding: 0 3px; border-radius: 3px; background: #2a2a2a; }
+.rru-cur { margin: 0 0 8px; color: #888; }
+.rru-notes { max-height: 46vh; overflow: auto; padding: 4px 10px; border-radius: 8px; background: #151515; }
+.rru-msg { color: #aaa; }
+.rru-msg.err { color: #e88; }
+.rru-bar { height: 6px; margin: 12px 0 4px; border-radius: 3px; background: #333; overflow: hidden; }
+.rru-bar > div { height: 100%; background: #4caf50; transition: width .25s; }
+.rru-actions { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+.rru-grow { flex: 1; }
+.rru-actions button { padding: 6px 14px; border: 0; border-radius: 6px; background: #333; color: #eee; font: inherit; cursor: pointer; }
+.rru-actions .rru-go { background: #2f6f3a; color: #fff; font-weight: 600; }
+.rru-actions button:disabled { opacity: .5; cursor: default; }

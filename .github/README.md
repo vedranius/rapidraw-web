@@ -42,6 +42,7 @@ GPU + photo storage
 - **You can see what is happening**: progress while a photo opens (download, then decoding), labels on thumbnails that aren't ready, the number of thumbnails left in the top bar, and a ring with a percentage next to the slider you just moved.
 - **[Connection badge](#connection-and-preview-quality)**: measures download, upload and ping, and recommends RapidRAW's preview size and quality for your connection. If a connection dies silently, it shows *Reconnecting…*, and the browser reconnects and repeats what was waiting.
 - **The exact version** (`rapidraw-v<RapidRAW>-web-v<web>`) is shown at the top, linked to its release.
+- **One-click updates** from the browser or the server window, on Windows, macOS and Linux.
 - **Always the current RapidRAW**: every RapidRAW release is rebuilt automatically with this web layer.
 
 ## How it differs from RapidRAW on your computer
@@ -71,6 +72,8 @@ Where it is *not* faster: each preview has to travel over the network, which tak
 ## Quick start
 
 Download from the [Releases](https://github.com/vedranius/rapidraw-web/releases) page. Any GPU with Vulkan, DX12 or Metal works, including integrated Intel graphics.
+
+**Updates:** from v1.16.0 on, a green **Update** badge appears at the top of the page (and in the RapidRAW Web window on the server) when a new release is out. It shows what's new, and **Update now** downloads, verifies and installs it on the server; RapidRAW Web restarts and the page reconnects by itself.
 
 ### Windows x64: all-in-one installer
 
@@ -121,7 +124,8 @@ Open `http://<server>:8780`. Run it as your normal user, not as root: as root, e
 
 Updating: install the newer package the same way. Its version is `<RapidRAW>+web.<web>` (e.g. `1.6.4+web.1.5.0`), so a new web release is an upgrade even when RapidRAW itself is unchanged.
 
-**Server bundle** (`…_linux_server.tar.gz`, optional): the relay and web UI on their own, started with `run.sh` (needs Node.js 20+ and a bridge from one of the packages above, which `run.sh` finds by itself). Useful for Docker or if you want to start the parts yourself: `RR_PHOTOS=/mnt/photos ./run.sh`. Without a display it starts the bridge under `xvfb-run`, and it restarts the relay if it stops. It also works on Windows (`powershell -ExecutionPolicy Bypass -File .un.ps1`).
+**Server bundle** (`…_linux_server.tar.gz`, optional): the relay and web UI on their own, started with `run.sh` (needs Node.js 20+ and a bridge from one of the packages above, which `run.sh` finds by itself). Useful for Docker or if you want to start the parts yourself: `RR_PHOTOS=/mnt/photos ./run.sh`. Without a display it starts the bridge under `xvfb-run`, and it restarts the relay if it stops. It also works on Windows (`powershell -ExecutionPolicy Bypass -File .
+un.ps1`).
 
 ## Photo library and folder pickers
 
