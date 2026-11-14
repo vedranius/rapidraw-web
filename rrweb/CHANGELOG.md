@@ -2,6 +2,12 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.16.3
+
+- **Fixed: a batch of MCP previews could freeze the whole computer.** When an AI app asked for many photo previews at once (for example while editing a concert set), each one developed the full RAW in parallel, used up all RAM and pushed the machine into swap until it stopped responding. Full-image previews now render two at a time and wait for room in the app's memory budget, and AI culling analyses at most four photos at a time instead of one per CPU core.
+- The memory budget now follows a systemd `MemoryMax` or container limit, not only the machine's RAM.
+- The Linux `rapidraw-web` user service now sets `MemoryHigh`/`MemoryMax`, so if memory ever runs away only RapidRAW Web restarts, not the whole desktop.
+
 ## 1.16.2
 
 - **AI culling is about 3–4× faster on RAW files.** Sharpness and focus are now measured on the full-size JPEG preview that the camera embeds in every RAW, instead of developing the whole RAW first. Exposure, colour and the duplicate check use a 1024 px copy of that preview. In tests on Canon (5D Mark II, 40D sRAW, EOS M) and Nikon RAWs, five photos took 0.96 s instead of 3.5 s, the photos were ranked in exactly the same order, and the scores differed by at most 0.015. The numbers are scaled so the *blur threshold* keeps the same meaning.

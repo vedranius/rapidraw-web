@@ -16,6 +16,12 @@ Environment=RR_NO_BROWSER=1
 ExecStart=/usr/bin/xvfb-run -a /usr/bin/rapidraw-web-bridge
 Restart=on-failure
 RestartSec=3
+# If a big batch ever runs away, slow down and then restart only this service instead of
+# pushing the whole machine into swap (with a large swap file that freezes the desktop).
+MemoryHigh=60%
+MemoryMax=75%
+MemorySwapMax=2G
+OOMScoreAdjust=500
 
 [Install]
 WantedBy=default.target

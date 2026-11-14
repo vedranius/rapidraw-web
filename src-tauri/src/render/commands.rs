@@ -416,6 +416,12 @@ pub async fn generate_uncropped_preview(
     .map_err(|e| format!("Task execution failed: {}", e))?
 }
 
+/// Full-image previews rendered at the same time by `generate_preview_for_path`.
+const MAX_PREVIEWS_FOR_PATH: usize = 2;
+
+static PREVIEW_FOR_PATH_SLOTS: crate::app::memory_budget::Slots =
+    crate::app::memory_budget::Slots::new(MAX_PREVIEWS_FOR_PATH);
+
 #[tauri::command]
 pub async fn generate_preview_for_path(
     path: String,
@@ -425,10 +431,26 @@ pub async fn generate_preview_for_path(
 ) -> Result<Response, String> {
     tokio::task::spawn_blocking(move || {
         let state = app_handle.state::<AppState>();
+        // MCP clients ask for many of these at once. Each one develops the full
+        // image, so without a cap a batch of parallel calls used all RAM and
+        // pushed the machine into swap until it froze.
+        let _slot = PREVIEW_FOR_PATH_SLOTS.acquire();
         let context = get_or_init_gpu_context(&state, &app_handle)?;
         let (source_path, _) = parse_virtual_path(&path);
         let source_path_str = source_path.to_string_lossy().to_string();
         let is_raw = is_raw_file(&source_path_str);
+        let mask_count = js_adjustments["masks"].as_array().map_or(0, |m| m.len());
+        let _memory = state.memory_budget.reserve(
+            crate::export::tasks::estimate_export_memory(
+                &source_path_str,
+                is_raw,
+                None,
+                mask_count,
+                "jpeg",
+                92,
+            ),
+            None,
+        );
         let settings = load_settings(app_handle.clone()).unwrap_or_default();
 
         let (pristine, _exif) = crate::decode::image_loader::get_or_decode_pristine(
