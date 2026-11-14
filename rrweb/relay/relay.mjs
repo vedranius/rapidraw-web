@@ -80,14 +80,32 @@ function sameOrigin(req) {
   try { return new URL(o).host === req.headers.host; } catch { return false; }
 }
 
-function sendFile(res, file, cache) {
+// ETag from size and mtime: a browser that already has the file (thumbnails when you come back to a folder, the UI
+// after a reload) gets 304 Not Modified instead of the whole file again
+const etagOf = (st) => `W/"${st.size.toString(36)}-${Math.round(st.mtimeMs).toString(36)}"`;
+function notModified(req, res, st, cache) {
+  const tag = etagOf(st);
+  const inm = req.headers['if-none-match'];
+  const ims = Date.parse(req.headers['if-modified-since'] ?? '');
+  const fresh = inm ? inm.split(',').some((t) => t.trim() === tag || t.trim() === '*')
+    : Number.isFinite(ims) && Math.floor(st.mtimeMs / 1000) <= Math.floor(ims / 1000);
+  if (!fresh) return false;
+  res.writeHead(304, { ETag: tag, 'Cache-Control': cache, 'Last-Modified': st.mtime.toUTCString() }).end();
+  return true;
+}
+function sendFile(req, res, file, cache) {
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404).end(); return; }
+    if (notModified(req, res, st, cache)) return;
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream',
-      'Content-Length': st.size, 'Cache-Control': cache, 'Last-Modified': st.mtime.toUTCString() });
+      'Content-Length': st.size, 'Cache-Control': cache, 'Last-Modified': st.mtime.toUTCString(), ETag: etagOf(st) });
+    if (req.method === 'HEAD') { res.end(); return; }
     fs.createReadStream(file).pipe(res);
   });
 }
+// RapidRAW names cached thumbnails by a hash of the photo, its edits and the render settings: a new edit is a new file
+const THUMB_FILE = /^[0-9a-f]{64}_(small|medium)\.jpg$/;
+const filesCache = (file) => (THUMB_FILE.test(path.basename(file)) ? 'private, max-age=3600' : 'private, no-cache');
 
 // The web UI (a ~5 MB script) compressed once per file and kept in memory: over a VPN, tunnel or Wi-Fi the first load
 // is several times faster (brotli ≈ 1/5 of the size). Photos and previews are already compressed and are sent as they are.
@@ -114,11 +132,12 @@ function sendDist(req, res, file, cache) {
     const accept = String(req.headers['accept-encoding'] ?? '');
     const enc = /\bbr\b/.test(accept) ? 'br' : /\bgzip\b/.test(accept) ? 'gzip' : null;
     const ext = path.extname(file).toLowerCase();
-    if (!enc || !COMPRESSIBLE.has(ext) || st.size < 1024) { sendFile(res, file, cache); return; }
+    if (notModified(req, res, st, cache)) return;
+    if (!enc || !COMPRESSIBLE.has(ext) || st.size < 1024) { sendFile(req, res, file, cache); return; }
     let body;
-    try { body = (await pack(file, st))[enc]; } catch { sendFile(res, file, cache); return; }
+    try { body = (await pack(file, st))[enc]; } catch { sendFile(req, res, file, cache); return; }
     res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream', 'Content-Encoding': enc, Vary: 'Accept-Encoding',
-      'Content-Length': body.length, 'Cache-Control': cache, 'Last-Modified': st.mtime.toUTCString() });
+      'Content-Length': body.length, 'Cache-Control': cache, 'Last-Modified': st.mtime.toUTCString(), ETag: etagOf(st) });
     res.end(req.method === 'HEAD' ? undefined : body);
   });
 }
@@ -145,7 +164,7 @@ const server = http.createServer((req, res) => {
     let real;
     try { real = fs.realpathSync(u.searchParams.get('path') ?? ''); } catch { res.writeHead(404).end(); return; }
     if (!underRoots(real)) { console.warn('[files] 403 outside RR_ROOTS:', real); res.writeHead(403).end(); return; }
-    sendFile(res, real, 'private, max-age=60');
+    sendFile(req, res, real, filesCache(real));
     return;
   }
   if (u.pathname.startsWith('/fm/')) {

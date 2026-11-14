@@ -734,13 +734,53 @@ fn encode_thumbnail(image: &DynamicImage, target_width: u32) -> Result<Vec<u8>> 
         target_width,
     );
     let thumbnail = downscaled.as_ref().unwrap_or(image);
-    let mut buf = Cursor::new(Vec::new());
-    let mut encoder = JpegEncoder::new_with_quality(&mut buf, 75);
-    match thumbnail.as_rgb8() {
-        Some(rgb) => encoder.encode_image(rgb)?,
-        None => encoder.encode_image(&thumbnail.to_rgb8())?,
+    let converted;
+    let rgb = match thumbnail.as_rgb8() {
+        Some(rgb) => rgb,
+        None => {
+            converted = thumbnail.to_rgb8();
+            &converted
+        }
+    };
+    encode_jpeg_rgb8(rgb, 75)
+}
+
+/// Both library thumbnails: the small one is scaled from the medium one, not again from the whole image
+fn encode_thumbnails(image: &DynamicImage, small: u32, medium: u32) -> Result<(Vec<u8>, Vec<u8>)> {
+    if small > medium {
+        return Ok((
+            encode_thumbnail(image, small)?,
+            encode_thumbnail(image, medium)?,
+        ));
     }
-    Ok(buf.into_inner())
+    let scaled =
+        crate::render::image_processing::downscale_f32_image_if_needed(image, medium, medium);
+    let medium_image = scaled.as_ref().unwrap_or(image);
+    Ok((
+        encode_thumbnail(medium_image, small)?,
+        encode_thumbnail(medium_image, medium)?,
+    ))
+}
+
+/// Baseline JPEG with the SIMD encoder of jpeg-encoder, several times faster than image's own; the same quality
+/// scale and 4:2:0 chroma as image's JpegEncoder, so thumbnails look the same
+pub(crate) fn encode_jpeg_rgb8(rgb: &image::RgbImage, quality: u8) -> Result<Vec<u8>> {
+    let (w, h) = rgb.dimensions();
+    if w > u16::MAX as u32 || h > u16::MAX as u32 {
+        let mut buf = Cursor::new(Vec::new());
+        JpegEncoder::new_with_quality(&mut buf, quality).encode_image(rgb)?;
+        return Ok(buf.into_inner());
+    }
+    let mut out = Vec::with_capacity((w * h / 4) as usize);
+    let mut encoder = jpeg_encoder::Encoder::new(&mut out, quality);
+    encoder.set_sampling_factor(jpeg_encoder::SamplingFactor::F_2_2);
+    encoder.encode(
+        rgb.as_raw(),
+        w as u16,
+        h as u16,
+        jpeg_encoder::ColorType::Rgb,
+    )?;
+    Ok(out)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -835,10 +875,8 @@ pub fn generate_single_thumbnail_and_cache(
     };
 
     if let Ok(thumb_image) = thumb_result
-        && let (Ok(small_data), Ok(medium_data)) = (
-            encode_thumbnail(&thumb_image, target_width_small),
-            encode_thumbnail(&thumb_image, target_width_medium),
-        )
+        && let Ok((small_data, medium_data)) =
+            encode_thumbnails(&thumb_image, target_width_small, target_width_medium)
     {
         let _ = fs::write(&small_path, &small_data);
         let _ = fs::write(&medium_path, &medium_data);
@@ -1129,10 +1167,9 @@ pub fn get_cached_or_generate_thumbnail_image(
         }
 
         let thumb_image = generate_thumbnail_data(path_str, gpu_context, None, app_handle)?;
-        if let (Ok(small_data), Ok(medium_data)) = (
-            encode_thumbnail(&thumb_image, target_width_small),
-            encode_thumbnail(&thumb_image, target_width_medium),
-        ) {
+        if let Ok((small_data, medium_data)) =
+            encode_thumbnails(&thumb_image, target_width_small, target_width_medium)
+        {
             let _ = fs::write(
                 thumb_cache_dir.join(format!("{}_small.jpg", cache_hash)),
                 &small_data,
@@ -1305,5 +1342,55 @@ mod analysis_preview_tests {
         assert!(stats.colorfulness >= 0.0);
 
         let _ = fs::remove_dir_all(&cache);
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+
+    // Library thumbnails of unedited RAWs from their embedded previews (rrweb-bench.yml):
+    //   RR_CULL_SAMPLES=/dir cargo test --release --lib thumbnails::bench -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn embedded_preview_thumbnails() {
+        let dir = std::env::var("RR_CULL_SAMPLES").expect("RR_CULL_SAMPLES");
+        let mut paths: Vec<PathBuf> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        paths.sort();
+        let mut spent = std::time::Duration::ZERO;
+        let mut made = 0;
+        for p in &paths {
+            let t = std::time::Instant::now();
+            let made_here = try_load_embedded_raw_preview(p, 1280).map(|img| {
+                (
+                    encode_thumbnails(&img, 480, 1280).unwrap(),
+                    img.width().max(img.height()),
+                )
+            });
+            spent += t.elapsed();
+            if let Some(((small, medium), long_edge)) = made_here {
+                for (jpeg, edge) in [(small, 480), (medium, 1280)] {
+                    let back = image::load_from_memory(&jpeg).expect("thumbnail is a valid JPEG");
+                    assert_eq!(back.width().max(back.height()), edge.min(long_edge));
+                }
+                made += 1;
+            }
+        }
+        let s = spent.as_secs_f64();
+        println!(
+            "{made} of {} thumbnails from embedded previews in {s:.2} s",
+            paths.len()
+        );
+        crate::library::bench::report(&format!(
+            "| Library thumbnails, {} RAWs | {:.2} s | {} from the embedded preview | {:.0} ms each |",
+            paths.len(),
+            s,
+            made,
+            s * 1000.0 / paths.len().max(1) as f64
+        ));
+        assert!(made > 0, "no RAW had an embedded preview large enough");
     }
 }
