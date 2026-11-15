@@ -209,7 +209,7 @@ Plugin donosi skill `concert-processing` s cijelim postupkom i tri subagenta za 
 RapidRAW razvija RAW i radi globalne i maskirane korekcije. Za ono što traži slojeve (dvostruka ekspozicija,
 spajanje više fotografija, zoom-burst oko oštrog izvođača, sjaj snopova svjetla, tekst, naslovnice, posteri)
 AI klijent koristi i [PhotoCraft](https://github.com/storytold/photocraft), open-source slojevni editor s
-vlastitim MCP serverom (`photocraft-cli mcp --headless`). Skill `photo-studio` iz plugina odlučuje kamo ide
+vlastitim MCP serverom (`photocraft-cli mcp`, bez prozora). Skill `photo-studio` iz plugina odlučuje kamo ide
 koji posao i kako se predaje datoteka; `stage-looks` ima izglede i recepte.
 
 - **Redoslijed je uvijek RapidRAW pa PhotoCraft.** RapidRAW izveze 16-bitni TIFF (sRGB, s EXIF/IPTC/XMP) u

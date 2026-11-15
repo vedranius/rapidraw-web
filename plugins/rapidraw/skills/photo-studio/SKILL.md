@@ -12,7 +12,7 @@ Two MCP servers work together:
 
 - `rapidraw` (RapidRAW Web): the RAW developer. Non-destructive, GPU, whole shoots as headless jobs.
 - `photocraft` (PhotoCraft, open-source layered editor by Storytold, started as
-  `photocraft-cli mcp --headless`): layers, masks, blend modes, filters, text, composites. Set it up with
+  `photocraft-cli mcp`, headless by default): layers, masks, blend modes, filters, text, composites. Set it up with
   `rrweb/photocraft/setup.sh` (see AI_MCP.md, "PhotoCraft").
 
 Start every job with `rapidraw_status` and, if the job may need layers, PhotoCraft's `session_list`. If
@@ -56,11 +56,13 @@ the Smart Object), so the composite keeps its masks and effects.
    (`select.subject` → `layer.layerMask.revealSelection`, or `layer.layerMask.hideSelection`). Use
    `command_batch` for a recipe, `render_preview {max_side: 1600}` to look, and `edit.undo` to step back.
    `command_list {filter: "filter."}` shows every filter and its parameters; do not guess parameters.
-4. **Save the master and the deliverable:** `doc_save {path: "<name>.pcraft"}` (or `.psd` for other apps),
-   then `doc_export` to `.tif` (16-bit master) or `.jpg` (`quality` 90–95 for web). Write into
-   `<shoot>/_studio/out`; PhotoCraft never writes anywhere else (its write root).
-5. **Metadata:** do not assume PhotoCraft carries the camera EXIF into its exports (a composite made
-   from `doc_new` certainly has none). Check with `exiftool -s -Make -Model -DateTimeOriginal -Artist
+4. **Save the master and the deliverable:** paths are relative to the write root (`"cover.pcraft"`, not
+   `"out/cover.pcraft"`). `doc_save {path: "<name>.pcraft"}` (or `.psd` for other apps),
+   then `doc_export` to `.tif` (16-bit stays 16-bit) or `.jpg` (`quality` 90–95 for web). PhotoCraft writes
+   only below its write root. A `.pcraft` is large (10–30 MB at 2048 px); keep it only for frames that
+   will be edited again.
+5. **Metadata:** an opened photo keeps its EXIF, ICC and XMP in PhotoCraft's JPEG and TIFF exports; a
+   composite made with `doc_new` has none. Check with `exiftool -s -Make -Model -DateTimeOriginal -Artist
    -Copyright <file>`; if they are missing, copy them from the RapidRAW TIFF of the base photo with
    `exiftool -overwrite_original -TagsFromFile <base>.tif -all:all -ImageSize= <file>`. Add the credit the
    user wants (`-Artist`, `-Copyright`) to every deliverable.
@@ -76,5 +78,6 @@ the Smart Object), so the composite keeps its masks and effects.
 - A concert gallery stays a gallery: one consistent look over all the photos (RapidRAW), and only a few hero
   frames get PhotoCraft treatment (a cover, a poster, a social teaser). The `stage-looks` skill has the looks
   and the effect recipes.
+- Call `rapidraw_preview` one at a time: parallel previews time out.
 - Heavy PhotoCraft filters on a 26 MP 16-bit file take time: test on `image.duplicate` resized to 2000 px
   first, then run the final recipe on the full-size document.

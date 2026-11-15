@@ -54,16 +54,16 @@ if [ -z "$cli" ]; then
   rm -rf "$HOME/.local/opt/photocraft" && mkdir -p "$HOME/.local/opt" "$HOME/.local/bin"
   mv "$(dirname "$(dirname "$top")")" "$HOME/.local/opt/photocraft"
   for b in "$HOME/.local/opt/photocraft/bin/"photocraft*; do ln -sf "$b" "$HOME/.local/bin/$(basename "$b")"; done
-  cli="$HOME/.local/opt/photocraft/bin/photocraft-cli"
+  cli="$HOME/.local/bin/photocraft-cli"
 fi
-cli="$(realpath "$cli")"
+# keep the ~/.local/bin link (not the versioned folder) so an upgrade does not break the registration
 say "PhotoCraft CLI: $cli ($("$cli" --version 2>/dev/null | head -1))"
 
 # 2. folders (PhotoCraft refuses a root that does not exist)
 mkdir -p "$out"
 for r in "${roots[@]}"; do [ -d "$r" ] || { echo "Read folder $r does not exist." >&2; exit 1; }; done
 # the write folder is readable too, so a saved .pcraft can be opened again
-args=(mcp --headless)
+args=(mcp)  # headless unless the ArtCraft Launcher lets agents use the open app (0.23 has no --headless flag)
 for r in "${roots[@]}" "$out"; do args+=(--automation-read-root "$r"); done
 args+=(--automation-write-root "$out")
 
