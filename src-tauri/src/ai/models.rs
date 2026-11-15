@@ -550,9 +550,42 @@ fn gpu_execution_provider() -> Option<ExecutionProviderDispatch> {
     )
 }
 
+// Linux: CUDA when the ONNX Runtime that was loaded has it (onnxruntime-gpu through ORT_DYLIB_PATH, see AI_MCP.md).
+// The runtime bundled with RapidRAW is the CPU build, so nothing changes for it.
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn gpu_execution_provider() -> Option<ExecutionProviderDispatch> {
-    None
+    use ort::execution_providers::{CUDAExecutionProvider, ExecutionProvider};
+    static CUDA: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+        std::env::var("RR_AI_CUDA").map_or(true, |v| v != "0")
+            && CUDAExecutionProvider::default()
+                .is_available()
+                .unwrap_or(false)
+    });
+    CUDA.then(|| {
+        CUDAExecutionProvider::default()
+            .with_device_id(
+                std::env::var("RR_AI_CUDA_DEVICE")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0),
+            )
+            .build()
+            .error_on_failure()
+    })
+}
+
+/// Threads the AI models use on the CPU. All cores made a laptop unusable while a batch was denoised
+/// (load 27 on 12 threads), so two are left for the desktop and the rest of RapidRAW. RR_AI_THREADS overrides.
+pub fn ai_cpu_threads() -> usize {
+    static THREADS: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+        let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+        std::env::var("RR_AI_THREADS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or_else(|| cores.saturating_sub(2).max(1))
+    });
+    *THREADS
 }
 
 fn gpu_allowed_on_platform() -> bool {
@@ -580,7 +613,7 @@ fn create_session(
         .build();
     let providers: Vec<_> = gpu_provider.into_iter().chain([cpu_provider]).collect();
 
-    let mut builder = Session::builder()?;
+    let mut builder = Session::builder()?.with_intra_threads(ai_cpu_threads())?;
     if use_gpu || kind == SessionKind::OneShot {
         builder = builder.with_memory_pattern(false)?;
     }

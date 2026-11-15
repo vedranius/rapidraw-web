@@ -257,6 +257,7 @@ async fn render_tiff(
         subfolder: None,
         dpi: None,
         export_original: None,
+        fast_denoise: false,
     };
     export_images_and_wait(
         vec![path.clone()],

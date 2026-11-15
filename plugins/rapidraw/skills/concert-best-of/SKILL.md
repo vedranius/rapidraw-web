@@ -30,9 +30,13 @@ and marked, not one photo.
    is dominated by one moment, swap a few for the next ranked frames of other scenes.
 4. **Edit the picks as one set** (all paths in one command so the look matches):
    - `photo.auto-tone` on all picks first;
-   - `photo.denoise` only where needed: ISO 3200 and above with `method: "ai"`, intensity about 35 at 3200,
-     50 at 6400, 65 at 12800+; ISO 1600 at 20 to 25 only if the shadows were lifted; never on clean low-ISO
-     files;
+   - denoise only where the noise is: AI clients let `rapidraw_process` choose per photo from the measured
+     noise (ask the user for a speed first: none, bm3d, mixed or ai; `rapidraw_analyze` gives the times). In the
+     app: `photo.denoise` with `method: "bm3d"` for moderate noise (ISO 1600 to 6400, intensity 55 to 75) and
+     `method: "ai"` only for heavy noise (intensity 40 to 70, never 100: it can leave a tile grid); never on
+     clean low-ISO files;
+   - keep auto tone gentle on high ISO: clarity and structure 10 to 15, contrast up to 30 to 40, blacks not
+     below -10 to -12, brightness within ±1;
    - one coherent look: `photo.prompt-style` (e.g. "clean concert colour, protected stage highlights,
      natural skin") or a saved style with `photo.style-profile`;
    - fix outliers afterwards with `settings.patch` (exposure, highlights, whites) on single photos.
@@ -40,3 +44,5 @@ and marked, not one photo.
    `flag: "pick"`), optionally a tag like the event name. Do not reject the rest unless asked.
 6. **Verify.** Preview three or four picks (brightest, darkest, highest ISO) and correct with small patches.
    Report how many were analysed, picked, denoised, and anything that failed. Do not export unless asked.
+   For hundreds of photos, AI clients should follow the `concert-processing` skill (headless jobs, cheap
+   models for culling).

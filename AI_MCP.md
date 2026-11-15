@@ -66,15 +66,21 @@ i učitaj u *Settings → Capabilities → Skills*.
 
 | Alat | Što radi | Treba otvoren tab |
 |---|---|---|
-| `rapidraw_status` | radi li RapidRAW, biblioteka, otvorena i odabrana fotografija | ne |
-| `rapidraw_list_images` | fotografije u mapi (ocjena, zastavica, tagovi, RAW, uređeno) | ne |
+| `rapidraw_status` | radi li RapidRAW, biblioteka, opterećenje servera, poslovi, vision model, koji model za koji posao | ne |
+| `rapidraw_list_images` | fotografije u mapi (ocjena, zastavica, boja, tagovi, RAW, uređeno), po stranicama i s filtrima (`flag`, `color`, `minRating`, `ext`, `pathsOnly`) | ne |
 | `rapidraw_get_edit` | trenutno uređivanje, samo vrijednosti različite od zadanih (malo tokena) | ne |
 | `rapidraw_preview` | render s GPU-a kao JPEG (`maxEdge`), može prikazati i patch bez spremanja | ne |
-| `rapidraw_apply_adjustments` | deep-merge patcha bilo kojih adjustmenta (slideri, krivulje, HSL, color grading, maske) | ne |
+| `rapidraw_apply_adjustments` | deep-merge patcha bilo kojih adjustmenta (slideri, krivulje, HSL, color grading, maske); vrijednosti izvan raspona se odbijaju | ne |
+| `rapidraw_process` | **posao**: maske, denoise po izmjerenom šumu, export, automatska provjera i jedan popravak svake fotke | ne |
+| `rapidraw_analyze` | **posao**: šum svake fotke i koliko bi trajala svaka od 4 brzine | ne |
+| `rapidraw_export` | **posao**: export sa spremljenim uređivanjima i provjerom datoteka | ne |
+| `rapidraw_ai_mask` | **posao**: AI maska (subjekt, lice, nebo, prednji plan, tekst) na mnogo fotki, ista maska se zamjenjuje | ne |
+| `rapidraw_ai_review` | **posao**: jeftini vision model na serveru (Claude Haiku ili Gemini Flash) ocjenjuje granične fotke | ne |
+| `rapidraw_job` | stanje posla, `wait` (do 50 s), `cancel`, `resume`, `undo`, `list` | ne |
 | `rapidraw_rank` | boduje cijelu mapu AI cullingom (kompozicija, svjetlo, oštrina, scena), izbacuje duplikate iz burstova i mutne, vraća najboljih N s ISO-m | ne |
-| `rapidraw_set_library` | oznaka pick/reject, zvjezdice, boja, tagovi za više fotki odjednom | ne |
+| `rapidraw_set_library` | oznaka pick/reject, zvjezdice, boja, tagovi za više fotki odjednom (`includePairs`: i JPG para RAW-a) | ne |
 | `rapidraw_commands` | katalog naredbi AI Editora i (s `reference: true`) svi ključevi i rasponi | ne |
-| `rapidraw_run` | plan naredbi AI Editora, korak po korak, sa snapshotom za undo | **da** |
+| `rapidraw_run` | plan naredbi AI Editora, korak po korak, sa snapshotom za undo (`async`: vraća jobId) | **da** |
 | `rapidraw_undo` | vraća sidecare na stanje prije `rapidraw_run` | **da** |
 | `rapidraw_skills` | popis skillova ili cijeli recept jednog skilla | ne |
 | `rapidraw_install_skills` | instalira skillove s gita ili URL-a na server | ne |
@@ -138,7 +144,60 @@ metadata:
 
 ---
 
-## 4. Kako radi
+## 4. Obrada cijelog snimanja (headless poslovi)
+
+Sve teže radi na serveru, bez preglednika, kao **posao**: alat odmah vrati `jobId`, a `rapidraw_job
+{action: "wait"}` čeka do 50 s po pozivu (ispod timeouta AI klijenata). Istovremeno radi jedan teški posao, do 6
+ih čeka u redu; ako je red pun, odgovor je "busy" s vremenom za ponovni pokušaj. Poslovi se pamte u
+`<konfiguracija>/mcp-jobs.json`: nakon restarta prekinuti posao se nastavlja s `action: "resume"` (samo s fotkama
+koje nije završio), a `action: "undo"` vraća uređivanja koja je posao promijenio. Dok posao radi, pozadinski AI
+posao za druge fotke čeka.
+
+**Četiri brzine** (`mode` u `rapidraw_process`; AI mora pitati koju želiš, `rapidraw_analyze` daje stvarna vremena
+za te fotke, a server s vremenom uči svoju brzinu):
+
+| `mode` | Što radi |
+|---|---|
+| `none` | vrlo brzo: bez denoisea (samo šum boje na jako šumnim fotkama) |
+| `bm3d` | brzo: BM3D na svakoj fotki kojoj treba |
+| `mixed` | sporije: po fotki prema izmjerenom šumu: ništa za čiste, BM3D za umjeren šum, AI za jak |
+| `ai` | vrlo sporo: AI na svakoj fotki kojoj treba |
+
+Čiste fotke nikad ne dobiju AI denoise. Šum se mjeri na renderu bez noise reductiona (Immerkær, razine 0..255 na
+2048 px); pragovi su `thresholds: {low: 1.2, high: 3.0}`. Za export manji od fotke AI denoise se radi na dvostrukoj
+veličini exporta (`fastDenoise`), ne na punih 26 MP.
+
+**Automatska provjera** svake izvezene datoteke: bijela ili crna slika, "zgnječen" subjekt u sredini, pravilna
+mreža (šavovi pločica denoisea), denoise bez učinka. S `autoFix` se fotka jednom popravi (ekspozicija, sjene,
+drugi denoise) i izveze ponovno; što ostane, vidi se u `problems` sažetka.
+
+**Koji model za koji posao** (`rapidraw_status` → `models`, mijenja se s `RR_MODEL_CULL`, `RR_MODEL_PLAN`,
+`RR_MODEL_RESCUE` ili `"models"` u konfiguraciji relaya):
+
+| Posao | Tko |
+|---|---|
+| culling stotina fotki | `rapidraw_rank` (lokalno, besplatno), zatim `rapidraw_ai_review` samo za granične; bez ključa subagent `photo-culler` (Haiku) |
+| plan uređivanja | subagent `edit-planner` (Sonnet) s 3 do 6 previewa |
+| fotke koje i nakon popravka ne prolaze provjeru | subagent `photo-rescuer` (Opus), jedna po jedna |
+
+Plugin donosi skill `concert-processing` s cijelim postupkom i ta tri subagenta.
+
+**Vision model na serveru** (`rapidraw_ai_review`): postavi `ANTHROPIC_API_KEY` (zadano `claude-haiku-5-5`) ili
+`GEMINI_API_KEY` (zadano `gemini-flash-latest`); `RR_VISION_PROVIDER` (`anthropic`|`gemini`) i `RR_VISION_MODEL`
+biraju drugi. Fotke napuštaju server samo kad je ključ postavljen, i to kao previewi do 768 px (zadano 640).
+
+**Brzina i opterećenje:**
+
+- AI (ONNX) koristi sve jezgre osim dvije (`RR_AI_THREADS` mijenja broj). Linux servis ima `Nice=5` i
+  `CPUWeight=70`, pa desktop i SSH ostaju responzivni.
+- NVIDIA GPU za AI denoise i maske: instaliraj `onnxruntime-gpu` (CUDA 12) i pokreni s
+  `ORT_DYLIB_PATH=/put/do/libonnxruntime.so`; RapidRAW sam koristi CUDA ako je dostupna (`RR_AI_CUDA=0` isključuje,
+  `RR_AI_CUDA_DEVICE` bira karticu).
+- Previewi preko MCP-a renderiraju se najviše dva odjednom (`RR_MCP_PREVIEWS`).
+
+---
+
+## 5. Kako radi
 
 ```
 AI klijent ──MCP (HTTP POST /mcp, JSON-RPC)──▶ relay (rrweb/relay/mcp.mjs)

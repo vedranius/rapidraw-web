@@ -13,10 +13,12 @@ non-destructive: edits live in sidecar files, the originals are never changed.
 
 ## Workflow
 
-1. `rapidraw_status`: is the bridge connected, which photo library, is a RapidRAW Web tab open, which photo is
-   selected. `rapidraw_run` needs an open tab; if there is none, ask the user to open RapidRAW Web in a browser,
-   or stay with the headless tools.
-2. Find photos with `rapidraw_list_images` (default: the library folder; `recursive: true` for subfolders).
+1. `rapidraw_status`: is the bridge connected, which photo library, server load, running jobs, the configured
+   cheap vision model and the models to use for each kind of work. Every tool works without a browser tab
+   except `rapidraw_run`/`rapidraw_undo`; if those are needed and no tab is open, ask the user to open
+   RapidRAW Web, or stay with the headless tools.
+2. Find photos with `rapidraw_list_images` (default: the library folder; `recursive: true` for subfolders;
+   paged with `offset`/`limit`, filtered by `flag`, `color`, `minRating`, `ext`; `pathsOnly` for big folders).
    To choose the best photos of a shoot ("the best 50 from the concert"), do not preview every photo: use
    `rapidraw_rank` (content-aware culling scores, bursts and soft frames dropped, ISO included), then edit
    the picks together and flag them with `rapidraw_set_library` (`flag: "pick"`). The `concert-best-of`
@@ -38,9 +40,20 @@ non-destructive: edits live in sidecar files, the originals are never changed.
    horizon, colour casts.
 7. If a run made it worse, `rapidraw_undo` with its `runId`.
 
+## Many photos
+
+For a whole shoot use the `concert-processing` skill: `rapidraw_analyze` (noise and the time of each of the
+four speeds), then one `rapidraw_process` job (masks, denoise chosen by measured noise, export, automatic
+check and fix of every file). `rapidraw_export` and `rapidraw_ai_mask` are headless jobs too. Every long tool
+returns a `jobId`: follow it with `rapidraw_job {action: "wait"}` instead of calling again, and never run
+heavy work in parallel. Use the cheapest model that can do the work: `rapidraw_rank` and
+`rapidraw_ai_review` (or the `photo-culler` subagent) for culling, the `edit-planner` subagent for the plan,
+`photo-rescuer` only for photos that still fail the check.
+
 ## Rules
 
-- Modest, coherent edits; keep within the photographic ranges of the reference.
+- Modest, coherent edits; keep within the photographic ranges of the reference (values outside are refused).
+  Brightness is -5..5 and +1 is already strong; crops are in pixels of the original.
 - Exports, resets and app settings are risky: `rapidraw_run` refuses them without `allowRisky: true`. Ask the
   user first, and say where the export goes.
 - HDR, panorama, focus stack and negative conversion create a new file; later steps of the same run work on it.

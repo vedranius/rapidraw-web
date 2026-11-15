@@ -223,23 +223,40 @@ pub(crate) async fn export_images_impl(
         (available_ram as f64 * memory_limit as f64 / 100.0) as u64,
     );
 
+    // Photos that still need AI results (denoise, masks...) are developed one at a time: each one holds a full-size
+    // image while the AI runs on all cores, and four at once pushed a 23 GB laptop into swap (load 28)
+    let needs_ai = paths.iter().any(|p| {
+        let (source_path, sidecar_path) = parse_virtual_path(p);
+        crate::ai::jobs::needs_generation(
+            &crate::metadata::sidecar::load_sidecar(&sidecar_path).adjustments,
+            &source_path,
+        )
+    });
     let num_threads = if paths.len() == 1 {
         1
     } else {
         match app_settings.export_worker_threads {
+            Some(threads) if threads > 0 && needs_ai => (threads as usize).clamp(1, 2),
             Some(threads) if threads > 0 => (threads as usize).clamp(1, 8),
+            _ if needs_ai => 1,
             _ => available_cores.clamp(1, 4),
         }
     };
 
     log::info!(
-        "Batch Export: {} cores, {:.1} GB free RAM -> up to {} threads",
+        "Batch Export: {} cores, {:.1} GB free RAM -> up to {} threads{}",
         available_cores,
         available_ram_gb,
-        num_threads
+        num_threads,
+        if needs_ai {
+            " (AI results to generate)"
+        } else {
+            ""
+        }
     );
 
     let _export_task = tokio::spawn(async move {
+        let _ai_waits = crate::ai::jobs::ExportRunning::start();
         let _watermark_cache_guard = WatermarkCacheGuard;
         let _task_guard = task_guard;
         let output_folder_path = std::path::Path::new(&output_folder_or_file);
@@ -322,11 +339,16 @@ pub(crate) async fn export_images_impl(
                     ExportAdjustmentsMode::GlobalOverride(_) => false,
                 };
 
+                let fast_denoise = export_settings.fast_denoise && export_settings.resize.is_some();
                 if !is_current_edit
                     && matches!(adjustments_mode, ExportAdjustmentsMode::UseSidecars { .. })
                 {
-                    crate::ai::jobs::ensure_ready(&app_handle_clone, &image_path_str)
-                        .map_err(|e| format!("Failed to generate AI results for export: {}", e))?;
+                    crate::ai::jobs::ensure_ready_with(
+                        &app_handle_clone,
+                        &image_path_str,
+                        fast_denoise,
+                    )
+                    .map_err(|e| format!("Failed to generate AI results for export: {}", e))?;
                 }
 
                 let sidecar = crate::metadata::sidecar::load_sidecar(&sidecar_path);
@@ -339,7 +361,19 @@ pub(crate) async fn export_images_impl(
                     } => {
                         if is_current_edit {
                             if let Some(adj) = active_adjustments {
-                                adj.clone()
+                                // the photo open in the editor: its AI results were skipped above, and an export
+                                // must not silently leave out e.g. the denoise
+                                let mut adj = adj.clone();
+                                crate::ai::jobs::resolve_detached_with(
+                                    &app_handle_clone,
+                                    &image_path_str,
+                                    &mut adj,
+                                    fast_denoise,
+                                )
+                                .map_err(|e| {
+                                    format!("Failed to generate AI results for export: {}", e)
+                                })?;
+                                adj
                             } else {
                                 develop_defaults::resolve(&sidecar.adjustments, &source_path)
                                     .into_owned()
@@ -351,10 +385,11 @@ pub(crate) async fn export_images_impl(
                     }
                     ExportAdjustmentsMode::GlobalOverride(adj) => {
                         let mut adj = adj.clone();
-                        crate::ai::jobs::resolve_detached(
+                        crate::ai::jobs::resolve_detached_with(
                             &app_handle_clone,
                             &image_path_str,
                             &mut adj,
+                            fast_denoise,
                         )
                         .map_err(|e| format!("Failed to generate AI results for export: {}", e))?;
                         adj
@@ -550,6 +585,43 @@ pub(crate) async fn export_images_impl(
                         }
                     };
 
+                    let _transient_denoise = match (&cached_patched, &export_settings.resize) {
+                        (None, Some(resize)) if fast_denoise => {
+                            let (w, h) = (source_image.width(), source_image.height());
+                            crate::ai::denoise::prepare_for_export(
+                                &app_handle_clone,
+                                source_image_path,
+                                &source_image,
+                                &js_adjustments,
+                                resize.long_edge_for(w, h).saturating_mul(2).max(1024),
+                            )?
+                        }
+                        _ => None,
+                    };
+                    if cached_patched.is_none()
+                        && !crate::ai::denoise::is_ready_for_render(
+                            source_image_path,
+                            &js_adjustments,
+                        )
+                    {
+                        // e.g. a fast export of a photo that isn't larger than twice the output: full size then
+                        crate::ai::jobs::ensure_ready_with(
+                            &app_handle_clone,
+                            &image_path_str,
+                            false,
+                        )
+                        .map_err(|e| format!("Failed to generate AI denoise for export: {}", e))?;
+                        if !crate::ai::denoise::is_ready_for_render(
+                            source_image_path,
+                            &js_adjustments,
+                        ) {
+                            return Err(format!(
+                                "AI denoise result for {} is missing; the photo was not exported without it",
+                                source_path_str
+                            ));
+                        }
+                    }
+
                     let base_image = match cached_patched {
                         Some(patched) => patched,
                         None => prepare_base(&js_adjustments)?,
@@ -672,12 +744,15 @@ pub(crate) async fn export_images_impl(
                 if !cancellation_token_clone.load(Ordering::SeqCst) {
                     let current_progress =
                         progress_counter_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                    // output and error: the MCP server reports and checks every written file
                     let _ = app_handle_clone.emit(
                         "batch-export-progress",
                         serde_json::json!({
                             "current": current_progress,
                             "total": total_paths,
-                            "path": &image_path_str
+                            "path": &image_path_str,
+                            "output": result.as_ref().ok().map(|_| output_path.to_string_lossy().to_string()),
+                            "error": result.as_ref().err(),
                         }),
                     );
                 }
@@ -879,6 +954,7 @@ pub async fn run_headless_export(
         subfolder: None,
         dpi: None,
         export_original: session.export_original,
+        fast_denoise: false,
     };
 
     let mut custom_adjustments = None;

@@ -10,12 +10,12 @@ Every slider below is a key of the adjustments object. Values are clamped by
 RapidRAW when rendered, but stay inside these photographic ranges in plans.
 
 TONE / BASIC
-exposure -5..5 EV | brightness -100..100 | contrast -100..100
+exposure -5..5 EV | brightness -5..5 (stops of midtone lift: +1 is already strong; never above 2) | contrast -100..100
 highlights -100..100 | shadows -100..100 | whites -100..100 | blacks -100..100
 toneMapper "agx" | "basic" | baselineExposure boolean
 
 COLOUR
-temperature -100..100 | tint -100..100 | vibrance -100..100 | saturation -100..100 | hue -100..100
+temperature -100..100 | tint -100..100 | vibrance -100..100 | saturation -100..100 | hue -180..180
 hsl: {reds, oranges, yellows, greens, aquas, blues, purples, magentas} each {hue: -100..100, saturation: -100..100, luminance: -100..100}
 colorGrading: {balance -100..100, blending 0..100, shadows|midtones|highlights|global: {hue 0..360, saturation 0..100, luminance -100..100}}
 colorCalibration: {shadowsTint, redHue, redSaturation, greenHue, greenSaturation, blueHue, blueSaturation} (-100..100)
@@ -27,7 +27,7 @@ curveMode: "point" | "parametric"
 DETAIL
 clarity -100..100 | dehaze -100..100 | structure -100..100
 lumaNoiseReduction 0..100 | colorNoiseReduction 0..100
-sharpness 0..100 | sharpnessThreshold 0..100
+sharpness -100..100 | sharpnessThreshold 0..80
 chromaticAberrationRedCyan -100..100 | chromaticAberrationBlueYellow -100..100
 
 EFFECTS / FINISHING
@@ -37,7 +37,7 @@ glowAmount 0..100 | halationAmount 0..100 | flareAmount 0..100
 lutData string|null | lutName string|null | lutPath string|null | lutIntensity 0..100 | lutSize number | lutIsSceneReferred boolean
 
 GEOMETRY / CROP / LENS
-aspectRatio 0 or ratio | crop {unit:"px"|"%", x,y,width,height}|null
+aspectRatio 0 or ratio | crop {unit:"px", x,y,width,height}|null in pixels of the original (use photo.crop for a ratio; "%" is not supported by the renderer)
 rotation -45..45 degrees | orientationSteps 0..3 | flipHorizontal bool | flipVertical bool
 transformDistortion, transformVertical, transformHorizontal, transformRotate, transformAspect, transformXOffset, transformYOffset: -100..100 (aspect/offsets scaled)
 transformScale 50..150
@@ -53,7 +53,7 @@ relightEnabled bool | relightNormalMap string|null | relightAmbient 0..100 | rel
 relightShadows bool | relightShadowSoftness 0..100
 relightLights array of {id,type:"point"|"spot"|"directional",x,y,depth,intensity,radius,angle,elevation,cone,feather,temperature,tint,color}
 fogEnabled bool | fogDepthMap string|null | fogAmount 0..100 | fogStart 0..100 | fogDensity 0..100
-fogHeight 0..100 | fogVariation 0..100 | fogGlow 0..100 | fogTemperature 0..100 | fogTint 0..100
+fogHeight 0..100 | fogVariation 0..100 | fogGlow 0..100 | fogTemperature -100..100 | fogTint -100..100
 
 MASKS
 masks: Array<{id,name,opacity:0..100,visible:boolean,invert:boolean,subMasks:Array<{id,type,mode:"additive"|"subtractive"|"intersect",opacity,visible,invert,parameters}>,adjustments:MaskAdjustments}>
@@ -62,6 +62,44 @@ Prefer photo.ai-mask or photo.mask-adjust over hand-building masks.
 aiPatches: generative/inpainting patch definitions; do not fabricate.
 showClipping boolean is a viewer preference, not a look.
 `.trim();
+
+/**
+ * Numeric ranges of the top-level sliders, read from the reference above ("key min..max"). Plans with values
+ * outside them are refused: an agent that read brightness as -100..100 set +12 and got white photos.
+ * The MCP server (rrweb/relay/mcp.mjs) parses the same text.
+ */
+export function adjustmentRanges(reference: string = ADJUSTMENT_REFERENCE): Map<string, [number, number]> {
+  const ranges = new Map<string, [number, number]>();
+  for (const line of reference.split('\n')) {
+    if (line.includes('{')) continue; // nested objects (hsl, colorGrading, ...)
+    for (const m of line.matchAll(/(?:^|\|)\s*([A-Za-z][\w]*) (-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)/g)) {
+      ranges.set(m[1], [Number(m[2]), Number(m[3])]);
+    }
+  }
+  return ranges;
+}
+
+/** Problems of a patch's numbers against the ranges; `mask`: local adjustments may also go negative. */
+export function rangeProblems(
+  patch: Record<string, unknown>,
+  ranges: Map<string, [number, number]>,
+  mask = false,
+): string[] {
+  const out: string[] = [];
+  for (const [key, value] of Object.entries(patch ?? {})) {
+    const range = ranges.get(key);
+    if (!range || typeof value !== 'number') continue;
+    const [min, max] = mask && range[0] === 0 ? [-range[1], range[1]] : range;
+    if (!Number.isFinite(value) || value < min || value > max) out.push(`${key} ${value} (range ${min}..${max})`);
+  }
+  const masks = (patch as { masks?: Array<{ adjustments?: Record<string, unknown> }> })?.masks;
+  if (Array.isArray(masks)) {
+    for (const m of masks) if (m?.adjustments) out.push(...rangeProblems(m.adjustments, ranges, true));
+  }
+  const crop = (patch as { crop?: { unit?: string } })?.crop;
+  if (crop && crop.unit && crop.unit !== 'px') out.push('crop unit must be "px" (pixels of the original)');
+  return out;
+}
 
 export const AGENT_TOOL_CATALOG: AgentToolDefinition[] = [
   {

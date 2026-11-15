@@ -484,7 +484,9 @@ impl Queue {
             .pending
             .iter()
             .filter(|path| !self.deferred.contains(*path));
-        if !self.status.paused {
+        // An export makes the AI results it needs itself; background work for other photos would compete with
+        // it for the CPU (exports took twice as long), so it waits, except for the photo open in the editor.
+        if !self.status.paused && EXPORTS_RUNNING.load(Ordering::SeqCst) == 0 {
             return ready.next().cloned();
         }
         open_path.filter(|open| ready.any(|path| path == open))
@@ -511,6 +513,26 @@ struct AiJobs {
     wake: Condvar,
     lane: Mutex<()>,
     interrupt_generation: AtomicU64,
+}
+
+static EXPORTS_RUNNING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Held by an export while it runs: background AI work for other photos waits until it is dropped.
+pub struct ExportRunning;
+
+impl ExportRunning {
+    pub fn start() -> Self {
+        EXPORTS_RUNNING.fetch_add(1, Ordering::SeqCst);
+        ExportRunning
+    }
+}
+
+impl Drop for ExportRunning {
+    fn drop(&mut self) {
+        if EXPORTS_RUNNING.fetch_sub(1, Ordering::SeqCst) == 1 {
+            JOBS.wake.notify_one();
+        }
+    }
 }
 
 static JOBS: LazyLock<AiJobs> = LazyLock::new(|| AiJobs {
@@ -657,7 +679,7 @@ pub fn start_worker(app_handle: AppHandle) {
             let generation = JOBS.interrupt_generation.load(Ordering::SeqCst);
             let result = {
                 let _lane = JOBS.lane.lock().unwrap_or_else(|e| e.into_inner());
-                process_path(&app_handle, &path, Some(generation))
+                process_path(&app_handle, &path, Some(generation), false)
             };
             finish_path(&app_handle, &path, result);
         }
@@ -767,11 +789,22 @@ pub fn release_deferred(path: &str) {
     }
 }
 
+#[allow(dead_code)]
 pub fn ensure_ready(app_handle: &AppHandle, path: &str) -> Result<(), String> {
+    ensure_ready_with(app_handle, path, false)
+}
+
+/// Generates the AI results a photo's edit needs (masks, maps, upscale and, unless `skip_denoise`, denoise) now,
+/// in the calling thread. `skip_denoise`: an export that denoises at its own, smaller resolution.
+pub fn ensure_ready_with(
+    app_handle: &AppHandle,
+    path: &str,
+    skip_denoise: bool,
+) -> Result<(), String> {
     let result = {
         let _lane = JOBS.lane.lock().unwrap_or_else(|e| e.into_inner());
         loop {
-            let result = process_path(app_handle, path, None);
+            let result = process_path(app_handle, path, None, skip_denoise);
             if !matches!(result, Ok(Outcome::Deferred)) {
                 break result;
             }
@@ -850,6 +883,7 @@ fn process_path(
     app_handle: &AppHandle,
     path: &str,
     interrupt_generation: Option<u64>,
+    skip_denoise: bool,
 ) -> Result<Outcome, String> {
     let (source_path, sidecar_path) = parse_virtual_path(path);
     if !source_path.exists() {
@@ -864,6 +898,7 @@ fn process_path(
         &adjustments,
         &source_id,
         interrupt_generation,
+        skip_denoise,
     )?;
 
     if !run.results.sub_masks.is_empty() || !run.results.maps.is_empty() {
@@ -888,10 +923,20 @@ fn process_path(
     }
 }
 
+#[allow(dead_code)]
 pub fn resolve_detached(
     app_handle: &AppHandle,
     path: &str,
     adjustments: &mut Value,
+) -> Result<(), String> {
+    resolve_detached_with(app_handle, path, adjustments, false)
+}
+
+pub fn resolve_detached_with(
+    app_handle: &AppHandle,
+    path: &str,
+    adjustments: &mut Value,
+    skip_denoise: bool,
 ) -> Result<(), String> {
     let (source_path, sidecar_path) = parse_virtual_path(path);
     if !has_ai_results(adjustments) || !source_path.exists() {
@@ -904,7 +949,14 @@ pub fn resolve_detached(
     let result = {
         let _lane = JOBS.lane.lock().unwrap_or_else(|e| e.into_inner());
         loop {
-            let run = match run_jobs(app_handle, path, adjustments, &source_id, None) {
+            let run = match run_jobs(
+                app_handle,
+                path,
+                adjustments,
+                &source_id,
+                None,
+                skip_denoise,
+            ) {
                 Ok(run) => run,
                 Err(error) => break Err(error),
             };
@@ -931,9 +983,13 @@ fn run_jobs(
     adjustments: &Value,
     source_id: &str,
     interrupt_generation: Option<u64>,
+    skip_denoise: bool,
 ) -> Result<JobRun, String> {
     let mut results = JobResults::default();
-    let jobs = plan(adjustments, path, source_id);
+    let mut jobs = plan(adjustments, path, source_id);
+    if skip_denoise {
+        jobs.retain(|job| !matches!(job, Job::Denoise(_)));
+    }
     if jobs.is_empty() {
         return Ok(JobRun {
             outcome: Outcome::Finished,

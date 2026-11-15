@@ -2,6 +2,23 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.18.0
+
+Fixes for everything that went wrong while processing a real concert (144 photos at ISO 12800) through the MCP server, plus a way to process a whole shoot on the server without a browser.
+
+- **Whole shoots are processed on the server, without a browser tab.** New MCP tools `rapidraw_process`, `rapidraw_export`, `rapidraw_ai_mask` and `rapidraw_analyze` run as background jobs: they return a job id at once, and `rapidraw_job` shows progress, waits (up to 50 s per call, below AI clients' timeouts), cancels, resumes after a restart and undoes a job's edits. One heavy job runs at a time; when the queue is full the server answers "busy" instead of freezing the computer. Previously almost every long call timed out in the AI client while the work went on, and parallel calls froze the laptop.
+- **Four processing speeds.** Before processing, the AI asks which speed you want and shows how long each would take for these photos: *none* (very fast, no denoise), *BM3D* (fast), *mixed* (BM3D or AI per photo by its measured noise) and *AI* (very slow). The noise of every photo is measured, so clean frames never get the slow AI denoise. For a resized export, AI denoise now runs at twice the output size instead of on the full 26 MP photo.
+- **Every exported photo is checked automatically.** White or black frames, a crushed subject, the grid of denoise tiles and a denoise that had no effect are detected, fixed once and exported again; anything left is reported.
+- **Fixed: brightness +12 made photos white.** The adjustment reference told AI clients that brightness went from -100 to 100; it is -5 to 5, and +1 is already strong. Values outside the range of any slider are now refused, in the MCP server and in the AI Editor.
+- **Fixed: a visible grid on AI-denoised photos.** Denoise tiles now overlap more, so their seams no longer show in smooth dark areas.
+- **Fixed: BM3D and AI denoise were missing from AI previews, and exports could skip denoise.** Previews for AI clients now show the denoise, and an export waits for the denoise its edit asks for instead of writing the photo without it.
+- **Fixed: high CPU for hours after a restart.** Background AI work now waits while an export runs, and AI uses every core but two, so the computer stays usable. The Linux service also runs at a lower CPU priority.
+- **Fixed: commands from an AI ran minutes later.** A plan that the open tab cannot start within 45 s is now dropped instead of running later and overwriting newer edits. Slider changes are always saved directly on the server.
+- **Cheap models for culling.** `rapidraw_ai_review` lets a cheap vision model on the server (Claude Haiku or Gemini Flash, with your API key) judge borderline frames, so the expensive model never looks at hundreds of photos. The Claude Code plugin adds the *concert-processing* skill and three subagents that pick the model by the kind of work: *photo-culler* (Haiku), *edit-planner* (Sonnet) and *photo-rescuer* (Opus, only for photos that still fail the check).
+- `rapidraw_list_images` is paged and filtered (flag, colour, rating, extension). `rapidraw_set_library` can also mark the JPEG of a RAW+JPEG pair. `rapidraw_status` shows the server's load, running jobs and the configured models.
+- AI denoise and masks can use an NVIDIA GPU on Linux: install `onnxruntime-gpu` and point `ORT_DYLIB_PATH` at it.
+- The log is no longer flooded with warnings about Fujifilm JPEG files.
+
 ## 1.17.0
 
 - **Library thumbnails are made faster.** Thumbnails are now encoded with a SIMD JPEG encoder, which takes half the time of the old one, and the small thumbnail is scaled from the medium one instead of again from the whole photo. Thumbnails of unedited RAW files, which come from the camera's embedded preview, take about 25 % less time in total: five Canon and Nikon RAWs went from 0.78 s to 0.56 s. The quality setting and chroma subsampling are the same, so the thumbnails look the same.

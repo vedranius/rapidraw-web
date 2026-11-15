@@ -16,6 +16,7 @@ import { withRotation } from '../hooks/useEditorActions';
 import { Mask, SubMaskMode } from '../types/masks';
 import type { AgentExecutionHooks, AgentStepResult } from './types';
 import { computeHistogramFromUrl } from './context';
+import { adjustmentRanges, rangeProblems } from './catalog';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -23,6 +24,7 @@ const KNOWN_ADJUSTMENT_KEYS = new Set(Object.keys(INITIAL_ADJUSTMENTS));
 const KNOWN_MASK_KEYS = new Set(Object.keys(INITIAL_MASK_ADJUSTMENTS));
 
 function assertKnownMaskKeys(patch: Record<string, unknown>): void {
+  assertInRange(patch, true);
   const unknown = Object.keys(patch).filter((key) => !KNOWN_MASK_KEYS.has(key));
   if (unknown.length === 0) return;
   throw new Error(
@@ -30,7 +32,15 @@ function assertKnownMaskKeys(patch: Record<string, unknown>): void {
   );
 }
 
+const RANGES = adjustmentRanges();
+
+function assertInRange(patch: Record<string, unknown>, mask = false): void {
+  const problems = rangeProblems(patch, RANGES, mask);
+  if (problems.length) throw new Error(`Out of range: ${problems.join(', ')}. See the adjustment reference.`);
+}
+
 function assertKnownAdjustmentKeys(patch: Record<string, unknown>): void {
+  assertInRange(patch);
   const unknown = Object.keys(patch).filter((key) => !KNOWN_ADJUSTMENT_KEYS.has(key));
   if (unknown.length === 0) return;
   const suggestion = unknown.includes('texture') ? ' RapidRAW calls texture "structure".' : '';
@@ -1095,12 +1105,9 @@ export async function executePlan(
     const requestedPaths = Array.isArray(effectiveParams.paths)
       ? (effectiveParams.paths as unknown[]).filter((path): path is string => typeof path === 'string')
       : [];
-    const isSourceOperation = [
-      'photo.hdr',
-      'photo.panorama',
-      'photo.focus-stack',
-      'photo.negative',
-    ].includes(step.tool);
+    const isSourceOperation = ['photo.hdr', 'photo.panorama', 'photo.focus-stack', 'photo.negative'].includes(
+      step.tool,
+    );
     if (
       !isSourceOperation &&
       redirectedFrom.size > 0 &&
