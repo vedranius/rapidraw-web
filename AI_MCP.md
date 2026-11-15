@@ -171,20 +171,27 @@ veličini exporta (`fastDenoise`), ne na punih 26 MP.
 mreža (šavovi pločica denoisea), denoise bez učinka. S `autoFix` se fotka jednom popravi (ekspozicija, sjene,
 drugi denoise) i izveze ponovno; što ostane, vidi se u `problems` sažetka.
 
-**Koji model za koji posao** (`rapidraw_status` → `models`, mijenja se s `RR_MODEL_CULL`, `RR_MODEL_PLAN`,
-`RR_MODEL_RESCUE` ili `"models"` u konfiguraciji relaya):
+**Delegiranje po vrsti posla.** Server sam šalje svaki posao modelu koji mu odgovara, a glavni model sesije
+(npr. Opus u Claude Codeu) čita samo sažetke:
 
-| Posao | Tko |
-|---|---|
-| culling stotina fotki | `rapidraw_rank` (lokalno, besplatno), zatim `rapidraw_ai_review` samo za granične; bez ključa subagent `photo-culler` (Haiku) |
-| plan uređivanja | subagent `edit-planner` (Sonnet) s 3 do 6 previewa |
-| fotke koje i nakon popravka ne prolaze provjeru | subagent `photo-rescuer` (Opus), jedna po jedna |
+| Posao | Alat | Model (zadano) | Bez AI providera na serveru |
+|---|---|---|---|
+| culling stotina fotki | `rapidraw_rank` (lokalno, besplatno), pa `rapidraw_ai_review` samo za granične | `cull`: Haiku / Gemini Flash | subagent `photo-culler` |
+| plan uređivanja seta | `rapidraw_ai_plan` (3 do 8 uzoraka, plan se provjerava, ništa se ne sprema) | `plan`: Sonnet / Gemini Pro | subagent `edit-planner` |
+| fotke koje ni nakon popravka ne prolaze provjeru | `rapidraw_process {rescue: true}` (do `rescueLimit` fotki po poslu) | `rescue`: Opus / Gemini Pro | subagent `photo-rescuer` |
 
-Plugin donosi skill `concert-processing` s cijelim postupkom i ta tri subagenta.
+Modeli se mijenjaju s `RR_MODEL_CULL`, `RR_MODEL_PLAN`, `RR_MODEL_RESCUE` ili `"models"` u konfiguraciji relaya.
 
-**Vision model na serveru** (`rapidraw_ai_review`): postavi `ANTHROPIC_API_KEY` (zadano `claude-haiku-5-5`) ili
-`GEMINI_API_KEY` (zadano `gemini-flash-latest`); `RR_VISION_PROVIDER` (`anthropic`|`gemini`) i `RR_VISION_MODEL`
-biraju drugi. Fotke napuštaju server samo kad je ključ postavljen, i to kao previewi do 768 px (zadano 640).
+**Plaća pretplata, ne API.** Zadano server koristi **Claude Code CLI prijavljen tvojim Claude planom** (Pro/Max):
+instaliraj `claude` na server i jednom se prijavi (`claude`, pa `/login`). Ako `claude` nije instaliran, koristi
+**Gemini CLI** prijavljen Google računom. CLI se pokreće bez ijednog API ključa u okruženju, a ako bi ipak
+koristio API ključ (npr. iz svojih postavki), poziv se prekida. Plaćanje po tokenu postoji samo ako ga izričito
+odabereš: `RR_AI_PROVIDER=anthropic` uz `ANTHROPIC_API_KEY` ili `RR_AI_PROVIDER=gemini` uz `GEMINI_API_KEY`.
+`rapidraw_status` pokazuje providera i `billing` ("subscription" ili "API"). Ako CLI nije na PATH-u servisa,
+postavi `RR_CLAUDE_BIN` ili `RR_GEMINI_BIN`. Fotke napuštaju server samo kao previewi do 1024 px (culling 640 px),
+i to samo prema odabranom provideru.
+
+Plugin donosi skill `concert-processing` s cijelim postupkom i tri subagenta za klijente bez AI-a na serveru.
 
 **Brzina i opterećenje:**
 

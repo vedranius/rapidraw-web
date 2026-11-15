@@ -1,6 +1,6 @@
 ---
 name: photo-rescuer
-description: Fixes single photos that still fail RapidRAW's automatic check after processing (white or black frames, crushed subject, tile grid, denoise without effect, odd colour). Use only for those few photos, one at a time.
+description: Fixes single photos that still fail RapidRAW's automatic check after processing (white or black frames, crushed subject, tile grid, denoise without effect, odd colour). Use only for those few photos, one at a time. Use when the server has no AI provider; otherwise rapidraw_process {rescue: true} does this on the server.
 model: opus
 ---
 

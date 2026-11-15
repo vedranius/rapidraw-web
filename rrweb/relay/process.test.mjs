@@ -33,6 +33,7 @@ const bridge = async (cmd, args) => {
         const name = path.basename(f, '.jpg');
         const n = exportsOf[name] = (exportsOf[name] ?? 0) + 1;
         // the first export of "mid" comes out white: the check must find it and the fix export it again
+        if (name === 'stubborn' && sidecars.get('/photos/stubborn.raf')?.exposure !== -1.5) return { median: 0.95, whiteClip: 0.8, blackClip: 0, centerBlack: 0, noise: 0.5, gridScore: 1, gridPeriod: 0 };
         if (name === 'mid' && n === 1) return { median: 0.93, whiteClip: 0.7, blackClip: 0, centerBlack: 0, noise: 0.5, gridScore: 1, gridPeriod: 0 };
         return { median: 0.35, whiteClip: 0.01, blackClip: 0.01, centerBlack: 0, noise: 0.4, gridScore: 1.5, gridPeriod: 0 };
       }
@@ -186,18 +187,69 @@ test('jobs: one at a time, a full queue answers busy, a restart marks running jo
   assert.equal(jobs.cancel(queued[0].id).state, 'done');
 });
 
-test('ai_review explains how to configure a cheap vision model when none is set', async () => {
-  const saved = { a: process.env.ANTHROPIC_API_KEY, g: process.env.GEMINI_API_KEY, ra: process.env.RR_ANTHROPIC_API_KEY, rg: process.env.RR_GEMINI_API_KEY };
-  for (const k of ['ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'RR_ANTHROPIC_API_KEY', 'RR_GEMINI_API_KEY']) delete process.env[k];
+const FAKE = path.join(path.dirname(new URL(import.meta.url).pathname), 'test/fake-claude.mjs');
+function withEnv(vars, fn) {
+  const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  for (const [k, v] of Object.entries(vars)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  return Promise.resolve(fn()).finally(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+}
+const CLI = { RR_AI_PROVIDER: 'claude-cli', RR_CLAUDE_BIN: FAKE, ANTHROPIC_API_KEY: 'sk-must-not-be-used', FAKE_CLAUDE_KEY_SOURCE: undefined };
+
+test('culling goes to the cheap model through the signed-in CLI, never with an API key', () => withEnv(CLI, async () => {
+  const st = json(await call('rapidraw_status'));
+  assert.equal(st.ai.provider, 'claude-cli');
+  assert.equal(st.ai.billing, 'subscription');
+  assert.deepEqual(st.models, { cull: 'claude-haiku-5-5', plan: 'claude-sonnet-5-5', rescue: 'claude-opus-5-5' });
+  const r = json(await call('rapidraw_ai_review', { paths: ['/photos/clean.raf', '/photos/mid.raf'] }));
+  assert.equal(r.model, 'claude-haiku-5-5');
+  const v = await finished(r.jobId);
+  assert.equal(v.state, 'done', JSON.stringify(v));
+  assert.deepEqual(v.summary.keep, ['/photos/clean.raf'], 'the API key was not passed to the CLI (it answers an error if it sees one)');
+  assert.deepEqual(v.summary.reject, ['/photos/mid.raf']);
+  assert.equal(v.summary.billing, 'subscription');
+}));
+
+test('a CLI that would bill an API key is stopped', () => withEnv({ ...CLI, FAKE_CLAUDE_KEY_SOURCE: 'ANTHROPIC_API_KEY' }, async () => {
+  const v = await finished(json(await call('rapidraw_ai_review', { paths: ['/photos/clean.raf'] })).jobId);
+  assert.equal(v.ok, 0);
+  assert.match(v.results[0].error, /would use an API key/);
+}));
+
+test('an API provider is used only when chosen, and without any provider the advice names the subagent', () => withEnv({ RR_AI_PROVIDER: 'nothing-here', RR_CLAUDE_BIN: undefined }, async () => {
   const r = await call('rapidraw_ai_review', { paths: ['/photos/mid.raf'] });
   assert.ok(r.isError);
-  assert.match(r.content[0].text, /ANTHROPIC_API_KEY|GEMINI_API_KEY/);
-  const st = json(await call('rapidraw_status'));
-  assert.equal(st.models.cull, 'claude-haiku-5-5');
-  assert.equal(st.models.plan, 'claude-sonnet-5-5');
-  assert.match(String(st.vision), /not configured/);
-  if (saved.a) process.env.ANTHROPIC_API_KEY = saved.a;
-  if (saved.g) process.env.GEMINI_API_KEY = saved.g;
-  if (saved.ra) process.env.RR_ANTHROPIC_API_KEY = saved.ra;
-  if (saved.rg) process.env.RR_GEMINI_API_KEY = saved.rg;
-});
+  assert.match(r.content[0].text, /Unknown AI provider/);
+  await withEnv({ RR_AI_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: undefined, RR_ANTHROPIC_API_KEY: undefined }, async () => {
+    const e = await call('rapidraw_ai_review', { paths: ['/photos/mid.raf'] });
+    assert.match(e.content[0].text, /needs ANTHROPIC_API_KEY/);
+    assert.match(e.content[0].text, /photo-culler/);
+  });
+}));
+
+test('the edit plan goes to the planning model and comes back checked', () => withEnv(CLI, async () => {
+  const r = json(await call('rapidraw_ai_plan', { paths: ['/photos/clean.raf', '/photos/mid.raf', '/photos/heavy.raf'], samples: 2 }));
+  assert.equal(r.model, 'claude-sonnet-5-5');
+  const v = await finished(r.jobId);
+  assert.equal(v.state, 'done', JSON.stringify(v));
+  const { plan, refused, samples } = v.summary;
+  assert.deepEqual(samples, ['/photos/clean.raf', '/photos/heavy.raf']);
+  assert.deepEqual(plan.adjustments, {}, 'brightness 12 was refused');
+  assert.match(refused[0], /brightness/);
+  assert.equal(plan.aiMasks[0].name, 'Face lift');
+  assert.deepEqual(plan.perPhoto, { '/photos/clean.raf': { shadows: 10 } });
+}));
+
+test('process sends a photo the simple fix could not save to the rescue model', () => withEnv(CLI, async () => {
+  sidecars.set('/photos/stubborn.raf', {});
+  NOISE_OF['stubborn.raf'] = 2;
+    try {
+    const r = json(await call('rapidraw_process', { paths: ['/photos/stubborn.raf'], mode: 'bm3d', allowRisky: true, rescue: true, export: { folder: '/out', longEdge: 2048 } }));
+    const v = await finished(r.jobId);
+    assert.equal(v.state, 'done', JSON.stringify(v));
+    assert.equal(v.summary.rescued.length, 1);
+    assert.equal(v.summary.rescued[0].model, 'claude-opus-5-5');
+    assert.deepEqual(v.summary.rescued[0].remaining, []);
+    assert.deepEqual(v.summary.problems, []);
+    assert.equal(sidecars.get('/photos/stubborn.raf').exposure, -1.5);
+  } finally { sidecars.delete('/photos/stubborn.raf'); }
+}));

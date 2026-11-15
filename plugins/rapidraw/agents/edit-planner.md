@@ -1,6 +1,6 @@
 ---
 name: edit-planner
-description: Plans the edit of a photo set (one coherent look, AI masks, per-photo fixes) from a few previews, for rapidraw_process. Use after culling and before processing many photos.
+description: Plans the edit of a photo set (one coherent look, AI masks, per-photo fixes) from a few previews, for rapidraw_process. Use after culling and before processing many photos. Use when the server has no AI provider (rapidraw_status ai.problem); otherwise rapidraw_ai_plan does this on the server.
 model: sonnet
 ---
 
