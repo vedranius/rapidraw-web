@@ -204,7 +204,31 @@ Plugin donosi skill `concert-processing` s cijelim postupkom i tri subagenta za 
 
 ---
 
-## 5. Kako radi
+## 5. PhotoCraft: slojevi, kompoziti i efekti
+
+RapidRAW razvija RAW i radi globalne i maskirane korekcije. Za ono što traži slojeve (dvostruka ekspozicija,
+spajanje više fotografija, zoom-burst oko oštrog izvođača, sjaj snopova svjetla, tekst, naslovnice, posteri)
+AI klijent koristi i [PhotoCraft](https://github.com/storytold/photocraft), open-source slojevni editor s
+vlastitim MCP serverom (`photocraft-cli mcp --headless`). Skill `photo-studio` iz plugina odlučuje kamo ide
+koji posao i kako se predaje datoteka; `stage-looks` ima izglede i recepte.
+
+- **Redoslijed je uvijek RapidRAW pa PhotoCraft.** RapidRAW izveze 16-bitni TIFF (sRGB, s EXIF/IPTC/XMP) u
+  mapu za predaju, PhotoCraft ga otvori, radi u slojevima i spremi `.pcraft` (ili `.psd`) master i JPEG.
+  JPEG se nikad ne koristi kao međukorak (8 bita, trake u tamnim dijelovima pozornice).
+- **Postavljanje (Linux):** `rrweb/photocraft/setup.sh --root ~/Pictures --out ~/Pictures/studio`. Koristi
+  `photocraft-cli` s PATH-a ili instalira izdanje u `~/.local/opt/photocraft` (bez sudo), pa ga prijavi u Claude
+  Code kao MCP server `photocraft`. PhotoCraft čita samo mape iz `--root` i piše samo u `--out`. Postojeći unos
+  `photocraft` mijenja tek s `--force`.
+- **Metapodaci:** ako izvoz iz PhotoCrafta nema EXIF, skill ga kopira iz RapidRAW TIFF-a s `exiftool`
+  (paket `perl-image-exiftool` na Archu/CachyOS-u).
+- **Stage Fire & Ice** (`stage-fire-ice`) je ugrađeni look za rock i metal koncerte, izmjeren na stotinjak
+  objavljenih koncertnih fotografija: svjetlo svedeno na dvije boje (vatreno narančasto-crvena i ledeno
+  cijan), tamni ton s mekim podom crnih, topli svjetli tonovi sa sjajem, hrapava lica, dubok vinjet i
+  zoom-burst rub. Radi i u AI Editoru u aplikaciji i kroz MCP (`rapidraw_process` za cijelu galeriju).
+
+---
+
+## 6. Kako radi
 
 ```
 AI klijent ──MCP (HTTP POST /mcp, JSON-RPC)──▶ relay (rrweb/relay/mcp.mjs)

@@ -2,6 +2,11 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.18.2
+
+- **RapidRAW Web and PhotoCraft work together.** The Claude Code plugin gets the *photo-studio* skill: the AI decides per request which engine does the work. RAW development, global and masked edits, denoise, culling and batch export stay in RapidRAW; double exposures, combining several photos, effects limited by a mask, text, covers and posters go to [PhotoCraft](https://github.com/storytold/photocraft), an open-source layered editor with its own MCP server. RapidRAW always goes first and hands over a full-size 16-bit TIFF with its metadata; PhotoCraft saves a layered `.pcraft` master and the JPEG. `rrweb/photocraft/setup.sh` connects PhotoCraft to Claude Code next to RapidRAW (it installs it into your home folder if it is missing, and lets it read and write only the folders you give it).
+- **New look: Stage Fire & Ice.** A loud rock and metal concert grade measured on about a hundred published concert photos: stage light reduced to two colours (fire orange-red and ice cyan), low key with a soft black floor, warm highlights with glow, gritty faces, a deep vignette and a zoom-burst edge around a sharp performer. It works in the AI Editor and for whole galleries through `rapidraw_process`. The *stage-looks* skill adds the PhotoCraft recipes on top: a precise zoom-burst or spin edge, glowing beams, face grit, double exposure, a gallery cover and social story frames.
+
 ## 1.18.1
 
 - **AI on the server uses your subscription, never the API by accident.** Culling and the other AI calls of the MCP server now go through the Claude Code CLI on the server, signed in with your Claude plan, or the Gemini CLI signed in with your Google account. The CLI runs without any API key in its environment, and a run that would still use an API key is stopped. Per-token API billing happens only if you choose it (`RR_AI_PROVIDER=anthropic` or `gemini` with a key). `rapidraw_status` shows who pays.
