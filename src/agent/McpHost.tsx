@@ -16,10 +16,12 @@ import type { AgentExecutionHooks, AgentStep } from './types';
  */
 interface McpRequest {
   rid: string;
-  op: 'run' | 'undo';
+  op: 'run' | 'undo' | 'cancel' | 'reload';
   steps?: AgentStep[];
   paths?: string[];
   runId?: string;
+  /** ms since epoch: the MCP client stopped waiting then; a plan still queued is dropped, not run late */
+  deadline?: number;
 }
 
 const MAX_RUNS = 20;
@@ -53,6 +55,7 @@ export default function McpHost({
     let unlisten: (() => void) | null = null;
     let unsubs: Array<() => void> = [];
     const runs = new Map<string, { snapshot: unknown; paths: string[] }>();
+    const cancelled = new Set<string>();
     let queue: Promise<unknown> = Promise.resolve();
     let helloTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -120,9 +123,24 @@ export default function McpHost({
       .then(async () => {
         if (!active) return;
         unlisten = await listen<McpRequest>('__rr_mcp_request', ({ payload }) => {
+          // the relay gave up on a plan (client timeout): it must not run later and overwrite newer edits
+          if (payload.op === 'cancel') {
+            cancelled.add(payload.rid);
+            return;
+          }
+          // the MCP server saved edits headless: show them if one of these photos is open
+          if (payload.op === 'reload') {
+            const paths = payload.paths ?? [];
+            paths.forEach((p) => globalImageCache.delete(p));
+            reloadAdjustmentsForPaths(paths).catch(() => {});
+            return;
+          }
           // one plan at a time, in the order they arrived
           queue = queue.then(async () => {
             try {
+              if (cancelled.delete(payload.rid) || (payload.deadline && Date.now() > payload.deadline)) {
+                throw new Error('Dropped: the AI client stopped waiting for this plan before it could start');
+              }
               const result = await handle(payload);
               await invoke('__rr_mcp_result', { rid: payload.rid, result });
             } catch (e) {

@@ -38,6 +38,9 @@ pub fn setup_logging(app_handle: &tauri::AppHandle) {
             ))
         })
         .level(level.max(log::LevelFilter::Warn))
+        // rawler warns once per camera JPEG it is shown ("Unknown make for EXIF file: FUJIFILM"): thousands of lines
+        // when a folder of RAW+JPEG pairs is opened, and nothing is wrong
+        .level_for("rawler::decoders", log::LevelFilter::Error)
         .filter(move |metadata| {
             !crate::decode::raw_processing::swallow_prefix_log(metadata)
                 && metadata.level() <= level

@@ -459,7 +459,15 @@ pub async fn generate_preview_for_path(
             &settings,
             None,
         )?;
-        let base_image = prepare_base_image_cow(&pristine, &source_path_str, &js_adjustments)
+        // the preview shows the denoise the export will have, also when it isn't computed yet (BM3D was missing)
+        let denoised = crate::ai::denoise::apply_for_preview(
+            &app_handle,
+            &pristine,
+            &source_path_str,
+            &js_adjustments,
+            max_edge.unwrap_or(1280).clamp(1024, 4096),
+        )?;
+        let base_image = prepare_base_image_cow(&denoised, &source_path_str, &js_adjustments)
             .map_err(|e| e.to_string())?;
         let base_scale = crate::ai::upscale::scale_between(&pristine, &base_image);
         let (fitted, fit_scale) = crate::render::source::fit_to_gpu(&context, &base_image);

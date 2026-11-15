@@ -6,8 +6,9 @@ use half::slice::HalfFloatSliceExt;
 use image::{DynamicImage, GenericImageView, Rgb32FImage, imageops};
 use rayon::prelude::*;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use tauri::Manager;
 
 const MODEL_TAG: &str = "nind-v3";
@@ -116,10 +117,13 @@ pub fn apply_ai_denoise<'a>(
     }
 
     let method = DenoiseMethod::from_adjustments(adjustments);
-    let Some(entry) = full_strength(path, method) else {
+    let Some(entry) = full_strength(path, method).or_else(|| transient_entry(path, method)) else {
         return Cow::Borrowed(base);
     };
+    Cow::Owned(blend_entry(base, &entry, strength))
+}
 
+fn blend_entry(base: &DynamicImage, entry: &CachedBase, strength: (f32, f32)) -> DynamicImage {
     let (w, h) = base.dimensions();
     let resized: Option<Vec<f16>> = ((entry.width, entry.height) != (w, h)).then(|| {
         let resized = imageops::resize(&entry.to_rgb32f(), w, h, imageops::FilterType::Triangle);
@@ -134,7 +138,125 @@ pub fn apply_ai_denoise<'a>(
     let mut out = base.to_rgb32f();
     blend_into(&mut out, denoised, strength);
 
-    Cow::Owned(DynamicImage::ImageRgb32F(out))
+    DynamicImage::ImageRgb32F(out)
+}
+
+// Denoise results made at a smaller size than the photo, kept in memory while an export uses them. A 2048 px
+// export of a 26 MP photo doesn't need the photo denoised at 6240 px: at twice the output size it looks the same and
+// takes a fraction of the time (AI denoise ran ~1 min per photo on a laptop CPU).
+type TransientMap = HashMap<(String, &'static str), Arc<CachedBase>>;
+static TRANSIENT: LazyLock<Mutex<TransientMap>> = LazyLock::new(Default::default);
+
+fn transient_entry(path: &str, method: DenoiseMethod) -> Option<Arc<CachedBase>> {
+    TRANSIENT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&(source_string(path), method.tag()))
+        .cloned()
+}
+
+/// Removes the transient denoise of a photo when dropped
+pub struct TransientDenoise(String, &'static str);
+
+impl Drop for TransientDenoise {
+    fn drop(&mut self) {
+        TRANSIENT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&(std::mem::take(&mut self.0), self.1));
+    }
+}
+
+fn downscaled(base: &DynamicImage, max_edge: u32) -> Option<DynamicImage> {
+    let (w, h) = base.dimensions();
+    let long = w.max(h);
+    if max_edge == 0 || long <= max_edge {
+        return None;
+    }
+    let scale = max_edge as f64 / long as f64;
+    let (nw, nh) = (
+        ((w as f64 * scale).round() as u32).max(1),
+        ((h as f64 * scale).round() as u32).max(1),
+    );
+    Some(DynamicImage::ImageRgb32F(imageops::resize(
+        &base.to_rgb32f(),
+        nw,
+        nh,
+        imageops::FilterType::Triangle,
+    )))
+}
+
+fn denoise_at(
+    app_handle: &tauri::AppHandle,
+    base: &DynamicImage,
+    method: DenoiseMethod,
+    max_edge: u32,
+) -> Result<Rgb32FImage, String> {
+    let small = downscaled(base, max_edge);
+    let session = tauri::async_runtime::block_on(load_session(app_handle.clone(), method))?;
+    run_denoiser(small.as_ref().unwrap_or(base), session.as_ref(), &|_| {})
+}
+
+/// For an export: when the photo has denoise on but no full-size result yet, denoises it at `max_edge` and keeps
+/// that in memory until the returned guard is dropped. None: nothing to do (off, already cached, or the photo is
+/// not larger than `max_edge`; then the export makes the full-size result as before).
+pub fn prepare_for_export(
+    app_handle: &tauri::AppHandle,
+    path: &str,
+    base: &DynamicImage,
+    adjustments: &serde_json::Value,
+    max_edge: u32,
+) -> Result<Option<TransientDenoise>, String> {
+    if !is_enabled(adjustments) || blend_strength(adjustments).0 <= 0.0 {
+        return Ok(None);
+    }
+    let method = DenoiseMethod::from_adjustments(adjustments);
+    if has_cached_entry(path, method) || base.width().max(base.height()) <= max_edge {
+        return Ok(None);
+    }
+    let image = denoise_at(app_handle, base, method, max_edge)?;
+    let source = source_string(path);
+    TRANSIENT.lock().unwrap_or_else(|e| e.into_inner()).insert(
+        (source.clone(), method.tag()),
+        Arc::new(CachedBase::transient(source.clone(), &image)),
+    );
+    Ok(Some(TransientDenoise(source, method.tag())))
+}
+
+/// Whether an export would render this photo's denoise (full-size result or a transient one): an export must not
+/// silently write a noisy file.
+pub fn is_ready_for_render(path: &str, adjustments: &serde_json::Value) -> bool {
+    if !is_enabled(adjustments) || blend_strength(adjustments).0 <= 0.0 {
+        return true;
+    }
+    let method = DenoiseMethod::from_adjustments(adjustments);
+    has_cached_entry(path, method) || transient_entry(path, method).is_some()
+}
+
+/// Server-side previews (MCP): when the denoise of a photo isn't computed yet, denoise the preview itself at its
+/// size, so the preview shows what the export will look like (BM3D was missing from previews). Returns the base
+/// unchanged when denoise is off or a full-size result exists (prepare_base_image_cow uses that one).
+pub fn apply_for_preview<'a>(
+    app_handle: &tauri::AppHandle,
+    base: &'a DynamicImage,
+    path: &str,
+    adjustments: &serde_json::Value,
+    max_edge: u32,
+) -> Result<Cow<'a, DynamicImage>, String> {
+    if !is_enabled(adjustments) {
+        return Ok(Cow::Borrowed(base));
+    }
+    let strength = blend_strength(adjustments);
+    let method = DenoiseMethod::from_adjustments(adjustments);
+    if strength.0 <= 0.0
+        || has_cached_entry(path, method)
+        || transient_entry(path, method).is_some()
+    {
+        return Ok(Cow::Borrowed(base));
+    }
+    let image = denoise_at(app_handle, base, method, max_edge)?;
+    let entry = CachedBase::transient(source_string(path), &image);
+    Ok(Cow::Owned(blend_entry(base, &entry, strength)))
 }
 
 fn restore_low_frequencies(denoised: &mut Rgb32FImage, source: &Rgb32FImage) {

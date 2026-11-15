@@ -22,6 +22,11 @@ MemoryHigh=60%
 MemoryMax=75%
 MemorySwapMax=2G
 OOMScoreAdjust=500
+# Long jobs (AI denoise, exports) use every core but leave the desktop and SSH responsive.
+# RapidRAW keeps two cores free for AI work by itself (RR_AI_THREADS overrides it).
+Nice=5
+CPUWeight=70
+IOWeight=70
 
 [Install]
 WantedBy=default.target

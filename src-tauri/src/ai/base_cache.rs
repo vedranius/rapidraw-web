@@ -27,6 +27,23 @@ pub struct CachedBase {
 }
 
 impl CachedBase {
+    /// An entry that is only kept in memory by its owner (e.g. a denoise made at an export's resolution)
+    pub fn transient(source: String, image: &Rgb32FImage) -> Self {
+        let (width, height) = image.dimensions();
+        let mut data = vec![f16::ZERO; image.as_raw().len()];
+        data.par_chunks_mut(HALF_CHUNK)
+            .zip(image.as_raw().par_chunks(HALF_CHUNK))
+            .for_each(|(dst, src)| dst.convert_from_f32_slice(src));
+        Self {
+            key: String::new(),
+            source,
+            fingerprint: 0,
+            width,
+            height,
+            data,
+        }
+    }
+
     pub fn to_rgb32f(&self) -> Rgb32FImage {
         let mut expanded = vec![0.0f32; self.data.len()];
         expanded

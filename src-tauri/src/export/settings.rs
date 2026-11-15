@@ -105,6 +105,28 @@ pub struct ExportSettings {
     pub dpi: Option<u16>,
     #[serde(default)]
     pub export_original: Option<OriginalExportOptions>,
+    /// Resized exports: denoise photos that have no denoise result yet at twice the output size instead of at
+    /// full size (MCP processing; several times faster for 2048 px exports of 24+ MP RAWs)
+    #[serde(default)]
+    pub fast_denoise: bool,
+}
+
+impl ResizeOptions {
+    /// Long edge of an image of `w`x`h` after this resize
+    pub fn long_edge_for(&self, w: u32, h: u32) -> u32 {
+        let (long, short) = (w.max(h) as f64, w.min(h).max(1) as f64);
+        let out = match self.mode {
+            ResizeMode::LongEdge => self.value as f64,
+            ResizeMode::ShortEdge => self.value as f64 * long / short,
+            ResizeMode::Width => self.value as f64 * long / w.max(1) as f64,
+            ResizeMode::Height => self.value as f64 * long / h.max(1) as f64,
+        };
+        if self.dont_enlarge {
+            out.min(long) as u32
+        } else {
+            out as u32
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]

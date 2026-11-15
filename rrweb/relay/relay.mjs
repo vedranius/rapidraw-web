@@ -460,6 +460,7 @@ wssBridge.on('connection', (ws) => {
           msg.payload = p;
         }
       }
+      try { mcp.onEvent(msg.event, msg.payload); } catch (e) { console.warn(`[mcp] ${e.message}`); } // export progress for MCP jobs
       broadcast(msg);
       return;
     }

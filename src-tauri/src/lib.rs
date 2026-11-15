@@ -37,6 +37,7 @@ mod prompt_ai;
 mod prompt_style;
 mod render;
 mod retouch;
+mod rrweb_tools;
 mod style_profile;
 
 use std::collections::HashMap;
@@ -336,7 +337,12 @@ pub fn run() {
                         #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
                         { "libonnxruntime.so" }
                     };
-                    let ort_library_path = resource_path.join(ort_library_name);
+                    // a GPU build of ONNX Runtime given by the user (onnxruntime-gpu, see AI_MCP.md) wins
+                    let user_ort = std::env::var_os("ORT_DYLIB_PATH")
+                        .map(std::path::PathBuf::from)
+                        .filter(|p| p.is_file());
+                    let ort_library_path =
+                        user_ort.unwrap_or_else(|| resource_path.join(ort_library_name));
                     std::env::set_var("ORT_DYLIB_PATH", &ort_library_path);
                     cli_println!("Set ORT_DYLIB_PATH to: {}", ort_library_path.display());
                 }
@@ -686,6 +692,9 @@ pub fn run() {
             ai::denoise::clear_ai_denoise_cache,
             ai::upscale::clear_ai_upscale_cache,
             ai::jobs::get_ai_jobs_status,
+            rrweb_tools::rrweb_measure_images,
+            rrweb_tools::rrweb_resolve_ai,
+            rrweb_tools::rrweb_health,
             ai::jobs::get_pending_ai_paths,
             ai::jobs::pause_ai_jobs,
             ai::jobs::resume_ai_jobs,

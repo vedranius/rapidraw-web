@@ -20,7 +20,7 @@ jobs:
       - name: Generated catalog and skills are up to date
         run: node rrweb/mcp/generate.mjs --check
       - name: MCP server tests
-        run: node --test rrweb/relay/mcp.test.mjs
+        run: node --test rrweb/relay/mcp.test.mjs rrweb/relay/process.test.mjs
       - name: Plugin manifests are valid JSON with matching versions
         run: |
           node -e '
