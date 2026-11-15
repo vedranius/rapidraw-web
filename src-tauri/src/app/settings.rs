@@ -461,6 +461,14 @@ pub struct WorkspaceState {
     pub panel_layout: HashMap<String, Vec<String>>,
     pub active_panels: HashMap<String, Option<String>>,
     pub panel_switcher_placement: HashMap<String, String>,
+    #[serde(default = "default_filmstrip_columns")]
+    pub filmstrip_columns: u32,
+    #[serde(default)]
+    pub filmstrip_show_file_info: bool,
+}
+
+fn default_filmstrip_columns() -> u32 {
+    2
 }
 
 impl Default for WorkspaceState {
@@ -511,6 +519,8 @@ impl Default for WorkspaceState {
             panel_layout,
             active_panels,
             panel_switcher_placement,
+            filmstrip_columns: default_filmstrip_columns(),
+            filmstrip_show_file_info: false,
         }
     }
 }
@@ -536,7 +546,7 @@ pub fn default_ai_gpu_acceleration() -> bool {
 }
 
 pub fn default_ai_cache_limit_gb() -> u32 {
-    10
+    25
 }
 
 pub fn default_ai_maps_cache_limit_gb() -> u32 {
@@ -544,7 +554,7 @@ pub fn default_ai_maps_cache_limit_gb() -> u32 {
 }
 
 pub fn default_ai_upscale_cache_limit_gb() -> u32 {
-    10
+    25
 }
 
 pub fn default_thumbnail_cache_limit_gb() -> u32 {
@@ -659,6 +669,8 @@ pub struct AppSettings {
     pub linux_gpu_optimization_migrated_v1: Option<bool>,
     #[serde(default)]
     pub linux_wgpu_renderer_migrated_v1: Option<bool>,
+    #[serde(default)]
+    pub ai_cache_limits_migrated_v1: Option<bool>,
     #[serde(default)]
     pub library_view_mode: Option<String>,
     #[serde(default = "default_export_presets")]
@@ -888,6 +900,7 @@ impl Default for AppSettings {
             linux_gpu_optimization: Some(false),
             linux_gpu_optimization_migrated_v1: Some(true),
             linux_wgpu_renderer_migrated_v1: Some(true),
+            ai_cache_limits_migrated_v1: Some(true),
             library_view_mode: Some("flat".to_string()),
             export_presets: default_export_presets(),
             my_lenses: Some(Vec::new()),
@@ -1044,6 +1057,19 @@ fn read_settings_from_disk(app_handle: &AppHandle) -> Result<AppSettings, String
     if !settings.linux_wgpu_renderer_migrated_v1.unwrap_or(false) {
         settings.use_wgpu_renderer = Some(false);
         settings.linux_wgpu_renderer_migrated_v1 = Some(true);
+        settings_modified = true;
+    }
+
+    if !settings.ai_cache_limits_migrated_v1.unwrap_or(false) {
+        for limit in [
+            &mut settings.ai_cache_limit_gb,
+            &mut settings.ai_upscale_cache_limit_gb,
+        ] {
+            if *limit == Some(10) {
+                *limit = Some(25);
+            }
+        }
+        settings.ai_cache_limits_migrated_v1 = Some(true);
         settings_modified = true;
     }
 
