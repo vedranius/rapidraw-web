@@ -1003,12 +1003,16 @@
         "adjust": "Upravit",
         "crop": "Oříznout",
         "export": "Export",
+        "filmstrip": "Filmový pás",
         "info": "Info",
         "inpaint": "Retuš",
         "masks": "Masky",
         "presets": "Presety",
         "tethering": "Tetherované snímání"
       }
+    },
+    "toasts": {
+      "embeddedPreview": "RapidRAW nedokázal dekódovat tento soubor RAW, takže vidíte a upravujete vložený náhled JPEG z fotoaparátu. Počítejte s nižší kvalitou a menší rezervou pro úpravy než u skutečného RAW."
     },
     "toolbar": {
       "history": "Historie",
@@ -1544,10 +1548,7 @@
       "originalRatio": "Původní poměr"
     },
     "thumbnailSize": {
-      "large": "Velký",
-      "list": "Seznam",
-      "medium": "Střední",
-      "small": "Malý"
+      "list": "Seznam"
     },
     "tooltips": {
       "communityPresets": "Presety komunity",
@@ -2553,13 +2554,11 @@
     "bottomBar": {
       "imagesSelected": "{{current}} z {{total}} vybrané snímky",
       "tooltips": {
-        "collapseFilmstrip": "Sbalit filmový pás",
         "collapseLeft": "Sbalit levý panel",
         "collapseRight": "Sbalit pravý panel",
         "copyPasteSettings": "Nastavení kopírování a vkládání",
         "copySettings": "Kopírovat úpravy",
         "customZoom": "Kliknutím zadejte vlastní procento přiblížení",
-        "expandFilmstrip": "Rozbalit filmový pás",
         "expandLeft": "Rozbalit levý panel",
         "expandRight": "Rozbalit pravý panel",
         "export": "Export",

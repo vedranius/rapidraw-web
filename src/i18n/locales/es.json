@@ -978,12 +978,16 @@
         "adjust": "Ajustar",
         "crop": "Recortar",
         "export": "Exportar",
+        "filmstrip": "Tira de imágenes",
         "info": "Info",
         "inpaint": "Inpainting",
         "masks": "Máscaras",
         "presets": "Ajustes preestablecidos",
         "tethering": "Captura conectada"
       }
+    },
+    "toasts": {
+      "embeddedPreview": "RapidRAW no pudo decodificar este archivo RAW, así que estás viendo y editando la vista previa JPEG incrustada de la cámara. Espera menor calidad y menos margen de edición que con un RAW real."
     },
     "toolbar": {
       "history": "Historial",
@@ -1511,10 +1515,7 @@
       "originalRatio": "Proporción original"
     },
     "thumbnailSize": {
-      "large": "Grande",
-      "list": "Lista",
-      "medium": "Mediano",
-      "small": "Pequeño"
+      "list": "Lista"
     },
     "tooltips": {
       "communityPresets": "Ajustes de la comunidad",
@@ -2536,13 +2537,11 @@
     "bottomBar": {
       "imagesSelected": "{{current}} de {{total}} imágenes seleccionadas",
       "tooltips": {
-        "collapseFilmstrip": "Contraer Tira de imágenes",
         "collapseLeft": "Contraer panel izquierdo",
         "collapseRight": "Contraer panel derecho",
         "copyPasteSettings": "Copiar y Pegar ajustes",
         "copySettings": "Copiar ajustes",
         "customZoom": "Haz clic para introducir un porcentaje de zoom personalizado",
-        "expandFilmstrip": "Expandir Tira de imágenes",
         "expandLeft": "Expandir panel izquierdo",
         "expandRight": "Expandir panel derecho",
         "export": "Exportar",
