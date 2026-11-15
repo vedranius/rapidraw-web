@@ -120,7 +120,7 @@ export function aiMaskContainer({ type = 'subject', name, patch = {}, parts, gro
   };
 }
 
-export function createProcessor({ bridge, defaults = {}, maskDefaults = {}, notifyTab = () => {}, workDir = os.tmpdir(), stats = {}, saveStats = () => {} }) {
+export function createProcessor({ bridge, defaults = {}, maskDefaults = {}, notifyTab = () => {}, workDir = os.tmpdir(), stats = {}, saveStats = () => {}, rescuer = null }) {
   // export events from RapidRAW (relay.mjs forwards every bridge event to onEvent)
   const exportListeners = new Set();
   function onEvent(event, payload) {
@@ -231,6 +231,7 @@ export function createProcessor({ bridge, defaults = {}, maskDefaults = {}, noti
     const counts = { none: 0, bm3d: 0, ai: 0, keep: 0 };
     const fixes = [];
     const problems = [];
+    let rescued = 0;
     try {
       // 1. edits that apply to all photos at once
       if (todo.length && adjustments && Object.keys(adjustments).length) { ctx.log(`look patch on ${todo.length} photo(s)`); for (const p of todo) { ctx.checkCancelled(); await patchPhoto(p, adjustments); } }
@@ -287,6 +288,7 @@ export function createProcessor({ bridge, defaults = {}, maskDefaults = {}, noti
               let [m] = await measureFiles([out.output], edge);
               const issues = judge(m, { denoise: r.denoise, before, grain: adj.grainAmount ?? 0 });
               r.qa = { median: round(m.median), whiteClip: round(m.whiteClip), blackClip: round(m.blackClip), noise: round(m.noise), grid: round(m.gridScore), issues: issues.map((x) => x.kind) };
+              let left = [];
               const patch = autoFix ? issues.map((x) => fixFor(x, adj, m)).filter(Boolean).reduce((a, b) => ({ ...a, ...b }), {}) : {};
               if (Object.keys(patch).length) {
                 ctx.log(`${path.basename(p)}: ${issues.map((x) => x.kind).join(', ')} → fixing and exporting again`);
@@ -300,8 +302,28 @@ export function createProcessor({ bridge, defaults = {}, maskDefaults = {}, noti
                 fixes.push({ path: p, issues: issues.map((x) => `${x.kind}: ${x.detail}`), patch, remaining: after.map((x) => x.kind) });
                 r.fixed = patch;
                 r.qa.after = after.map((x) => x.kind);
-                if (after.length) problems.push({ path: p, issues: after.map((x) => `${x.kind}: ${x.detail}`) });
-              } else if (issues.length) problems.push({ path: p, issues: issues.map((x) => `${x.kind}: ${x.detail}`) });
+                left = after;
+              } else left = issues;
+              // what the simple fix could not solve goes to the strongest model, one photo at a time, a few per job
+              if (left.length && spec.rescue && rescuer && rescued < (spec.rescueLimit ?? 10)) {
+                rescued++;
+                try {
+                  ctx.log(`${path.basename(p)}: ${left.map((x) => x.kind).join(', ')} → asking the rescue model`);
+                  const fix = await rescuer({ path: p, adjustments: adj, issues: left });
+                  if (fix?.patch && Object.keys(fix.patch).length) {
+                    adj = await patchPhoto(p, fix.patch);
+                    await fsp.rm(r.output, { force: true });
+                    const [again] = await exportPhotos(ctx, [p], exp);
+                    if (again.error || !again.output) throw new Error(again.error || 'export wrote no file');
+                    r.output = again.output;
+                    const [m2] = await measureFiles([again.output], edge);
+                    const still = judge(m2, { denoise: adj.aiDenoiseEnabled ? adj.aiDenoiseMethod : 'none', before, grain: adj.grainAmount ?? 0 });
+                    r.rescued = { patch: fix.patch, why: fix.why, model: fix.model, remaining: still.map((x) => x.kind) };
+                    left = still;
+                  } else r.rescued = { patch: null, why: fix?.why ?? 'no change proposed', model: fix?.model };
+                } catch (e) { r.rescueError = e.message; }
+              }
+              if (left.length) problems.push({ path: p, issues: left.map((x) => `${x.kind}: ${x.detail}`) });
             }
           }
           r.ok = true;
@@ -327,6 +349,7 @@ export function createProcessor({ bridge, defaults = {}, maskDefaults = {}, noti
       if (resume) bridge('resume_ai_jobs', {}).catch(() => {});
     }
     return { photos: paths.length, denoise: counts, exported: ctx.job.results.filter((r) => r.output).length, fixes, problems,
+      rescued: ctx.job.results.filter((r) => r.rescued).map((r) => ({ path: r.path, ...r.rescued })),
       failed: ctx.job.results.filter((r) => r.ok === false).map((r) => ({ path: r.path, error: r.error })) };
   }
 

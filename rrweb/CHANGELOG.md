@@ -2,6 +2,11 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.18.1
+
+- **AI on the server uses your subscription, never the API by accident.** Culling and the other AI calls of the MCP server now go through the Claude Code CLI on the server, signed in with your Claude plan, or the Gemini CLI signed in with your Google account. The CLI runs without any API key in its environment, and a run that would still use an API key is stopped. Per-token API billing happens only if you choose it (`RR_AI_PROVIDER=anthropic` or `gemini` with a key). `rapidraw_status` shows who pays.
+- **Work is delegated to the model that fits it.** Culling goes to a fast, cheap model (Haiku), the edit plan of a set to a mid model (the new `rapidraw_ai_plan`, Sonnet), and photos that still fail the automatic check after the simple fix to the strongest model (`rapidraw_process {rescue: true}`, Opus). Plans and rescue patches are checked against the slider ranges before they are used. Models are configurable per kind of work.
+
 ## 1.18.0
 
 Fixes for everything that went wrong while processing a real concert (144 photos at ISO 12800) through the MCP server, plus a way to process a whole shoot on the server without a browser.

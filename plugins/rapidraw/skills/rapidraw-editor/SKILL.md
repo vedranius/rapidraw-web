@@ -46,9 +46,10 @@ For a whole shoot use the `concert-processing` skill: `rapidraw_analyze` (noise 
 four speeds), then one `rapidraw_process` job (masks, denoise chosen by measured noise, export, automatic
 check and fix of every file). `rapidraw_export` and `rapidraw_ai_mask` are headless jobs too. Every long tool
 returns a `jobId`: follow it with `rapidraw_job {action: "wait"}` instead of calling again, and never run
-heavy work in parallel. Use the cheapest model that can do the work: `rapidraw_rank` and
-`rapidraw_ai_review` (or the `photo-culler` subagent) for culling, the `edit-planner` subagent for the plan,
-`photo-rescuer` only for photos that still fail the check.
+heavy work in parallel. Delegate by kind of work, cheapest first: `rapidraw_rank`, then `rapidraw_ai_review`
+for culling, `rapidraw_ai_plan` for the plan, `rapidraw_process {rescue: true}` for photos that still fail the
+check. The server runs these on the user's subscription (Claude Code or Gemini CLI); without an AI provider on
+the server, use the `photo-culler`, `edit-planner` and `photo-rescuer` subagents instead.
 
 ## Rules
 
