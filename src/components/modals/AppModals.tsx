@@ -1,6 +1,6 @@
 import { useShallow } from 'zustand/react/shallow';
 import { useTranslation } from 'react-i18next';
-import { useUIStore } from '../../store/useUIStore';
+import { closePanoramaModal, useUIStore } from '../../store/useUIStore';
 import { useLibraryStore } from '../../store/useLibraryStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useProcessStore } from '../../store/useProcessStore';
@@ -19,7 +19,7 @@ import EditAgentModal from './EditAgentModal';
 import McpHost from '../../agent/McpHost';
 import CollageModal from './CollageModal';
 import { AppSettings } from '../../types/settings';
-import { ImageFlag, AlbumItem, AlbumGroup } from '../../types/library';
+import { ImageFlag, AlbumItem, AlbumGroup, PanoramaSettings } from '../../types/library';
 import { CopyPasteSettings } from '../../utils/adjustments';
 import { reloadAdjustmentsForPaths } from '../../hooks/useEditorActions';
 import { globalImageCache } from '../../utils/ImageLRUCache';
@@ -28,6 +28,7 @@ export interface AppModalsProps {
   handleImageSelect: (path: string) => void;
   handleSavePanorama: () => Promise<string>;
   handleStartPanorama: (paths: string[]) => void;
+  handlePanoramaSettingsChange: (settings: PanoramaSettings) => void;
   handleSaveHdr: () => Promise<string>;
   handleStartHdr: (paths: string[]) => void;
   handleStartFocusStack: (paths: string[]) => void;
@@ -155,23 +156,16 @@ export default function AppModals(props: AppModalsProps) {
         imageCount={panoramaModalState.stitchingSourcePaths.length}
         isOpen={panoramaModalState.isOpen}
         isProcessing={panoramaModalState.isProcessing}
+        isUpdatingPreview={panoramaModalState.isUpdatingPreview}
         loadingImageUrl={panoramaModalState.stitchingSourcePaths.length > 0 ? panoramaThumbnail || null : null}
-        onClose={() =>
-          setUI({
-            panoramaModalState: {
-              isOpen: false,
-              isProcessing: false,
-              progressMessage: '',
-              finalImageBase64: null,
-              error: null,
-              stitchingSourcePaths: [],
-            },
-          })
-        }
+        onClose={closePanoramaModal}
         onOpenFile={(path: string) => props.handleImageSelect(path)}
         onSave={props.handleSavePanorama}
+        onSettingsChange={props.handlePanoramaSettingsChange}
         onStitch={() => props.handleStartPanorama(panoramaModalState.stitchingSourcePaths)}
+        previewInfo={panoramaModalState.previewInfo}
         progressMessage={panoramaModalState.progressMessage}
+        settings={panoramaModalState.settings}
       />
       <HdrModal
         error={hdrModalState.error}

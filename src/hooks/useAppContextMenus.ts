@@ -61,7 +61,7 @@ import { useContextMenu } from '../context/ContextMenuContext';
 import { useEditorStore } from '../store/useEditorStore';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { JobKind, useProcessStore } from '../store/useProcessStore';
-import { useUIStore } from '../store/useUIStore';
+import { CLOSED_PANORAMA_MODAL_STATE, useUIStore } from '../store/useUIStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { getOpenImageDefaults, hasCustomDefaults, openImageHasCustomDefaults } from '../utils/developDefaults';
 import { Invokes } from '../types/invokes';
@@ -926,11 +926,8 @@ export function useAppContextMenus(latestProps: UseAppContextMenusProps) {
               onClick: () => {
                 setUI({
                   panoramaModalState: {
-                    error: null,
-                    finalImageBase64: null,
+                    ...CLOSED_PANORAMA_MODAL_STATE,
                     isOpen: true,
-                    isProcessing: false,
-                    progressMessage: null,
                     stitchingSourcePaths: finalSelection,
                   },
                 });
