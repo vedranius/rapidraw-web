@@ -20,8 +20,8 @@ struct TileParams {
 // still step 344 px, so a 26 MP photo needs about 1.45x the tiles.
 const DENOISE_TILE: TileParams = TileParams {
     cs: 504,
-    margin: 32,
-    overlap: 96,
+    margin: 40,
+    overlap: 56,
 };
 
 pub const UPSCALE_TILE_SIZE: usize = 544;

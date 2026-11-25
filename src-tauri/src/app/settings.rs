@@ -8,6 +8,9 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::app::state::AppState;
+use crate::export::settings::ConflictAction;
+use crate::render::color_space::OutputColorSpace;
+use crate::render::display_color::{DisplayColorMode, MonitorColor};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -83,6 +86,14 @@ pub struct MyLens {
 pub struct CustomAspectRatio {
     pub width: f64,
     pub height: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum GainMapMode {
+    #[default]
+    Auto,
+    Never,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq)]
@@ -362,7 +373,13 @@ pub struct ExportPreset {
     #[serde(default)]
     pub tiff_bit_depth: Option<u8>,
     #[serde(default)]
+    pub color_space: Option<OutputColorSpace>,
+    #[serde(default)]
+    pub hdr: Option<bool>,
+    #[serde(default)]
     pub preserve_timestamps: Option<bool>,
+    #[serde(default)]
+    pub on_conflict: Option<ConflictAction>,
 }
 
 pub fn default_export_presets() -> Vec<ExportPreset> {
@@ -403,7 +420,10 @@ pub fn default_export_presets() -> Vec<ExportPreset> {
             destination_type: Some("customFolder".to_string()),
             subfolder: Some("".to_string()),
             tiff_bit_depth: Some(16),
+            color_space: Some(OutputColorSpace::Srgb),
+            hdr: Some(false),
             preserve_timestamps: Some(false),
+            on_conflict: Some(ConflictAction::CreateUnique),
         },
         ExportPreset {
             id: "default-fast".to_string(),
@@ -441,7 +461,10 @@ pub fn default_export_presets() -> Vec<ExportPreset> {
             destination_type: Some("customFolder".to_string()),
             subfolder: Some("".to_string()),
             tiff_bit_depth: Some(16),
+            color_space: Some(OutputColorSpace::Srgb),
+            hdr: Some(false),
             preserve_timestamps: Some(false),
+            on_conflict: Some(ConflictAction::CreateUnique),
         },
     ]
 }
@@ -671,6 +694,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub processing_backend: Option<String>,
     #[serde(default)]
+    pub raw_decoding: Option<String>,
+    #[serde(default)]
     pub linux_gpu_optimization: Option<bool>,
     #[serde(default)]
     pub linux_gpu_optimization_migrated_v1: Option<bool>,
@@ -741,6 +766,16 @@ pub struct AppSettings {
     #[serde(default = "default_compensate_highlight_preservation")]
     pub compensate_highlight_preservation: bool,
     #[serde(default)]
+    pub hdr_display: bool,
+    #[serde(default)]
+    pub gain_map_mode: GainMapMode,
+    #[serde(default)]
+    pub display_color_mode: DisplayColorMode,
+    #[serde(default)]
+    pub display_icc_profile: Option<String>,
+    #[serde(default)]
+    pub wide_gamut_preview: bool,
+    #[serde(default)]
     pub tonemapper_override_enabled: Option<bool>,
     #[serde(default)]
     pub default_raw_tonemapper: Option<String>,
@@ -762,6 +797,8 @@ pub struct AppSettings {
     pub apply_preprocessing_to_non_raws: Option<bool>,
     #[serde(default)]
     pub use_apple_raw9: Option<bool>,
+    #[serde(default)]
+    pub remove_hot_pixels: Option<bool>,
     #[serde(default)]
     pub exif_overlay: Option<String>,
     #[serde(default)]
@@ -830,6 +867,10 @@ pub fn apply_saved_ui_scale(window: &tauri::WebviewWindow, settings: &AppSetting
 }
 
 impl AppSettings {
+    pub fn use_gain_maps(&self) -> bool {
+        self.gain_map_mode != GainMapMode::Never
+    }
+
     pub fn wgpu_renderer_enabled(&self) -> bool {
         cfg!(not(target_os = "android"))
             && wgpu_renderer_available()
@@ -846,16 +887,7 @@ pub fn wgpu_renderer_available() -> bool {
 #[cfg(target_os = "linux")]
 pub fn wgpu_renderer_supported() -> bool {
     static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *SUPPORTED.get_or_init(|| {
-        let has_env = |name| std::env::var_os(name).is_some_and(|v| !v.is_empty());
-        let preferred = std::env::var("GDK_BACKEND").ok().and_then(|list| {
-            list.split(',')
-                .map(str::trim)
-                .find(|b| *b == "wayland" || *b == "x11")
-                .map(|b| b == "wayland")
-        });
-        preferred.unwrap_or_else(|| has_env("WAYLAND_DISPLAY") || has_env("WAYLAND_SOCKET"))
-    })
+    *SUPPORTED.get_or_init(crate::platform::linux_graphics::is_wayland_session)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -904,6 +936,7 @@ impl Default for AppSettings {
             copy_paste_settings: CopyPasteSettings::default(),
             raw_highlight_compression: Some(2.5),
             processing_backend: Some("auto".to_string()),
+            raw_decoding: Some("auto".to_string()),
             linux_gpu_optimization: Some(false),
             linux_gpu_optimization_migrated_v1: Some(true),
             linux_wgpu_renderer_migrated_v1: Some(true),
@@ -952,6 +985,11 @@ impl Default for AppSettings {
             enable_baseline_exposure: default_enable_baseline_exposure(),
             baseline_exposure: default_baseline_exposure(),
             compensate_highlight_preservation: default_compensate_highlight_preservation(),
+            hdr_display: false,
+            gain_map_mode: GainMapMode::default(),
+            display_color_mode: DisplayColorMode::default(),
+            display_icc_profile: None,
+            wide_gamut_preview: false,
             tonemapper_override_enabled: Some(false),
             default_raw_tonemapper: Some("agx".to_string()),
             default_non_raw_tonemapper: Some("basic".to_string()),
@@ -963,6 +1001,7 @@ impl Default for AppSettings {
             raw_preprocessing_sharpening: Some(0.35),
             apply_preprocessing_to_non_raws: Some(false),
             use_apple_raw9: Some(false),
+            remove_hot_pixels: Some(true),
             exif_overlay: Some("off".to_string()),
             language: Some("en".to_string()),
             folder_tree_sort: Some(FolderTreeSort::default()),
@@ -1011,6 +1050,68 @@ fn settings_cache() -> std::sync::MutexGuard<'static, Option<AppSettings>> {
 #[tauri::command]
 pub fn is_wgpu_renderer_supported() -> bool {
     wgpu_renderer_available()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DisplayColorManagement {
+    None,
+    System,
+    Profile,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayStatus {
+    renderer_active: bool,
+    hdr_supported: bool,
+    hdr_active: bool,
+    color_management: DisplayColorManagement,
+    profile_name: Option<String>,
+    preview_space: OutputColorSpace,
+}
+
+#[tauri::command]
+pub async fn get_display_status(app_handle: AppHandle) -> DisplayStatus {
+    use crate::render::gpu::display;
+
+    let settings = load_settings(app_handle.clone()).unwrap_or_default();
+    let renderer_active = settings.wgpu_renderer_enabled();
+    let hdr_supported = cfg!(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux"
+    )) && renderer_active
+        && display::main_display_supports_hdr(&app_handle);
+    let mut status = DisplayStatus {
+        renderer_active,
+        hdr_supported,
+        hdr_active: hdr_supported && display::main_window_is_hdr(&app_handle),
+        color_management: DisplayColorManagement::None,
+        profile_name: None,
+        preview_space: OutputColorSpace::Srgb,
+    };
+    let state = app_handle.state::<AppState>();
+    if renderer_active
+        && let Some(context) = crate::render::gpu::context::current_gpu_context(&state)
+    {
+        display::refresh_displays(&app_handle, &context, &settings);
+        let display = context.display.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(display) = display.as_ref() {
+            status.preview_space = display.space();
+            (status.color_management, status.profile_name) = match (display.hdr(), display.color())
+            {
+                (Some(_), _) | (None, MonitorColor::System(_)) => {
+                    (DisplayColorManagement::System, None)
+                }
+                (None, MonitorColor::Profile(profile)) => {
+                    (DisplayColorManagement::Profile, Some(profile.name.clone()))
+                }
+                (None, MonitorColor::Unmanaged) => (DisplayColorManagement::None, None),
+            };
+        }
+    }
+    status
 }
 
 #[tauri::command]
@@ -1127,9 +1228,10 @@ pub fn set_ui_scale(scale: f64, app_handle: AppHandle) {
 
 #[tauri::command]
 pub fn save_settings(mut settings: AppSettings, app_handle: AppHandle) -> Result<(), String> {
-    let previous_gpu_acceleration = load_settings(app_handle.clone())
-        .map(|previous| previous.ai_gpu_acceleration)
-        .ok();
+    let previous = load_settings(app_handle.clone()).ok();
+    let previous_gpu_acceleration = previous
+        .as_ref()
+        .map(|previous| previous.ai_gpu_acceleration);
     if !wgpu_renderer_available()
         && let Some(stored) = settings_cache().as_ref()
     {
@@ -1141,6 +1243,7 @@ pub fn save_settings(mut settings: AppSettings, app_handle: AppHandle) -> Result
         .map_err(|e| e.to_string())?;
     *settings_cache() = None;
     crate::integrations::immich::apply_settings(&settings.immich);
+    crate::render::gpu::display::invalidate_displays();
 
     let state = app_handle.state::<AppState>();
     let cache_size = settings.image_cache_size.unwrap_or(5) as usize;

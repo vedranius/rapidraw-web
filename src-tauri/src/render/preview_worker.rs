@@ -9,8 +9,8 @@ use crate::render::cache_utils::{
     calculate_full_job_hash, calculate_patch_hash, calculate_transform_hash,
 };
 use crate::render::gpu::context::get_or_init_gpu_context;
-use crate::render::gpu::display::DisplayLayer;
-use crate::render::options::resolve_render_options;
+use crate::render::gpu::display::{self, DisplayLayer};
+use crate::render::options::{RenderOptions, resolve_render_options};
 use crate::render::preview::{EditorRender, prepare_preview_source};
 use crate::render::source::RenderSource;
 use image::DynamicImage;
@@ -50,7 +50,29 @@ fn process_preview_job(
 
     let settings = load_settings(app_handle.clone()).unwrap_or_default();
     let is_raw = loaded_image.is_raw;
-    let render = resolve_render_options(&settings, is_raw);
+    let use_wgpu_renderer = settings.wgpu_renderer_enabled();
+    let render = if use_wgpu_renderer {
+        display::refresh_displays(app_handle, &context, &settings);
+        let (output_space, headroom) = display::frame_output(&context);
+        RenderOptions {
+            headroom,
+            output_space,
+            ..resolve_render_options(&settings, is_raw)
+        }
+    } else {
+        resolve_render_options(&settings, is_raw)
+    };
+    let gain = loaded_image
+        .has_gain_map
+        .then(|| {
+            crate::decode::image_loader::gain_layer_for(
+                &loaded_image.path,
+                &settings,
+                render.headroom,
+            )
+        })
+        .flatten();
+    let gain_weight = gain.as_ref().map_or(0.0, |(_, weight)| *weight).to_bits();
     let content = FrameContent {
         job_hash: calculate_full_job_hash(&loaded_image.path, &adjustments_json),
         patch_hash: calculate_patch_hash(&adjustments_json),
@@ -78,7 +100,6 @@ fn process_preview_job(
 
     let default_preview_dim = settings.editor_preview_resolution.unwrap_or(1920);
     let preview_dim = target_resolution.unwrap_or(default_preview_dim);
-    let use_wgpu_renderer = settings.wgpu_renderer_enabled();
 
     let has_roi = roi.is_some();
     let (interactive_divisor, interactive_quality) = match live_quality {
@@ -96,10 +117,12 @@ fn process_preview_job(
         .lock()
         .unwrap_or_else(|e| e.into_inner());
 
-    let preview = match cached_preview_lock
-        .as_ref()
-        .filter(|c| c.transform_hash == new_transform_hash && c.preview_dim == preview_dim)
-    {
+    let preview = match cached_preview_lock.as_ref().filter(|c| {
+        c.transform_hash == new_transform_hash
+            && c.preview_dim == preview_dim
+            && c.source == Arc::as_ptr(&loaded_image.image) as usize
+            && c.gain_weight == gain_weight
+    }) {
         Some(cached) => cached.preview.clone(),
         None => {
             if let Some(cache) = state
@@ -116,11 +139,14 @@ fn process_preview_job(
                 &loaded_image,
                 &adjustments_clone,
                 preview_dim,
+                gain.as_ref(),
             )?;
             *cached_preview_lock = Some(CachedPreview {
                 preview: preview.clone(),
                 transform_hash: new_transform_hash,
                 preview_dim,
+                source: Arc::as_ptr(&loaded_image.image) as usize,
+                gain_weight,
             });
             preview
         }
@@ -213,6 +239,7 @@ fn process_preview_job(
                 compute_waveform,
                 active_waveform_channel: channel_filter,
                 sender: tx,
+                space: render.output_space,
             })
     } else {
         None
@@ -254,6 +281,7 @@ fn process_preview_job(
                 layer,
                 to_viewer,
                 content: crate::render::gpu::display::display_content_key(&loaded_image.path),
+                precision: display::frame_precision(render.output_space, render.headroom),
             }),
             analytics_config,
         );
@@ -388,10 +416,11 @@ pub fn start_analytics_worker(app_handle: tauri::AppHandle) {
             }
             last_run = Some(std::time::Instant::now());
 
-            let histogram_data = calculate_histogram(&job.frame).ok();
+            let frame = job.frame.into_srgb();
+            let histogram_data = calculate_histogram(&frame).ok();
 
             let waveform_data = if job.compute_waveform {
-                calculate_waveform(&job.frame, job.active_waveform_channel.as_deref()).ok()
+                calculate_waveform(&frame, job.active_waveform_channel.as_deref()).ok()
             } else {
                 None
             };
@@ -402,6 +431,7 @@ pub fn start_analytics_worker(app_handle: tauri::AppHandle) {
                 if let Some(channel) = channel {
                     let packet = encode_analytics_packet(
                         &job.path,
+                        1.0 / frame.peak,
                         histogram_data.as_ref(),
                         waveform_data.as_ref(),
                     );

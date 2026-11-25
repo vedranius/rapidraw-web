@@ -9,7 +9,7 @@ use crate::library::sidecars::{parse_virtual_path, run_batch_workers};
 use crate::masks::generation::MaskDefinition;
 use crate::metadata::exif_processing;
 use crate::metadata::sidecar::{ImageMetadata, is_image_edited};
-use crate::render::adjustment_utils::effective_baseline_exposure;
+use crate::render::adjustment_utils::{effective_baseline_exposure, is_default_adjustments};
 use crate::render::geometry::{
     Crop, apply_coarse_rotation, get_geometry_params_from_json, is_geometry_identity,
 };
@@ -72,18 +72,25 @@ pub fn emit_thumbnail_cache_setup_error(app_handle: &AppHandle, path: &str, reas
     );
 }
 
+fn thumbnail_render_key(settings: &AppSettings, is_raw: bool) -> String {
+    let render = resolve_render_options(settings, is_raw);
+    format!(
+        "RenderOptions {{ tonemapper_override: {:?}, non_raw_tonemapper_override: {:?}, \
+         baseline: {:?} }}{:?}",
+        render.tonemapper_override,
+        render.non_raw_tonemapper_override,
+        render.baseline,
+        settings.always_decode_raw_thumbnails
+    )
+}
+
 pub(crate) fn compute_thumbnail_cache_hash(
     path_str: &str,
     adjustments_bytes: &[u8],
     settings: &AppSettings,
 ) -> Option<String> {
     let (source_path, _) = parse_virtual_path(path_str);
-    let is_raw = is_raw_file(&source_path);
-    let render_key = format!(
-        "{:?}{:?}",
-        resolve_render_options(settings, is_raw),
-        settings.always_decode_raw_thumbnails
-    );
+    let render_key = thumbnail_render_key(settings, is_raw_file(&source_path));
 
     let img_mod_time = fs::metadata(&source_path)
         .ok()?
@@ -340,6 +347,7 @@ pub fn generate_thumbnail_data(
         app_handle,
         metadata.as_ref(),
         &settings,
+        None,
     )
 }
 
@@ -389,6 +397,7 @@ fn generate_thumbnail_data_with_metadata(
     app_handle: &AppHandle,
     metadata: Option<&ImageMetadata>,
     settings: &AppSettings,
+    before_decode: Option<&dyn Fn()>,
 ) -> anyhow::Result<DynamicImage> {
     let (source_path, _) = parse_virtual_path(path_str);
     let source_path_str = source_path.to_string_lossy().to_string();
@@ -401,7 +410,13 @@ fn generate_thumbnail_data_with_metadata(
 
     let always_decode_raw = settings.always_decode_raw_thumbnails.unwrap_or(false);
 
-    if is_raw && adjustments.is_null() && preloaded_image.is_none() && !always_decode_raw {
+    let untouched = || {
+        adjustments.is_null()
+            || (crate::adjustments::develop_defaults::keeps_embedded_preview(&source_path)
+                && is_default_adjustments(adjustments, &source_path))
+    };
+
+    if is_raw && preloaded_image.is_none() && !always_decode_raw && untouched() {
         let target_res = settings.medium_thumbnail_resolution.unwrap_or(1280);
         if let Some(preview) = try_load_embedded_raw_preview(&source_path, target_res) {
             return Ok(preview);
@@ -471,10 +486,13 @@ fn generate_thumbnail_data_with_metadata(
                 Cow::Borrowed(patched)
             } else if let Some(img) = preloaded_image {
                 let prepared =
-                    image_loader::prepare_base_image_cow(img, &source_path_str, adjustments)?;
+                    image_loader::prepare_base_image(img, &source_path_str, adjustments)?;
                 raw_scale_factor = crate::ai::upscale::scale_between(img, &prepared);
                 prepared
             } else {
+                if let Some(before_decode) = before_decode {
+                    before_decode();
+                }
                 let mmap_guard;
                 let vec_guard;
 
@@ -512,14 +530,6 @@ fn generate_thumbnail_data_with_metadata(
                 )?;
 
                 raw_scale_factor = upscale;
-                if is_raw {
-                    raw_scale_factor *=
-                        crate::decode::raw_processing::get_fast_demosaic_scale_factor(
-                            file_slice,
-                            (img.width() as f32 / upscale).round() as u32,
-                            (img.height() as f32 / upscale).round() as u32,
-                        );
-                }
                 Cow::Owned(img)
             };
 
@@ -620,18 +630,8 @@ fn generate_thumbnail_data_with_metadata(
             resolve_render_options(settings, is_raw),
         );
         let lut_path = meta.adjustments["lutPath"].as_str();
-        let lut = lut_path.and_then(|p| {
-            let mut cache = state.lut_cache.lock().unwrap();
-            if let Some(cached_lut) = cache.get(p) {
-                return Some(cached_lut.clone());
-            }
-            if let Ok(loaded_lut) = crate::adjustments::lut_processing::parse_lut_file(p) {
-                let arc_lut = Arc::new(loaded_lut);
-                cache.insert(p.to_string(), arc_lut.clone());
-                return Some(arc_lut);
-            }
-            None
-        });
+        let lut = lut_path
+            .and_then(|p| crate::adjustments::lut_processing::get_or_load_lut(&state, p).ok());
 
         let processed_image = process_and_get_dynamic_image(
             context,
@@ -664,11 +664,14 @@ fn generate_thumbnail_data_with_metadata(
     }
 
     let _decode_reservation;
-    let mut final_image: Cow<DynamicImage> = if let Some(patched) = &cached_patched {
+    let final_image: Cow<DynamicImage> = if let Some(patched) = &cached_patched {
         Cow::Borrowed(patched)
     } else if let Some(img) = preloaded_image {
-        image_loader::prepare_base_image_cow(img, &source_path_str, adjustments)?
+        image_loader::prepare_base_image(img, &source_path_str, adjustments)?
     } else {
+        if let Some(before_decode) = before_decode {
+            before_decode();
+        }
         let mmap_guard;
         let vec_guard;
         let file_slice: &[u8] = match read_file_mapped(&source_path) {
@@ -691,6 +694,12 @@ fn generate_thumbnail_data_with_metadata(
         if adjustments.is_null() {
             crate::decode::as_shot::as_shot_from_bytes(&source_path_str, file_slice);
         }
+        if !is_raw
+            && adjustments.is_null()
+            && resolve_render_options(settings, is_raw).tonemapper_override != Some(1)
+        {
+            return image_loader::load_display_image(file_slice, &source_path_str);
+        }
         Cow::Owned(
             image_loader::load_and_composite(
                 file_slice,
@@ -704,10 +713,11 @@ fn generate_thumbnail_data_with_metadata(
         )
     };
 
+    let mut owned_image = final_image.into_owned();
     if adjustments.is_null() {
         let render = resolve_render_options(settings, is_raw);
-        let mut owned_image = apply_exposure(
-            final_image.into_owned(),
+        owned_image = apply_exposure(
+            owned_image,
             effective_baseline_exposure(adjustments, as_shot(&source_path_str), render.baseline),
         );
         let use_agx = render.tonemapper_override == Some(1);
@@ -719,12 +729,17 @@ fn generate_thumbnail_data_with_metadata(
             crate::render::image_processing::apply_cpu_agx_tonemap(&mut owned_image);
         } else if is_raw {
             apply_cpu_default_raw_processing(&mut owned_image);
+        } else {
+            crate::decode::hdr_source::roll_off_encoded(
+                &mut owned_image,
+                as_shot(&source_path_str).source_peak,
+            );
         }
-        final_image = Cow::Owned(owned_image);
     }
+    crate::render::image_processing::apply_working_display_to_srgb(&mut owned_image, is_raw);
 
     let fallback_orientation_steps = adjustments["orientationSteps"].as_u64().unwrap_or(0) as u8;
-    Ok(apply_coarse_rotation(final_image, fallback_orientation_steps).into_owned())
+    Ok(apply_coarse_rotation(Cow::Owned(owned_image), fallback_orientation_steps).into_owned())
 }
 
 fn encode_thumbnail(image: &DynamicImage, target_width: u32) -> Result<Vec<u8>> {
@@ -792,7 +807,7 @@ pub fn generate_single_thumbnail_and_cache(
     force_regenerate: bool,
     app_handle: &AppHandle,
     settings: &AppSettings,
-    before_generate: Option<&dyn Fn()>,
+    before_decode: Option<&dyn Fn()>,
 ) -> Option<(String, String, u8, bool)> {
     let (source_path, sidecar_path) = parse_virtual_path(path_str);
     let sidecar_is_placeholder = is_cloud_placeholder(&sidecar_path);
@@ -849,10 +864,6 @@ pub fn generate_single_thumbnail_and_cache(
         ));
     }
 
-    if let Some(before_generate) = before_generate {
-        before_generate();
-    }
-
     if is_cloud_placeholder(&source_path) {
         return None;
     }
@@ -860,19 +871,16 @@ pub fn generate_single_thumbnail_and_cache(
     let target_width_small = settings.small_thumbnail_resolution.unwrap_or(480);
     let target_width_medium = settings.medium_thumbnail_resolution.unwrap_or(1280);
 
-    let thumb_result = if sidecar_is_placeholder {
-        generate_thumbnail_data(path_str, gpu_context, preloaded_image, app_handle)
-    } else {
-        let current_settings = load_settings(app_handle.clone()).unwrap_or_default();
-        generate_thumbnail_data_with_metadata(
-            path_str,
-            gpu_context,
-            preloaded_image,
-            app_handle,
-            metadata.as_ref(),
-            &current_settings,
-        )
-    };
+    let current_settings = load_settings(app_handle.clone()).unwrap_or_default();
+    let thumb_result = generate_thumbnail_data_with_metadata(
+        path_str,
+        gpu_context,
+        preloaded_image,
+        app_handle,
+        metadata.as_ref(),
+        &current_settings,
+        before_decode,
+    );
 
     if let Ok(thumb_image) = thumb_result
         && let Ok((small_data, medium_data)) =

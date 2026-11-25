@@ -51,7 +51,7 @@ const checks = {
   'rrweb/relay/thumbs.mjs': [
     ['the UI asks for thumbnails with update_thumbnail_queue({ paths })', ui.includes("invoke('update_thumbnail_queue', { paths: pathsToSend })")],
     ['get_supported_file_types returns { raw: [extensions] }', /"raw": raw_extensions/.test(listing)],
-    ['unedited RAWs use the embedded preview unless always_decode_raw_thumbnails', /if is_raw && adjustments\.is_null\(\) && preloaded_image\.is_none\(\) && !always_decode_raw/.test(thumbs)
+    ['unedited RAWs use the embedded preview unless always_decode_raw_thumbnails', /if is_raw && preloaded_image\.is_none\(\) && !always_decode_raw && untouched\(\)/.test(thumbs)
       && settings.includes('pub always_decode_raw_thumbnails: Option<bool>')],
   ],
   // rrweb/relay/exif.mjs lets RapidRAW parse the embedded JPEG's EXIF header saved as a temporary .raf

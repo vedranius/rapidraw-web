@@ -129,6 +129,7 @@ export interface AppSettings {
   uiVisibility?: UiVisibility;
   rawHighlightCompression?: number;
   processingBackend?: string;
+  rawDecoding?: string;
   linuxGpuOptimization?: boolean;
   exportPresets?: ExportPreset[];
   myLenses?: any;
@@ -138,6 +139,7 @@ export interface AppSettings {
   enableFolderImageCounts?: boolean;
   displayEditIcon?: boolean;
   linearRawMode?: string;
+  removeHotPixels?: boolean;
   enableXmpSync?: boolean;
   createXmpIfMissing?: boolean;
   isWaveformVisible?: boolean;
@@ -155,6 +157,11 @@ export interface AppSettings {
   enableBaselineExposure?: boolean;
   baselineExposure?: number;
   compensateHighlightPreservation?: boolean;
+  hdrDisplay?: boolean;
+  gainMapMode?: 'auto' | 'never';
+  displayColorMode?: 'auto' | 'off' | 'custom';
+  displayIccProfile?: string | null;
+  wideGamutPreview?: boolean;
   tonemapperOverrideEnabled?: boolean;
   defaultRawTonemapper?: string;
   defaultNonRawTonemapper?: string;

@@ -1,7 +1,7 @@
 use crate::app::settings::load_settings;
 use crate::app::state::{AppState, PreviewJob, PreviewTarget, PreviewTask};
 use crate::decode::formats::is_raw_file;
-use crate::decode::image_loader::prepare_base_image_cow;
+use crate::decode::image_loader::prepare_base_image;
 use crate::library::sidecars::parse_virtual_path;
 use crate::masks::generation::{
     MaskDefinition, build_warped_image_for_masks, generate_mask_bitmap,
@@ -106,8 +106,7 @@ pub async fn update_wgpu_transform(
             payload.clip_height,
         ];
         display.latest_transform.window = [payload.window_width, payload.window_height];
-        display.latest_transform.bg_primary = payload.bg_primary;
-        display.latest_transform.bg_secondary = payload.bg_secondary;
+        display.set_backgrounds(payload.bg_primary, payload.bg_secondary);
         display.latest_transform.pixelated = if payload.pixelated { 1.0 } else { 0.0 };
         display.latest_transform.split_origin = payload.split_origin;
         display.latest_transform.split_normal = payload.split_normal;
@@ -445,6 +444,7 @@ pub async fn generate_preview_for_path(
                 &source_path_str,
                 is_raw,
                 None,
+                crate::export::geometry::upscale_factor(&js_adjustments),
                 mask_count,
                 "jpeg",
                 92,
@@ -467,7 +467,7 @@ pub async fn generate_preview_for_path(
             &js_adjustments,
             max_edge.unwrap_or(1280).clamp(1024, 4096),
         )?;
-        let base_image = prepare_base_image_cow(&denoised, &source_path_str, &js_adjustments)
+        let base_image = prepare_base_image(&denoised, &source_path_str, &js_adjustments)
             .map_err(|e| e.to_string())?;
         let base_scale = crate::ai::upscale::scale_between(&pristine, &base_image);
         let (fitted, fit_scale) = crate::render::source::fit_to_gpu(&context, &base_image);
@@ -612,7 +612,7 @@ pub async fn preview_style_profiles(
             &settings,
             None,
         )?;
-        let base_image = prepare_base_image_cow(&pristine, &source_path_str, &base_adjustments)
+        let base_image = prepare_base_image(&pristine, &source_path_str, &base_adjustments)
             .map_err(|e| e.to_string())?;
         let base_scale = crate::ai::upscale::scale_between(&pristine, &base_image);
         let (fitted, fit_scale) = crate::render::source::fit_to_gpu(&context, &base_image);

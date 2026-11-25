@@ -29,10 +29,12 @@ pub fn register_app_handle(app_handle: &tauri::AppHandle) {
     let _ = APP_HANDLE.set(app_handle.clone());
 }
 
+pub fn app_handle() -> Option<&'static tauri::AppHandle> {
+    APP_HANDLE.get()
+}
+
 pub fn shared_gpu_context() -> Result<GpuContext, String> {
-    let app_handle = APP_HANDLE
-        .get()
-        .ok_or("GPU context requested before app setup")?;
+    let app_handle = app_handle().ok_or("GPU context requested before app setup")?;
     get_or_init_gpu_context(&app_handle.state::<AppState>(), app_handle)
 }
 
@@ -41,18 +43,45 @@ pub struct DecodeGpu {
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
     pub limits: wgpu::Limits,
+    pub adapter: String,
 }
 
 struct DecodeSlot {
     owner: Arc<wgpu::Device>,
     gpu: DecodeGpu,
+    lean: bool,
 }
 
 static DECODE_GPU: Mutex<Option<DecodeSlot>> = Mutex::new(None);
 static DECODE_DEVICE_LOST: AtomicBool = AtomicBool::new(false);
 
+pub fn adapter_label(adapter: &wgpu::Adapter) -> String {
+    let info = adapter.get_info();
+    format!(
+        "{} ({:?}, {} {})",
+        info.name, info.backend, info.driver, info.driver_info
+    )
+}
+
 pub fn decode_gpu_context() -> Result<DecodeGpu, String> {
-    Ok(decode_gpu_for(&shared_gpu_context()?))
+    let context = shared_gpu_context()?;
+    if context.shares_one_gl_context() {
+        return Err("the GL backend cannot run decoding next to rendering".into());
+    }
+    Ok(decode_gpu_for(&context))
+}
+
+pub fn release_decode_gpu(failed: &Arc<wgpu::Device>) -> bool {
+    let mut slot = DECODE_GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let released = slot.as_ref().is_some_and(|slot| {
+        !slot.lean
+            && Arc::ptr_eq(&slot.gpu.device, failed)
+            && !Arc::ptr_eq(&slot.gpu.device, &slot.owner)
+    });
+    if released {
+        *slot = None;
+    }
+    released
 }
 
 fn decode_gpu_for(context: &GpuContext) -> DecodeGpu {
@@ -65,11 +94,18 @@ fn decode_gpu_for(context: &GpuContext) -> DecodeGpu {
     {
         return existing.gpu.clone();
     }
+    let adapter = adapter_label(&context.adapter);
+    let lean = crate::decode::gpu_fallback::has_failed(&adapter);
     let opened = open_device(
         &context.adapter,
         "Decode Device",
         wgpu::Features::empty(),
         &context.limits,
+        if lean {
+            wgpu::MemoryHints::MemoryUsage
+        } else {
+            wgpu::MemoryHints::Performance
+        },
         &DECODE_DEVICE_LOST,
     );
     let (device, queue) = opened.unwrap_or_else(|e| {
@@ -80,10 +116,12 @@ fn decode_gpu_for(context: &GpuContext) -> DecodeGpu {
         device,
         queue,
         limits: context.limits.clone(),
+        adapter,
     };
     *slot = Some(DecodeSlot {
         owner: Arc::clone(&context.device),
         gpu: gpu.clone(),
+        lean,
     });
     gpu
 }
@@ -93,6 +131,7 @@ fn open_device(
     label: &'static str,
     required_features: wgpu::Features,
     limits: &wgpu::Limits,
+    memory_hints: wgpu::MemoryHints,
     lost: &'static AtomicBool,
 ) -> Result<(Arc<wgpu::Device>, Arc<wgpu::Queue>), String> {
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -100,7 +139,7 @@ fn open_device(
         required_features,
         required_limits: limits.clone(),
         experimental_features: wgpu::ExperimentalFeatures::default(),
-        memory_hints: wgpu::MemoryHints::Performance,
+        memory_hints,
         trace: wgpu::Trace::Off,
     }))
     .map_err(|e| e.to_string())?;
@@ -169,13 +208,9 @@ pub fn get_or_init_gpu_context(
         instance_desc.backends = wgpu::Backends::PRIMARY;
     }
 
-    let flag_path = state.gpu_crash_flag_path.lock().unwrap().clone();
-    if let Some(p) = &flag_path {
-        if let Some(parent) = p.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(p, "initializing_gpu");
-    }
+    crate::render::gpu::fallback::begin_attempt(
+        &std::env::var("WGPU_BACKEND").unwrap_or_else(|_| "auto".to_string()),
+    );
 
     let instance = wgpu::Instance::new(instance_desc);
 
@@ -202,9 +237,6 @@ pub fn get_or_init_gpu_context(
                         );
                         #[cfg(target_os = "linux")]
                         WGPU_DISPLAY_FAILED.store(true, Ordering::Release);
-                        if let Some(p) = &flag_path {
-                            let _ = std::fs::remove_file(p);
-                        }
                         None
                     }
                 }
@@ -225,9 +257,7 @@ pub fn get_or_init_gpu_context(
         ..Default::default()
     }))
     .map_err(|e| {
-        if let Some(p) = &flag_path {
-            let _ = std::fs::remove_file(p);
-        }
+        crate::render::gpu::fallback::abandon_attempt();
         format!("Failed to find a wgpu adapter: {}", e)
     })?;
 
@@ -240,6 +270,9 @@ pub fn get_or_init_gpu_context(
         adapter_info.driver,
         adapter_info.driver_info
     );
+    crate::render::gpu::fallback::begin_attempt(crate::render::gpu::fallback::backend_name(
+        adapter_info.backend,
+    ));
 
     let mut required_features = wgpu::Features::empty();
     if adapter
@@ -256,17 +289,10 @@ pub fn get_or_init_gpu_context(
         "Processing Device",
         required_features,
         &limits,
+        wgpu::MemoryHints::Performance,
         &GPU_DEVICE_LOST,
     )
-    .inspect_err(|_| {
-        if let Some(p) = &flag_path {
-            let _ = std::fs::remove_file(p);
-        }
-    })?;
-
-    if let Some(p) = &flag_path {
-        let _ = std::fs::remove_file(p);
-    }
+    .inspect_err(|_| crate::render::gpu::fallback::abandon_attempt())?;
 
     #[cfg(not(target_os = "android"))]
     let display_opt = if let Some((surface, platform)) = surface_opt {
@@ -277,7 +303,7 @@ pub fn get_or_init_gpu_context(
             .inner_size()
             .unwrap_or(tauri::PhysicalSize::new(1280, 720));
         Some(build_wgpu_display(
-            surface, &adapter, &device, size, false, platform,
+            surface, &adapter, &device, &queue, size, false, platform,
         )?)
     } else {
         None
@@ -292,20 +318,21 @@ pub fn get_or_init_gpu_context(
         device,
         queue,
         limits,
+        backend: adapter_info.backend,
         display: Arc::new(std::sync::Mutex::new(display_opt)),
         viewer_display: Arc::new(std::sync::Mutex::new(None)),
         pipelines: Arc::new(std::sync::OnceLock::new()),
         compute: Arc::new(std::sync::OnceLock::new()),
     };
-    let warm = new_context.clone();
-    std::thread::spawn(move || {
-        let decode = decode_gpu_for(&warm);
-        crate::decode::demosaic::warm(&decode.device);
-        crate::decode::develop::warm(&decode.device);
-        warm.compute
-            .get_or_init(|| crate::render::gpu::compute::ComputePipelines::new(&warm.device))
-            .warm(&warm.device);
-    });
+    if !new_context.shares_one_gl_context() {
+        let warm = new_context.clone();
+        std::thread::spawn(move || {
+            crate::decode::gpu_fallback::prepare(&decode_gpu_for(&warm));
+            warm.compute
+                .get_or_init(|| crate::render::gpu::compute::ComputePipelines::new(&warm.device))
+                .warm(&warm.device);
+        });
+    }
     *context_lock = Some(new_context.clone());
     Ok(new_context)
 }
@@ -317,6 +344,7 @@ pub struct GpuContext {
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
     pub limits: wgpu::Limits,
+    pub backend: wgpu::Backend,
     pub display: Arc<std::sync::Mutex<Option<WgpuDisplay>>>,
     pub viewer_display: Arc<std::sync::Mutex<Option<WgpuDisplay>>>,
     pub pipelines: Arc<OnceLock<Arc<GpuPipelines>>>,
@@ -324,6 +352,10 @@ pub struct GpuContext {
 }
 
 impl GpuContext {
+    pub fn shares_one_gl_context(&self) -> bool {
+        self.backend == wgpu::Backend::Gl
+    }
+
     pub fn display_for_label(
         &self,
         label: &str,

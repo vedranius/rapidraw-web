@@ -1,4 +1,5 @@
-use crate::export::settings::{OriginalExportOptions, TiffBitDepth};
+use crate::export::settings::{ConflictAction, OriginalExportOptions, TiffBitDepth};
+use crate::render::color_space::OutputColorSpace;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -20,9 +21,13 @@ pub struct HeadlessExportSession {
     pub format: String,
     pub quality: u8,
     pub tiff_bit_depth: TiffBitDepth,
+    pub color_space: OutputColorSpace,
+    pub hdr: bool,
+    pub hdr_headroom: f32,
     pub keep_metadata: bool,
     pub adjustments_override: Option<String>,
     pub export_original: Option<OriginalExportOptions>,
+    pub on_conflict: Option<ConflictAction>,
 }
 
 #[derive(Clone, Debug)]
@@ -67,11 +72,15 @@ pub fn parse_launch_args(args: &[String]) -> LaunchRequest {
         let mut format = String::from("jpeg");
         let mut quality = 90;
         let mut tiff_bit_depth = TiffBitDepth::default();
+        let mut color_space = OutputColorSpace::default();
+        let mut hdr = false;
+        let mut hdr_headroom = crate::render::hdr::Headroom::DEFAULT_STOPS;
         let mut keep_metadata = false;
         let mut adjustments_override = None;
         let mut export_original = false;
         let mut original_crop = true;
         let mut original_keep_exposure = false;
+        let mut on_conflict = None;
 
         if let Some(src) = iter.next()
             && !src.starts_with('-')
@@ -116,6 +125,49 @@ pub fn parse_launch_args(args: &[String]) -> LaunchRequest {
                     };
                     tiff_bit_depth = value;
                 }
+                "--color-space" => {
+                    const EXPECTED: &str = "srgb, display-p3, adobe-rgb, prophoto-rgb or rec2020";
+                    let Some(value) = iter.next() else {
+                        return LaunchRequest::InvalidHeadless(format!(
+                            "Missing value for --color-space; expected {}.",
+                            EXPECTED
+                        ));
+                    };
+                    color_space = match value.to_ascii_lowercase().replace(['-', '_'], "").as_str()
+                    {
+                        "srgb" => OutputColorSpace::Srgb,
+                        "displayp3" | "p3" => OutputColorSpace::DisplayP3,
+                        "adobergb" => OutputColorSpace::AdobeRgb,
+                        "prophotorgb" | "prophoto" => OutputColorSpace::ProPhotoRgb,
+                        "rec2020" => OutputColorSpace::Rec2020,
+                        _ => {
+                            return LaunchRequest::InvalidHeadless(format!(
+                                "Invalid color space '{}'; expected {}.",
+                                value, EXPECTED
+                            ));
+                        }
+                    };
+                }
+                "--hdr" => hdr = true,
+                "--hdr-headroom" => {
+                    let Some(value) = iter.next() else {
+                        return LaunchRequest::InvalidHeadless(
+                            "Missing value for --hdr-headroom; expected stops from 1 to 4."
+                                .to_string(),
+                        );
+                    };
+                    let Some(stops) = value
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|stops| (1.0..=4.0).contains(stops))
+                    else {
+                        return LaunchRequest::InvalidHeadless(format!(
+                            "Invalid HDR headroom '{}'; expected stops from 1 to 4.",
+                            value
+                        ));
+                    };
+                    hdr_headroom = stops;
+                }
                 "--keep-metadata" => keep_metadata = true,
                 "--export-original" => export_original = true,
                 "--original-no-crop" => original_crop = false,
@@ -124,6 +176,29 @@ pub fn parse_launch_args(args: &[String]) -> LaunchRequest {
                     if let Some(adj) = iter.next() {
                         adjustments_override = Some(adj.clone());
                     }
+                }
+                "--on-conflict" => {
+                    const EXPECTED: &str = "keep-both, overwrite, overwrite-if-changed or skip";
+                    let Some(value) = iter.next() else {
+                        return LaunchRequest::InvalidHeadless(format!(
+                            "Missing value for --on-conflict; expected {}.",
+                            EXPECTED
+                        ));
+                    };
+                    on_conflict = Some(
+                        match value.to_ascii_lowercase().replace(['-', '_'], "").as_str() {
+                            "keepboth" => ConflictAction::CreateUnique,
+                            "overwrite" => ConflictAction::Overwrite,
+                            "overwriteifchanged" => ConflictAction::OverwriteIfChanged,
+                            "skip" => ConflictAction::Skip,
+                            _ => {
+                                return LaunchRequest::InvalidHeadless(format!(
+                                    "Invalid conflict action '{}'; expected {}.",
+                                    value, EXPECTED
+                                ));
+                            }
+                        },
+                    );
                 }
                 _ => {}
             }
@@ -135,12 +210,16 @@ pub fn parse_launch_args(args: &[String]) -> LaunchRequest {
             format,
             quality,
             tiff_bit_depth,
+            color_space,
+            hdr,
+            hdr_headroom,
             keep_metadata,
             adjustments_override,
             export_original: export_original.then_some(OriginalExportOptions {
                 crop: original_crop,
                 keep_exposure: original_keep_exposure,
             }),
+            on_conflict,
         });
     }
 

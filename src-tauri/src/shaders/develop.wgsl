@@ -5,7 +5,7 @@ struct Finish {
     wb: vec4<f32>,
     neutral: vec4<f32>,
     matrix: array<vec4<f32>, 3>,
-    comp: array<vec4<f32>, 3>,
+    comp: vec4<f32>,
     amounts: vec4<f32>,
     half: vec4<u32>,
     quarter: vec4<u32>,
@@ -41,7 +41,6 @@ const LEVEL_BINS: u32 = 2048u;
 const LEVEL_LOW: f32 = 0.75;
 const LEVEL_HIGH: f32 = 1.25;
 const PLATEAU_RATIO: f32 = 8.0;
-const COMPRESSION_POWER: f32 = 1.2;
 const FLOOR: f32 = 0.002;
 const PAD: i32 = 2;
 
@@ -104,6 +103,10 @@ fn median(m: u32) -> f32 {
 fn ease(e0: f32, e1: f32, x: f32) -> f32 {
     let t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
     return t * t * (3.0 - 2.0 * t);
+}
+
+fn with_channel(v: vec3<f32>, c: u32, value: f32) -> vec3<f32> {
+    return select(v, vec3<f32>(value), vec3<u32>(0u, 1u, 2u) == vec3<u32>(c));
 }
 
 fn croot(v: f32) -> f32 {
@@ -214,13 +217,13 @@ fn rebuild(x: i32, y: i32, obs: vec3<f32>) -> vec3<f32> {
         for (var c = 0u; c < 3u; c++) {
             if (blend[c] > 0.0) {
                 let rebuilt = max(obs[c], opposed(roots, c) + offset[c]);
-                pixel[c] = obs[c] + (rebuilt - obs[c]) * blend[c];
+                pixel = with_channel(pixel, c, obs[c] + (rebuilt - obs[c]) * blend[c]);
             }
         }
         if (iteration + 1 < ITERATIONS) {
             for (var c = 0u; c < 3u; c++) {
                 if (blend[c] > 0.0) {
-                    roots[c] = croot(pixel[c]);
+                    roots = with_channel(roots, c, croot(pixel[c]));
                 }
             }
         }
@@ -238,7 +241,7 @@ fn rebuild(x: i32, y: i32, obs: vec3<f32>) -> vec3<f32> {
     for (var c = 0u; c < 3u; c++) {
         if (blend[c] > 0.0) {
             let faded = max(obs[c], mean + (pixel[c] - mean) * keep);
-            pixel[c] = obs[c] + (faded - obs[c]) * blend[c];
+            pixel = with_channel(pixel, c, obs[c] + (faded - obs[c]) * blend[c]);
         }
     }
     return pixel;
@@ -266,15 +269,6 @@ fn refill(x: i32, y: i32, obs: vec3<f32>, rebuilt: vec3<f32>) -> vec3<f32> {
     return rebuilt + (scale * tint - rebuilt) * full;
 }
 
-fn compress(c: u32, d: f32) -> f32 {
-    let k = F.comp[c];
-    if (k.x == 0.0 || d <= k.y) {
-        return d;
-    }
-    let excess = d - k.y;
-    return k.y + excess / pow(1.0 + pow(excess / k.z, COMPRESSION_POWER), 1.0 / COMPRESSION_POWER);
-}
-
 fn to_output(p: vec3<f32>) -> vec3<f32> {
     if (!flag(COLOR)) {
         return p;
@@ -285,15 +279,7 @@ fn to_output(p: vec3<f32>) -> vec3<f32> {
         F.matrix[1].x * c.x + F.matrix[1].y * c.y + F.matrix[1].z * c.z,
         F.matrix[2].x * c.x + F.matrix[2].y * c.y + F.matrix[2].z * c.z,
     );
-    let achromatic = max(max(rgb.x, rgb.y), rgb.z);
-    if (achromatic <= 0.0) {
-        return vec3<f32>(0.0);
-    }
-    for (var i = 0u; i < 3u; i++) {
-        let distance = (achromatic - rgb[i]) / achromatic;
-        rgb[i] = achromatic - compress(i, distance) * achromatic;
-    }
-    return clamp(rgb, vec3<f32>(0.0), vec3<f32>(F.wb.w));
+    return min(fit_gamut(rgb, F.comp.w, F.comp.xyz), vec3<f32>(F.wb.w));
 }
 
 fn source(o: vec2<i32>) -> vec2<i32> {
@@ -334,7 +320,7 @@ fn developed(o: vec2<i32>) -> vec3<f32> {
 }
 
 fn stabilize(rgb: vec3<f32>) -> vec3<f32> {
-    let l = 0.2126 * rgb.x + 0.7152 * rgb.y + 0.0722 * rgb.z;
+    let l = dot(rgb, LUMA_COEFF);
     let s = sqrt(max(l, 0.0) + FLOOR);
     return vec3<f32>(s, sqrt(max(rgb.x, 0.0) + FLOOR) - s, sqrt(max(rgb.z, 0.0) + FLOOR) - s);
 }
@@ -402,7 +388,7 @@ fn hl_levels() {
             above += atomicLoad(&stats[HIST + c * LEVEL_BINS + b]);
         }
         if (f32(count) >= PLATEAU_RATIO * (baseline + 1.0) && above < count) {
-            found[c] = LEVEL_LOW + (f32(peak) + 0.5) / per_unit;
+            found = with_channel(found, c, LEVEL_LOW + (f32(peak) + 0.5) / per_unit);
         }
     }
     var fallback = 1.0;
@@ -505,8 +491,8 @@ fn hl_inpaint(@builtin(global_invocation_id) id: vec3<u32>) {
                     }
                     let lv = p[c] * (1.0 / cl[c]);
                     let w = lv * lv;
-                    weight[c] += w;
-                    offset[c] += w * (p[c] - opposed(roots, c));
+                    weight = with_channel(weight, c, weight[c] + w);
+                    offset = with_channel(offset, c, offset[c] + w * (p[c] - opposed(roots, c)));
                 }
             }
         }
@@ -594,7 +580,7 @@ fn pp_up(@builtin(global_invocation_id) id: vec3<u32>) {
     var out = vec3<f32>(0.0);
     if (T.z == 1u) {
         for (var i = 0u; i < 3u; i++) {
-            out[i] = select(0.0, offset[i] / weight[i], weight[i] > 0.0);
+            out = with_channel(out, i, select(0.0, offset[i] / weight[i], weight[i] > 0.0));
         }
     } else {
         let up = level(T.x, T.y + 1u);
@@ -605,9 +591,9 @@ fn pp_up(@builtin(global_invocation_id) id: vec3<u32>) {
         for (var i = 0u; i < 3u; i++) {
             if (weight[i] > 0.0) {
                 let alpha = min(weight[i] / full_weight, 1.0);
-                out[i] = coarse[i] + (offset[i] / weight[i] - coarse[i]) * alpha;
+                out = with_channel(out, i, coarse[i] + (offset[i] / weight[i] - coarse[i]) * alpha);
             } else {
-                out[i] = coarse[i];
+                out = with_channel(out, i, coarse[i]);
             }
         }
     }
@@ -930,7 +916,7 @@ fn sh_luma(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let p = developed(vec2<i32>(id.xy));
-    pl[F.planes[4].x + id.y * F.dims.z + id.x] = sqrt(max(0.2126 * p.x + 0.7152 * p.y + 0.0722 * p.z, 0.0) + FLOOR);
+    pl[F.planes[4].x + id.y * F.dims.z + id.x] = sqrt(max(dot(p, LUMA_COEFF), 0.0) + FLOOR);
 }
 
 fn blur(x: i32, y: i32) -> f32 {
@@ -1085,10 +1071,10 @@ fn out_band(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     var rgb = developed(vec2<i32>(x, y));
-    let qc = sqrt(max(0.2126 * rgb.x + 0.7152 * rgb.y + 0.0722 * rgb.z, 0.0) + FLOOR);
+    let qc = sqrt(max(dot(rgb, LUMA_COEFF), 0.0) + FLOOR);
     if (flag(DENOISE)) {
         let a = F.amounts.x;
-        let lk = 0.2126 * rgb.x + 0.7152 * rgb.y + 0.0722 * rgb.z;
+        let lk = dot(rgb, LUMA_COEFF);
         let cr = sqrt(max(rgb.x, 0.0) + FLOOR) - qc;
         let cb = sqrt(max(rgb.z, 0.0) + FLOOR) - qc;
         let eps = upsample_eps();
@@ -1108,7 +1094,7 @@ fn out_band(@builtin(global_invocation_id) id: vec3<u32>) {
         let vb = max(qc + nb, 0.0);
         let dr = vr * vr - FLOOR - lk;
         let db = vb * vb - FLOOR - lk;
-        let dg = -(0.2126 * dr + 0.0722 * db) * (1.0 / 0.7152);
+        let dg = -(LUMA_COEFF.r * dr + LUMA_COEFF.b * db) / LUMA_COEFF.g;
         let m = min(min(dr, dg), db);
         let s = select(1.0, -lk / m, lk + m < 0.0);
         if (lk > 0.0) {

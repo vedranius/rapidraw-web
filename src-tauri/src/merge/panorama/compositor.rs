@@ -1,11 +1,11 @@
-use super::blending::{MultiBandBlender, band_count};
 use super::camera::{Camera, Lens, Orientation};
 use super::layout::{OutputLayout, plan_layout};
 use super::photometric::Photometric;
 use super::projection::{Projection, ProjectionMode, plan_canvas};
-use super::raster::{Raster, Rect, push_pull_fill};
 use super::seams::{NO_LABEL, SeamLayer, find_seams};
-use crate::render::image_processing::linear_channel_to_srgb;
+use crate::merge::blending::{MultiBandBlender, band_count};
+use crate::merge::raster::{Raster, Rect, push_pull_fill};
+use crate::render::color_space::srgb_transfer;
 use nalgebra::Vector3;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -124,6 +124,7 @@ fn warp_layer(
     let lens = scene.lens;
     let level = &source.levels[select_level(source, camera, magnification(layout, camera, scale))];
     let r_norm = camera.radius_norm();
+    let transfer = srgb_transfer();
 
     let mut color = Raster::new(rect.width, rect.height, 3);
     let mut valid = vec![0.0f32; rect.width * rect.height];
@@ -158,7 +159,7 @@ fn warp_layer(
                 let r2 = (p.norm_squared() / (r_norm * r_norm)) as f32;
                 let gain = photometric.correction(image, r2);
                 for c in 0..3 {
-                    row[lx * 3 + c] = linear_channel_to_srgb(sample[c] * gain[c]);
+                    row[lx * 3 + c] = transfer.encode(sample[c] * gain[c]);
                 }
                 valid_row[lx] = 1.0;
             }
@@ -478,7 +479,7 @@ pub fn build_levels(full: Raster, min_dimension: usize, max_dimension: usize) ->
     let mut level = full;
     loop {
         let next = (level.width.min(level.height) / 2 >= min_dimension)
-            .then(|| super::raster::downsample_box(&level));
+            .then(|| crate::merge::raster::downsample_box(&level));
         if level.width.max(level.height) <= max_dimension || next.is_none() {
             levels.push(level);
         }
@@ -499,7 +500,7 @@ pub fn level_for_magnification(
     while level.width.min(level.height) / 2 >= min_dimension
         && (level.width / 2) as f64 / camera.width >= magnification
     {
-        level = super::raster::downsample_box(&level);
+        level = crate::merge::raster::downsample_box(&level);
     }
     level
 }

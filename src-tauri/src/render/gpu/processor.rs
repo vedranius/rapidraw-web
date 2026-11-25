@@ -11,8 +11,7 @@ use crate::app::state::{AnalyticsConfig, AnalyticsJob, GpuImageEntry};
 use crate::render::analytics::{AnalyticsFrame, AnalyticsPixels};
 use crate::render::gpu::context::GpuContext;
 use crate::render::gpu::pipelines::{
-    ALL_SHADER_FEATURES, GpuPipelines, HighPrecisionPipeline, high_precision_shader_source,
-    shader_features,
+    ALL_SHADER_FEATURES, GpuPipelines, HighPrecisionPipeline, output_shader_source, shader_features,
 };
 use crate::render::uniforms::{AllAdjustments, MAX_MASKS};
 
@@ -24,11 +23,26 @@ pub struct Roi {
     pub height: u32,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum RenderOutputPrecision {
     #[default]
     EightBit,
     SixteenBit,
+    Float,
+}
+
+impl RenderOutputPrecision {
+    pub fn is_high(self) -> bool {
+        self != Self::EightBit
+    }
+
+    pub fn texture_format(self) -> wgpu::TextureFormat {
+        match self {
+            Self::EightBit => wgpu::TextureFormat::Rgba8Unorm,
+            Self::SixteenBit => wgpu::TextureFormat::Rgba16Uint,
+            Self::Float => wgpu::TextureFormat::Rgba16Float,
+        }
+    }
 }
 
 pub struct RenderRequest<'a> {
@@ -179,7 +193,7 @@ pub struct GpuProcessor {
         )>,
     >,
 
-    high_precision_tile: std::sync::OnceLock<HighPrecisionTile>,
+    high_precision_tile: std::sync::Mutex<Option<Arc<HighPrecisionTile>>>,
     tile_output_size: wgpu::Extent3d,
     adjustments_buffer: wgpu::Buffer,
     mask_cache: std::sync::Mutex<Option<MaskCache>>,
@@ -193,7 +207,7 @@ pub struct GpuProcessor {
     pub tile_output_texture: wgpu::Texture,
     pub tile_output_texture_view: wgpu::TextureView,
     full_image_size: wgpu::Extent3d,
-    display_textures: std::sync::OnceLock<DisplayTextures>,
+    display_textures: std::sync::Mutex<Option<Arc<DisplayTextures>>>,
     pub readback_pool: ReadbackPool,
 }
 
@@ -240,6 +254,8 @@ pub struct AnalyticsReadback {
     pub width: u32,
     pub height: u32,
     pub row_stride: usize,
+    pub half_float: bool,
+    pub peak: f32,
 }
 
 pub fn analytics_readback_sender() -> &'static std::sync::mpsc::Sender<AnalyticsReadback> {
@@ -281,17 +297,34 @@ fn complete_analytics_readback(readback: AnalyticsReadback) {
 
     if let Ok(Ok(())) = rx.recv() {
         let analytics = readback.analytics;
+        let mapped = PooledReadback {
+            view: Some(readback.buffer.slice(..).get_mapped_range()),
+            buffer: readback.buffer,
+            pool: readback.pool,
+        };
+        let (data, row_stride) = if readback.half_float {
+            let row_samples = readback.width as usize * 4;
+            let pixels = mapped
+                .chunks(readback.row_stride)
+                .take(readback.height as usize)
+                .flat_map(|row| bytemuck::cast_slice::<u8, f16>(&row[..row_samples * 2]))
+                .map(|sample| {
+                    ((sample.to_f32() / readback.peak).clamp(0.0, 1.0) * 255.0).round() as u8
+                })
+                .collect();
+            (AnalyticsPixels::Owned(pixels), row_samples)
+        } else {
+            (AnalyticsPixels::Mapped(mapped), readback.row_stride)
+        };
         let _ = analytics.sender.send(AnalyticsJob {
             path: analytics.path,
             frame: AnalyticsFrame {
-                data: AnalyticsPixels::Mapped(PooledReadback {
-                    view: Some(readback.buffer.slice(..).get_mapped_range()),
-                    buffer: readback.buffer,
-                    pool: readback.pool,
-                }),
+                data,
                 width: readback.width,
                 height: readback.height,
-                row_stride: readback.row_stride,
+                row_stride,
+                peak: readback.peak,
+                space: analytics.space,
             },
             compute_waveform: analytics.compute_waveform,
             active_waveform_channel: analytics.active_waveform_channel,
@@ -341,6 +374,7 @@ impl GpuProcessor {
                 .pipelines
                 .get_or_init(|| Arc::new(GpuPipelines::new(device))),
         );
+        crate::render::gpu::fallback::gpu_started(context.backend);
 
         let blur_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Blur Params Buffer"),
@@ -416,7 +450,7 @@ impl GpuProcessor {
             pipelines,
             blur_params_buffer,
             light_cache: std::sync::Mutex::new(None),
-            high_precision_tile: std::sync::OnceLock::new(),
+            high_precision_tile: std::sync::Mutex::new(None),
             tile_output_size: clamped_tile_size,
             adjustments_buffer,
             mask_cache: std::sync::Mutex::new(None),
@@ -429,7 +463,7 @@ impl GpuProcessor {
             tile_output_texture,
             tile_output_texture_view,
             full_image_size,
-            display_textures: std::sync::OnceLock::new(),
+            display_textures: std::sync::Mutex::new(None),
             readback_pool: Arc::new(std::sync::Mutex::new(Vec::new())),
         })
     }
@@ -1136,9 +1170,13 @@ impl GpuProcessor {
         (view, sampler)
     }
 
-    fn main_pipeline_for(&self, high_precision: bool, features: u32) -> wgpu::ComputePipeline {
-        let (generic, shader, layout) = if high_precision {
-            let hp = self.high_precision_pipeline();
+    fn main_pipeline_for(
+        &self,
+        precision: RenderOutputPrecision,
+        features: u32,
+    ) -> wgpu::ComputePipeline {
+        let (generic, shader, layout) = if precision.is_high() {
+            let hp = self.high_precision_pipeline(precision);
             (&hp.pipeline, &hp.shader, &hp.layout)
         } else {
             (
@@ -1147,11 +1185,11 @@ impl GpuProcessor {
                 &self.pipelines.main_pipeline_layout,
             )
         };
-        if features == ALL_SHADER_FEATURES {
+        if features == ALL_SHADER_FEATURES || self.context.shares_one_gl_context() {
             return generic.clone();
         }
 
-        let key = (high_precision, features);
+        let key = (precision, features);
         let mut pipelines = self
             .pipelines
             .specialized_pipelines
@@ -1171,7 +1209,7 @@ impl GpuProcessor {
         let specialized_pipelines = Arc::clone(&self.pipelines.specialized_pipelines);
         std::thread::spawn(move || {
             let mut constants = vec![("FEATURES", features as f64)];
-            if high_precision {
+            if precision.is_high() {
                 constants.push(("HIGH_PRECISION_OUTPUT", 1.0));
             }
             let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -1210,38 +1248,103 @@ impl GpuProcessor {
         })
     }
 
-    pub fn display_textures(&self) -> &DisplayTextures {
-        self.display_textures.get_or_init(|| {
-            let descriptor = |label| wgpu::TextureDescriptor {
-                label: Some(label),
-                size: self.full_image_size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_DST
-                    | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            };
-            let device = &self.context.device;
-            let working_texture = device.create_texture(&descriptor("Working Output Texture"));
-            let output_texture = device.create_texture(&descriptor("Full Output Texture"));
-            let output_texture_view = output_texture.create_view(&Default::default());
-            DisplayTextures {
-                working_texture,
-                output_texture,
-                output_texture_view,
-            }
-        })
+    pub fn display_textures(&self, format: wgpu::TextureFormat) -> Arc<DisplayTextures> {
+        let mut textures = self
+            .display_textures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = textures.as_ref().filter(|t| t.format == format) {
+            return Arc::clone(existing);
+        }
+        let descriptor = |label| wgpu::TextureDescriptor {
+            label: Some(label),
+            size: self.full_image_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        };
+        let device = &self.context.device;
+        let working_texture = device.create_texture(&descriptor("Working Output Texture"));
+        let output_texture = device.create_texture(&descriptor("Full Output Texture"));
+        let output_texture_view = output_texture.create_view(&Default::default());
+        let created = Arc::new(DisplayTextures {
+            edited_frame_ready: std::sync::atomic::AtomicBool::new(false),
+            format,
+            working_texture,
+            output_texture,
+            output_texture_view,
+        });
+        *textures = Some(Arc::clone(&created));
+        created
     }
 
-    fn high_precision_pipeline(&self) -> &HighPrecisionPipeline {
-        self.pipelines.high_precision_pipeline.get_or_init(|| {
+    #[cfg(test)]
+    pub(crate) fn warm_all_shaders(&self) {
+        let sixteen_bit = self.high_precision_pipeline(RenderOutputPrecision::SixteenBit);
+        let float = self.high_precision_pipeline(RenderOutputPrecision::Float);
+        self.hsl_probe_pipeline();
+        self.pipelines.motion_blur.get_or_init(|| {
+            crate::effects::motion_blur::MotionBlurPipelines::new(&self.context.device)
+        });
+        if self.context.shares_one_gl_context() {
+            return;
+        }
+        let variants = [
+            (
+                false,
+                &self.pipelines.main_shader_module,
+                &self.pipelines.main_pipeline_layout,
+            ),
+            (true, &sixteen_bit.shader, &sixteen_bit.layout),
+            (true, &float.shader, &float.layout),
+        ];
+        let feature_sets = std::iter::once(0).chain(crate::render::gpu::pipelines::SHADER_FEATURES);
+        for (is_high_precision, shader, layout) in variants {
+            for features in feature_sets.clone() {
+                let mut constants = vec![("FEATURES", features as f64)];
+                if is_high_precision {
+                    constants.push(("HIGH_PRECISION_OUTPUT", 1.0));
+                }
+                let _ =
+                    self.context
+                        .device
+                        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                            label: Some("Specialized Compute Pipeline"),
+                            layout: Some(layout),
+                            module: shader,
+                            entry_point: Some("main"),
+                            compilation_options: wgpu::PipelineCompilationOptions {
+                                constants: &constants,
+                                ..Default::default()
+                            },
+                            cache: None,
+                        });
+            }
+        }
+    }
+
+    fn high_precision_pipeline(&self, precision: RenderOutputPrecision) -> &HighPrecisionPipeline {
+        let slot = if precision == RenderOutputPrecision::SixteenBit {
+            &self.pipelines.sixteen_bit_pipeline
+        } else {
+            &self.pipelines.float_pipeline
+        };
+        slot.get_or_init(|| {
             let device = &self.context.device;
+            let mut entries = self.pipelines.main_bgl_entries.clone();
+            entries[1].ty = wgpu::BindingType::StorageTexture {
+                access: wgpu::StorageTextureAccess::WriteOnly,
+                format: precision.texture_format(),
+                view_dimension: wgpu::TextureViewDimension::D2,
+            };
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("High Precision Main BGL"),
-                entries: &self.pipelines.high_precision_entries,
+                entries: &entries,
             });
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("High Precision Pipeline Layout"),
@@ -1250,7 +1353,7 @@ impl GpuProcessor {
             });
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("High Precision Image Processing Shader"),
-                source: wgpu::ShaderSource::Wgsl(high_precision_shader_source().into()),
+                source: wgpu::ShaderSource::Wgsl(output_shader_source(precision).into()),
             });
             let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("High Precision Compute Pipeline"),
@@ -1290,26 +1393,34 @@ impl GpuProcessor {
         })
     }
 
-    fn high_precision_tile(&self) -> &HighPrecisionTile {
-        self.high_precision_tile.get_or_init(|| {
-            let texture = self
-                .context
-                .device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some("High Precision Tile Output Texture"),
-                    size: self.tile_output_size,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::STORAGE_BINDING
-                        | wgpu::TextureUsages::COPY_SRC,
-                    view_formats: &[],
-                });
-            let view = texture.create_view(&Default::default());
-            HighPrecisionTile { texture, view }
-        })
+    fn high_precision_tile(&self, format: wgpu::TextureFormat) -> Arc<HighPrecisionTile> {
+        let mut tile = self
+            .high_precision_tile
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = tile.as_ref().filter(|t| t.texture.format() == format) {
+            return Arc::clone(existing);
+        }
+        *tile = None;
+        let texture = self
+            .context
+            .device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("High Precision Tile Output Texture"),
+                size: self.tile_output_size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::STORAGE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+        let view = texture.create_view(&Default::default());
+        let created = Arc::new(HighPrecisionTile { texture, view });
+        *tile = Some(Arc::clone(&created));
+        created
     }
 
     fn light_maps(
@@ -1338,10 +1449,13 @@ impl GpuProcessor {
         &self,
         input: &GpuImageEntry,
         mask_texture_view: &wgpu::TextureView,
-        request: RenderRequest,
+        mut request: RenderRequest,
         output_to_display: bool,
         output_precision: RenderOutputPrecision,
     ) -> Result<(RenderedPixels, u32, u32, u32, u32), String> {
+        if request.lut.is_none() {
+            request.adjustments.global.has_lut = 0;
+        }
         let input_texture_view = &input.texture_view;
         let gf_coeffs_view = &input.gf_coeffs_view;
         let tone_base_view = &input.tone_base_view;
@@ -1353,28 +1467,20 @@ impl GpuProcessor {
         let scale = (width.min(height) as f32) / 1080.0;
         const MAX_MASK_BINDINGS: u32 = 1;
 
-        if output_precision == RenderOutputPrecision::SixteenBit && output_to_display {
-            return Err(
-                "High-precision GPU output is only supported for CPU-readback renders.".to_string(),
-            );
-        }
+        let display_textures =
+            output_to_display.then(|| self.display_textures(output_precision.texture_format()));
 
-        let high_precision_tile = if output_precision == RenderOutputPrecision::SixteenBit {
-            Some(self.high_precision_tile())
-        } else {
-            None
-        };
+        let high_precision_tile = output_precision
+            .is_high()
+            .then(|| self.high_precision_tile(output_precision.texture_format()));
         let output_pipeline = if request.hsl_probe {
             self.hsl_probe_pipeline().clone()
         } else {
-            self.main_pipeline_for(
-                high_precision_tile.is_some(),
-                shader_features(&request.adjustments),
-            )
+            self.main_pipeline_for(output_precision, shader_features(&request.adjustments))
         };
         let (output_bgl, output_tile_texture, output_tile_view, bytes_per_pixel) =
-            if let Some(high_precision_tile) = high_precision_tile {
-                let hp = self.high_precision_pipeline();
+            if let Some(high_precision_tile) = &high_precision_tile {
+                let hp = self.high_precision_pipeline(output_precision);
                 (
                     &hp.bgl,
                     &high_precision_tile.texture,
@@ -1428,9 +1534,10 @@ impl GpuProcessor {
         } else {
             (out_width * out_height * 4) as usize
         };
-        let mut final_pixels = match output_precision {
-            RenderOutputPrecision::EightBit => RenderedPixels::U8(vec![0u8; output_len]),
-            RenderOutputPrecision::SixteenBit => RenderedPixels::U16(vec![0u16; output_len]),
+        let mut final_pixels = if output_precision.is_high() {
+            RenderedPixels::U16(vec![0u16; output_len])
+        } else {
+            RenderedPixels::U8(vec![0u8; output_len])
         };
 
         let start_tile_x = bounds.x / TILE_SIZE;
@@ -1674,10 +1781,10 @@ impl GpuProcessor {
                 let crop_x_start = x_start - input_x_start;
                 let crop_y_start = y_start - input_y_start;
 
-                if output_to_display {
+                if let Some(display_textures) = &display_textures {
                     main_encoder.copy_texture_to_texture(
                         wgpu::TexelCopyTextureInfo {
-                            texture: &self.tile_output_texture,
+                            texture: output_tile_texture,
                             mip_level: 0,
                             origin: wgpu::Origin3d {
                                 x: crop_x_start,
@@ -1687,7 +1794,7 @@ impl GpuProcessor {
                             aspect: wgpu::TextureAspect::All,
                         },
                         wgpu::TexelCopyTextureInfo {
-                            texture: &self.display_textures().working_texture,
+                            texture: &display_textures.working_texture,
                             mip_level: 0,
                             origin: wgpu::Origin3d {
                                 x: x_start,
@@ -1765,7 +1872,19 @@ impl GpuProcessor {
     }
 }
 
+impl DisplayTextures {
+    pub fn has_edited_frame(&self) -> bool {
+        self.edited_frame_ready.load(Ordering::Acquire)
+    }
+
+    pub fn mark_edited_frame(&self) {
+        self.edited_frame_ready.store(true, Ordering::Release);
+    }
+}
+
 pub struct DisplayTextures {
+    edited_frame_ready: std::sync::atomic::AtomicBool,
+    pub format: wgpu::TextureFormat,
     pub working_texture: wgpu::Texture,
     pub output_texture: wgpu::Texture,
     pub output_texture_view: wgpu::TextureView,
