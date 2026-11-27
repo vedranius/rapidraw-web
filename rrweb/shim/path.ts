@@ -1,5 +1,7 @@
 import { call } from './transport';
 export const homeDir = () => call<string>('__rr_home');
+export const documentDir = async () => `${await call<string>('__rr_home')}/Documents`;
+export const videoDir = async () => `${await call<string>('__rr_home')}/Videos`;
 // Same result as Tauri's dirname for the relay's paths (POSIX or Windows); computed locally, no round trip.
 export const dirname = async (path: string): Promise<string> => {
   const trimmed = path.replace(/(?<=.)[\\/]+$/, '');

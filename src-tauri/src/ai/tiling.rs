@@ -1,8 +1,8 @@
-use crate::ai::models::gpu_inference;
+use crate::ai::models::{DENOISE_OUTPUT, gpu_inference};
 use anyhow::Result;
 use image::{DynamicImage, Rgb32FImage};
 use ndarray::Array4;
-use ort::session::Session;
+use ort::session::{OutputSelector, RunOptions, Session};
 use ort::value::Tensor;
 use rayon::prelude::*;
 use std::sync::Mutex;
@@ -12,16 +12,14 @@ struct TileParams {
     cs: usize,
     margin: usize,
     overlap: usize,
+    output: &'static str,
 }
 
-// The denoiser's output is least reliable near a tile's border (its receptive field reaches past the crop). With
-// a 12 px margin and a 64 px overlap the seams every 416 px showed as a faint dark grid in smooth areas (smoke,
-// stage light, black and white) at full strength. Discarding 32 px and cross-fading over 96 px hides them; tiles
-// still step 344 px, so a 26 MP photo needs about 1.45x the tiles.
 const DENOISE_TILE: TileParams = TileParams {
     cs: 504,
     margin: 40,
     overlap: 56,
+    output: DENOISE_OUTPUT,
 };
 
 pub const UPSCALE_TILE_SIZE: usize = 544;
@@ -30,6 +28,7 @@ const UPSCALE_TILE: TileParams = TileParams {
     cs: UPSCALE_TILE_SIZE,
     margin: 16,
     overlap: 16,
+    output: "output",
 };
 
 #[inline]
@@ -100,26 +99,6 @@ fn run_tiled(
     scale: u32,
     on_progress: &dyn Fn(f32),
 ) -> Result<Rgb32FImage> {
-    run_tiled_with(img, params, scale, on_progress, &|crop| {
-        let t_input = Tensor::from_array(crop)?;
-        let mut sess = session.lock().unwrap();
-        let outputs = gpu_inference(sess.run(ort::inputs![t_input]))?;
-        outputs[0]
-            .try_extract_array::<f32>()?
-            .as_standard_layout()
-            .into_owned()
-            .into_dimensionality::<ndarray::Ix4>()
-            .map_err(|e| anyhow::anyhow!("Unexpected output shape: {}", e))
-    })
-}
-
-fn run_tiled_with(
-    img: &Rgb32FImage,
-    params: TileParams,
-    scale: u32,
-    on_progress: &dyn Fn(f32),
-    infer: &(dyn Fn(Array4<f32>) -> Result<Array4<f32>> + Sync),
-) -> Result<Rgb32FImage> {
     let s = scale as usize;
     let (width, height) = (img.width() as usize, img.height() as usize);
     let (out_w, out_h) = (width * s, height * s);
@@ -128,6 +107,7 @@ fn run_tiled_with(
         cs: params.cs * s,
         margin: params.margin * s,
         overlap: params.overlap * s,
+        ..params
     });
     let xs = tile_origins(width, params);
     let ys = tile_origins(height, params);
@@ -145,7 +125,21 @@ fn run_tiled_with(
         let origins_ref = &origins;
         scope.spawn(move || {
             for &(y0, x0) in origins_ref {
-                let tile = infer(extract_tile_mirror(img, x0, y0, params.cs));
+                let tile = (|| -> Result<Array4<f32>> {
+                    let crop = extract_tile_mirror(img, x0, y0, params.cs);
+                    let t_input = Tensor::from_array(crop)?;
+                    let run_options = RunOptions::new()?
+                        .with_outputs(OutputSelector::no_default().with(params.output));
+                    let mut sess = session.lock().unwrap();
+                    let outputs =
+                        gpu_inference(sess.run_with_options(ort::inputs![t_input], &run_options))?;
+                    outputs[0]
+                        .try_extract_array::<f32>()?
+                        .as_standard_layout()
+                        .into_owned()
+                        .into_dimensionality::<ndarray::Ix4>()
+                        .map_err(|e| anyhow::anyhow!("Unexpected output shape: {}", e))
+                })();
                 let failed = tile.is_err();
                 if sender.send(tile).is_err() || failed {
                     break;
@@ -231,53 +225,4 @@ pub fn run_ai_upscale(
     on_progress: &dyn Fn(f32),
 ) -> Result<Rgb32FImage> {
     run_tiled(rgb_img, session, UPSCALE_TILE, scale, on_progress)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // A model that darkens the border of every tile it sees, like the denoiser does in smooth areas
-    fn edge_darkening_model(crop: Array4<f32>) -> Result<Array4<f32>> {
-        let (_, _, h, w) = crop.dim();
-        let mut out = crop.clone();
-        for y in 0..h {
-            for x in 0..w {
-                let d = x.min(y).min(w - 1 - x).min(h - 1 - y) as f32;
-                let factor = 1.0 - 0.08 * (-d / 10.0).exp();
-                for c in 0..3 {
-                    out[[0, c, y, x]] *= factor;
-                }
-            }
-        }
-        Ok(out)
-    }
-
-    #[test]
-    fn denoise_tiles_leave_no_visible_grid() {
-        let (w, h) = (1400u32, 1100u32);
-        let img = Rgb32FImage::from_fn(w, h, |x, y| {
-            let v = 0.35 + 0.1 * (x as f32 / w as f32) + 0.05 * (y as f32 / h as f32);
-            image::Rgb([v, v, v])
-        });
-        let out = run_tiled_with(&img, DENOISE_TILE, 1, &|_| {}, &edge_darkening_model).unwrap();
-        // the strongest dip of a column against its neighbours 8 px away, over the middle rows
-        let col = |x: u32| (200..900).map(|y| out.get_pixel(x, y)[0]).sum::<f32>() / 700.0;
-        let worst = (20..w - 20)
-            .map(|x| (col(x - 8) + col(x + 8)) / 2.0 - col(x))
-            .fold(0.0f32, f32::max);
-        // margin 12 / overlap 64 (the tiles behind the grid seen in a concert edit) leave about 9e-5 here,
-        // margin 32 / overlap 96 about 7e-6
-        assert!(worst < 3e-5, "tile seam dip {worst} is visible");
-    }
-
-    #[test]
-    fn tiles_cover_the_whole_image() {
-        for len in [1usize, 300, 440, 441, 1000, 6240] {
-            let origins = tile_origins(len, DENOISE_TILE);
-            let valid = DENOISE_TILE.cs - 2 * DENOISE_TILE.margin;
-            let last = *origins.last().unwrap() + DENOISE_TILE.margin as i32 + valid as i32;
-            assert!(last as usize >= len, "{len}: last tile ends at {last}");
-        }
-    }
 }

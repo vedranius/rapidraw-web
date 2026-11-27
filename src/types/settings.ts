@@ -4,6 +4,7 @@ import type { WhiteBalanceMode } from '../utils/whiteBalance';
 import type { ExportPreset } from './export';
 import type { FilterCriteria, SortCriteria, SortDirection } from './library';
 import type { CollapsibleSectionsState, Panel, PanelRegion, UiVisibility } from './ui';
+import type { MediaPoolView, VideoExportSettings } from './video';
 
 export enum ExifOverlay {
   Off = 'off',
@@ -45,6 +46,8 @@ export interface WorkspaceState {
   panelSwitcherPlacement: Record<PanelRegion, 'left' | 'right' | 'top' | 'bottom'>;
   filmstripColumns: number;
   filmstripShowFileInfo: boolean;
+  timelineHeight?: number;
+  timelineCollapsed?: boolean;
 }
 
 export interface CustomAspectRatio {
@@ -97,6 +100,7 @@ export interface AppSettings {
   aiMapsCacheLimitGb?: number;
   aiUpscaleCacheLimitGb?: number;
   thumbnailCacheLimitGb?: number;
+  videoCacheLimitGb?: number;
   aiConnectorAddress?: string;
   aiGpuAcceleration?: boolean;
   aiProvider?: string;
@@ -185,6 +189,9 @@ export interface AppSettings {
   groupPreferredType?: GroupPreference; // legacy
   alwaysDecodeRawThumbnails?: boolean;
   workspace?: WorkspaceState;
+  videoWorkspace?: WorkspaceState;
+  videoExport?: VideoExportSettings;
+  videoMediaPool?: Partial<MediaPoolView>;
   immich?: ImmichSettings;
 }
 

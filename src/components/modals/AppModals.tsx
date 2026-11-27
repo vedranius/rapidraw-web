@@ -16,6 +16,7 @@ import AIStyleModal from './AIStyleModal';
 import EditAgentModal from './EditAgentModal';
 import McpHost from '../../agent/McpHost';
 import CollageModal from './CollageModal';
+import { ProjectSwitcher, TimelapseModal } from '../../store/videoIntegration';
 import { AppSettings } from '../../types/settings';
 import { ImageFlag, AlbumItem, AlbumGroup, MergeSettings } from '../../types/library';
 import { CopyPasteSettings } from '../../utils/adjustments';
@@ -256,6 +257,8 @@ export default function AppModals(props: AppModalsProps) {
         onSave={props.handleSaveCollage}
         sourceImages={collageModalState.sourceImages}
       />
+      <TimelapseModal />
+      <ProjectSwitcher />
     </>
   );
 }

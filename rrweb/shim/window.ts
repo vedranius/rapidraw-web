@@ -8,3 +8,11 @@ const stub: any = new Proxy({}, {
   },
 });
 export const getCurrentWindow = () => stub;
+export class Window {
+  static async getByLabel(_label: string) {
+    return stub;
+  }
+  static async getCurrent() {
+    return stub;
+  }
+}

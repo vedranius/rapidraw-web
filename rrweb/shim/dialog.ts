@@ -1,6 +1,7 @@
 // Dialogs choose a path on the SERVER: a browser of the photo folders (rrweb/files/picker.ts), starting in the photo library.
 import { pick } from '../files/picker';
-type Filter = { name: string; extensions: string[] };
+export type DialogFilter = { name: string; extensions: string[] };
+type Filter = DialogFilter;
 type OpenOpts = { directory?: boolean; multiple?: boolean; defaultPath?: string; title?: string; filters?: Filter[] };
 export async function open(opts: OpenOpts = {}): Promise<string | string[] | null> {
   return pick({ mode: opts.directory ? 'dir' : 'file', multiple: opts.multiple, title: opts.title,

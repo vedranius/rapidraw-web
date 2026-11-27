@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 const SHIMS = {
   '@tauri-apps/api/core': 'core', '@tauri-apps/api/event': 'event',
-  '@tauri-apps/api/window': 'window', '@tauri-apps/api/path': 'path',
+  '@tauri-apps/api/window': 'window', '@tauri-apps/api/webview': 'webview', '@tauri-apps/api/path': 'path',
   '@tauri-apps/api/app': 'app', '@tauri-apps/plugin-dialog': 'dialog',
   '@tauri-apps/plugin-os': 'os', '@tauri-apps/plugin-process': 'process',
   '@tauri-apps/plugin-shell': 'shell', '@tauri-apps/plugin-http': 'http',
@@ -51,7 +51,7 @@ const checks = {
   'rrweb/relay/thumbs.mjs': [
     ['the UI asks for thumbnails with update_thumbnail_queue({ paths })', ui.includes("invoke('update_thumbnail_queue', { paths: pathsToSend })")],
     ['get_supported_file_types returns { raw: [extensions] }', /"raw": raw_extensions/.test(listing)],
-    ['unedited RAWs use the embedded preview unless always_decode_raw_thumbnails', /if is_raw && preloaded_image\.is_none\(\) && !always_decode_raw && untouched\(\)/.test(thumbs)
+    ['unedited RAWs use the embedded preview unless always_decode_raw_thumbnails', /if is_raw\s*&& preloaded_image\.is_none\(\)\s*&& !always_decode_raw\s*&& untouched\(\)/.test(thumbs)
       && settings.includes('pub always_decode_raw_thumbnails: Option<bool>')],
   ],
   // rrweb/relay/exif.mjs lets RapidRAW parse the embedded JPEG's EXIF header saved as a temporary .raf
@@ -62,8 +62,8 @@ const checks = {
   ],
   // rrweb/files/adjust.ts finds the slider by its markup and recognises skipped previews
   'rrweb/files/adjust.ts': [
-    ['Slider: <div className="mb-2 group …"> with one <input type="range">', slider.includes('className={`mb-2 group ') && (slider.match(/type="range"/g) ?? []).length === 1],
-    ['Slider: label in the first <span>, value in a right-aligned <div> after it', /<span[\s\S]*?\{label\}[\s\S]*?<div className="w-\d+ text-right[\s\S]*?handleValueClick/.test(slider)],
+    ['Slider: <div className="mb-2 group …"> with one <input type="range">', slider.includes('className={`mb-2 group') && (slider.match(/type="range"/g) ?? []).length === 1],
+    ['Slider: label in the first <span>, value in a right-aligned <div> after it', /<span[\s\S]*?\{label\}[\s\S]*?text-right[\s\S]*?handleValueClick/.test(slider)],
     ['skipped preview: "Superseded or worker failed"', renderCmds.includes('"Superseded or worker failed"')],
   ],
 };

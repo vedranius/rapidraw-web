@@ -5,6 +5,7 @@ import i18n from '../i18n';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { canvasToolState, useEditorStore } from '../store/useEditorStore';
 import { useUIStore } from '../store/useUIStore';
+import { isProjectPath, photoEditorImage, videoKind } from '../store/videoIntegration';
 import { Invokes } from '../types/invokes';
 import { ImageFile, ImageFlag, AlbumItem, Album, AlbumGroup, type FolderNode } from '../types/library';
 import { LibraryViewMode } from '../types/settings';
@@ -13,14 +14,15 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import { computeSortedLibrary } from './useSortedLibrary';
 import { expandGroupedPaths } from '../utils/imageGrouping';
 import { getImageFlag } from '../utils/imageFlags';
-import FilterExitToast from '../components/ui/FilterExitToast';
+import ActionToast from '../components/ui/ActionToast';
 
 const resolveTargetPaths = (paths?: string[]) => {
   const { multiSelectedPaths, imageList } = useLibraryStore.getState();
-  const { selectedImage } = useEditorStore.getState();
+  const selectedImage = photoEditorImage();
 
-  const selectedPaths =
-    paths || (multiSelectedPaths.length > 0 ? multiSelectedPaths : selectedImage ? [selectedImage.path] : []);
+  const selectedPaths = (
+    paths || (multiSelectedPaths.length > 0 ? multiSelectedPaths : selectedImage ? [selectedImage.path] : [])
+  ).filter((path) => !isProjectPath(path));
 
   const groupingMode = useSettingsStore.getState().appSettings?.grouping ?? 'off';
   return { selectedPaths, expandedPaths: expandGroupedPaths(imageList, selectedPaths, groupingMode) };
@@ -171,6 +173,8 @@ export const clearLibrarySelection = () => {
     selectionAnchorPath: null,
   });
 
+  if (videoKind() === 'project') return;
+
   useEditorStore.getState().setEditor({
     selectedImage: null,
     finalPreviewUrl: null,
@@ -275,10 +279,15 @@ const showFilterExitToast = (
     useUIStore.getState().imageSelectHandler?.(activePath, useUIStore.getState().activeView === 'editor');
   };
 
-  const content = createElement(FilterExitToast, {
-    fileName: activePath.split('?vc=')[0].split(/[\\/]/).pop() || '',
-    count: hiddenCount,
-    onUndo: undo,
+  const content = createElement(ActionToast, {
+    message:
+      hiddenCount === 1
+        ? i18n.t('library.filterExit.hiddenSingle', {
+            name: activePath.split('?vc=')[0].split(/[\\/]/).pop() || '',
+          })
+        : i18n.t('library.filterExit.hiddenMultiple', { count: hiddenCount }),
+    action: i18n.t('library.filterExit.undo'),
+    onAction: undo,
   });
 
   if (toast.isActive(FILTER_EXIT_TOAST_ID)) {
@@ -411,7 +420,7 @@ export function useLibraryActions(handleImageSelect?: (path: string, openInEdito
 
   const handleSetColorLabel = useCallback(async (color: string | null, paths?: string[]) => {
     const { libraryActivePath, imageList, setLibrary } = useLibraryStore.getState();
-    const { selectedImage } = useEditorStore.getState();
+    const selectedImage = photoEditorImage();
 
     const { selectedPaths, expandedPaths: pathsToUpdate } = resolveTargetPaths(paths);
     if (selectedPaths.length === 0) return;

@@ -287,7 +287,16 @@ fn analyze_image(
     };
     let gray_thumbnail = thumbnail.to_luma8();
 
-    let iso = crate::metadata::exif_processing::read_iso(path, &file_bytes);
+    let iso = crate::metadata::exif_processing::read_exif_data_from_bytes(path, &file_bytes)
+        .into_iter()
+        .find_map(|(key, value)| {
+            matches!(
+                key.as_str(),
+                "ISOSpeed" | "PhotographicSensitivity" | "ISOSpeedRatings"
+            )
+            .then(|| value.trim().parse::<u32>().ok())
+            .flatten()
+        });
     // A 1024 px copy of the preview gives the same statistics and hash as the
     // full-size one (AI Style measures 480 px thumbnails) at a fraction of the cost
     let stats_image = match preview {

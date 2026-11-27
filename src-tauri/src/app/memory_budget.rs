@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -9,6 +9,7 @@ pub struct MemoryBudget {
     total: u64,
     available: Mutex<u64>,
     released: Condvar,
+    waiting: AtomicUsize,
 }
 
 /// A counting semaphore for blocking threads: at most `max` holders at once.
@@ -51,12 +52,28 @@ pub struct MemoryReservation {
     bytes: u64,
 }
 
+struct Waiting<'a>(&'a AtomicUsize);
+
+impl<'a> Waiting<'a> {
+    fn enter(count: &'a AtomicUsize) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self(count)
+    }
+}
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 impl MemoryBudget {
     pub fn new(total: u64) -> Arc<Self> {
         Arc::new(Self {
             total,
             available: Mutex::new(total),
             released: Condvar::new(),
+            waiting: AtomicUsize::new(0),
         })
     }
 
@@ -78,11 +95,32 @@ impl MemoryBudget {
         bytes: u64,
         cancellation_token: Option<&AtomicBool>,
     ) -> Option<MemoryReservation> {
+        self.take(bytes, cancellation_token, false)
+    }
+
+    pub fn reserve_behind_waiters(
+        self: &Arc<Self>,
+        bytes: u64,
+        cancellation_token: &AtomicBool,
+    ) -> Option<MemoryReservation> {
+        self.take(bytes, Some(cancellation_token), true)
+    }
+
+    fn take(
+        self: &Arc<Self>,
+        bytes: u64,
+        cancellation_token: Option<&AtomicBool>,
+        yielding: bool,
+    ) -> Option<MemoryReservation> {
         let bytes = bytes.min(self.total);
         let mut available = self.available.lock().unwrap_or_else(|e| e.into_inner());
-        while *available < bytes {
+        let mut waiting = None;
+        while *available < bytes || (yielding && self.waiting.load(Ordering::SeqCst) > 0) {
             if cancellation_token.is_some_and(|token| token.load(Ordering::SeqCst)) {
                 return None;
+            }
+            if !yielding {
+                waiting.get_or_insert_with(|| Waiting::enter(&self.waiting));
             }
             available = self
                 .released

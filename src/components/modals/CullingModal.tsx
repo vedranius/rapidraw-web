@@ -12,6 +12,7 @@ import Dropdown from '../ui/Dropdown';
 import Text from '../ui/Text';
 import { TextColors, TextVariants } from '../../types/typography';
 import { useProcessStore } from '../../store/useProcessStore';
+import { useModalGate } from '../../store/useUIStore';
 
 const EMPTY_THUMBNAILS: Record<string, string> = {};
 
@@ -95,6 +96,7 @@ export default function CullingModal({
 }: CullingModalProps) {
   const { t } = useTranslation();
   const [isMounted, setIsMounted] = useState(false);
+  useModalGate(isOpen);
   const [show, setShow] = useState(false);
   const thumbnails = useProcessStore((s) => (isMounted ? s.thumbnails : EMPTY_THUMBNAILS));
   const [stage, setStage] = useState<'settings' | 'progress' | 'results'>('settings');
@@ -243,6 +245,7 @@ export default function CullingModal({
             label={t('modals.culling.groupSimilar')}
             checked={settings.groupSimilar}
             onChange={(v) => setSettings((s) => ({ ...s, groupSimilar: v }))}
+            tooltip={t('modals.culling.similarityThresholdDesc')}
           />
           {settings.groupSimilar && (
             <div className="mt-2 pl-4 border-l-2 border-border-color ml-1">
@@ -256,9 +259,6 @@ export default function CullingModal({
                 onChange={(e) => setSettings((s) => ({ ...s, similarityThreshold: Number(e.target.value) }))}
                 fillOrigin="min"
               />
-              <Text variant={TextVariants.small} className="mt-1">
-                {t('modals.culling.similarityThresholdDesc')}
-              </Text>
             </div>
           )}
         </div>
@@ -267,6 +267,7 @@ export default function CullingModal({
             label={t('modals.culling.filterBlurry')}
             checked={settings.filterBlurry}
             onChange={(v) => setSettings((s) => ({ ...s, filterBlurry: v }))}
+            tooltip={t('modals.culling.blurThresholdDesc')}
           />
           {settings.filterBlurry && (
             <div className="mt-2  pl-4 border-l-2 border-border-color ml-1">
@@ -280,9 +281,6 @@ export default function CullingModal({
                 onChange={(e) => setSettings((s) => ({ ...s, blurThreshold: Number(e.target.value) }))}
                 fillOrigin="min"
               />
-              <Text variant={TextVariants.small} className="mt-1">
-                {t('modals.culling.blurThresholdDesc')}
-              </Text>
             </div>
           )}
         </div>
