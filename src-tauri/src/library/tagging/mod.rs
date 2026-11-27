@@ -662,10 +662,8 @@ mod real_clip {
             // SAFETY: set before the runtime is initialised, in a single-threaded test.
             unsafe { std::env::set_var("ORT_DYLIB_PATH", &ort_library) };
         }
-        let _ = ort::init().with_name("AI-Tagging-Test").commit();
-
         let session = Mutex::new(
-            Session::builder()
+            crate::ai::models::session_builder()
                 .unwrap()
                 .commit_from_file(&model_path)
                 .unwrap(),
