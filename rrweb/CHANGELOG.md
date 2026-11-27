@@ -2,6 +2,12 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.18.3
+
+- **Upstream RapidRAW v1.7.1 is included** (the next daily mainline build after v1.7.0): the new video workspace, WebGPU AI runtime on Linux, native panorama/merge refactors, export records and HIF decoding. The AI Style, AI Editor, culling and AI export preparation layers are preserved.
+- **Web layer adapted to the new video and desktop APIs:** shims for webview drag/drop, `Window`, `documentDir`/`videoDir` and dialog filter types, plus updated thumbnail/slider compatibility checks.
+- The generated MCP catalog and skills are refreshed for the new release so the MCP server and CI stay in sync.
+
 ## 1.18.2
 
 - **RapidRAW Web and PhotoCraft work together.** The Claude Code plugin gets the *photo-studio* skill: the AI decides per request which engine does the work. RAW development, global and masked edits, denoise, culling and batch export stay in RapidRAW; double exposures, combining several photos, effects limited by a mask, text, covers and posters go to [PhotoCraft](https://github.com/storytold/photocraft), an open-source layered editor with its own MCP server. RapidRAW always goes first and hands over a full-size 16-bit TIFF with its metadata; PhotoCraft saves a layered `.pcraft` master and the JPEG. `rrweb/photocraft/setup.sh` connects PhotoCraft to Claude Code next to RapidRAW (it installs it into your home folder if it is missing, and lets it read and write only the folders you give it).
