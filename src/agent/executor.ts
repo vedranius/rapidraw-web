@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'react-toastify';
 import { Adjustments, INITIAL_ADJUSTMENTS, INITIAL_MASK_ADJUSTMENTS } from '../utils/adjustments';
 import { Invokes } from '../types/invokes';
-import type { CullingSuggestions } from '../types/library';
+import { DEFAULT_MERGE_SETTINGS, type CullingSuggestions } from '../types/library';
 import type { Preset } from '../types/editor';
 import type { StyleProfile } from '../types/ai';
 import { Status } from '../types/export';
@@ -665,8 +665,8 @@ export async function executeAgentStep(
     case 'photo.hdr': {
       const paths = pathsFrom(params, hooks);
       if (paths.length < 2) throw new Error('HDR needs at least two exposure-bracketed frames.');
-      await invoke(Invokes.MergeHdr, { paths });
-      const saved: string = await invoke(Invokes.SaveHdr, { firstPathStr: paths[0] });
+      await invoke(Invokes.StartMerge, { kind: 'hdr', paths, settings: DEFAULT_MERGE_SETTINGS.hdr });
+      const saved: string = await invoke(Invokes.SaveMerge, { settings: DEFAULT_MERGE_SETTINGS.hdr });
       await hooks.refreshLibrary();
       hooks.selectImage(saved);
       await waitForSelectedSoft(saved);
@@ -676,8 +676,8 @@ export async function executeAgentStep(
     case 'photo.panorama': {
       const paths = pathsFrom(params, hooks);
       if (paths.length < 2) throw new Error('Panorama needs at least two overlapping frames.');
-      await invoke(Invokes.StitchPanorama, { paths });
-      const saved: string = await invoke(Invokes.SavePanorama, { firstPathStr: paths[0] });
+      await invoke(Invokes.StartMerge, { kind: 'panorama', paths, settings: DEFAULT_MERGE_SETTINGS.panorama });
+      const saved: string = await invoke(Invokes.SaveMerge, { settings: DEFAULT_MERGE_SETTINGS.panorama });
       await hooks.refreshLibrary();
       hooks.selectImage(saved);
       await waitForSelectedSoft(saved);
@@ -687,8 +687,8 @@ export async function executeAgentStep(
     case 'photo.focus-stack': {
       const paths = pathsFrom(params, hooks);
       if (paths.length < 2) throw new Error('Focus stacking needs at least two frames.');
-      await invoke(Invokes.StitchFocusStack, { paths });
-      const saved: string = await invoke(Invokes.SaveFocusStack, { firstPathStr: paths[0] });
+      await invoke(Invokes.StartMerge, { kind: 'focusStack', paths, settings: DEFAULT_MERGE_SETTINGS.focusStack });
+      const saved: string = await invoke(Invokes.SaveMerge, { settings: DEFAULT_MERGE_SETTINGS.focusStack });
       await hooks.refreshLibrary();
       hooks.selectImage(saved);
       await waitForSelectedSoft(saved);
