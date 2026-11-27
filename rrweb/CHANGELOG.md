@@ -2,6 +2,11 @@
 
 Versions of the web layer ([`rrweb/VERSION`](VERSION)). Every release also names the RapidRAW base it contains: `rapidraw-v<RapidRAW>-web-v<web>`. What's new in the upstream editor is in [RapidRAW's releases](https://github.com/CyberTimon/RapidRAW/releases).
 
+## 1.18.4
+
+- **Saved AI Style profiles can now be edited directly.** User profiles get an edit button with the usual look sliders (contrast, brightness, saturation, temperature, highlights, shadows, grain and vignette); the selected profile preview updates while editing, and changes can be saved or discarded. Built-in looks stay immutable and can be saved as a copy.
+- The large profile preview is now clickable and opens the same full-viewport inspection used by the AI Style suggestions.
+
 ## 1.18.3
 
 - **Upstream RapidRAW v1.7.1 is included** (the next daily mainline build after v1.7.0): the new video workspace, WebGPU AI runtime on Linux, native panorama/merge refactors, export records and HIF decoding. The AI Style, AI Editor, culling and AI export preparation layers are preserved.

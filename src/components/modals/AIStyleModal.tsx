@@ -21,6 +21,7 @@ import {
   Server,
   KeyRound,
   Play,
+  SlidersHorizontal,
   Image as ImageIcon,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
@@ -276,6 +277,8 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
   const [derived, setDerived] = useState<StyleProfile | null>(null);
   const [renamingProfileId, setRenamingProfileId] = useState<string | null>(null);
   const [profileRename, setProfileRename] = useState('');
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [profileEditOriginal, setProfileEditOriginal] = useState<StyleProfile | null>(null);
 
   // Prompt-driven looks ("moody teal and orange concert, subtle grain").
   const [prompt, setPrompt] = useState('');
@@ -1039,6 +1042,51 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
     }
   };
 
+  const handleEditProfile = (profile: StyleProfile) => {
+    setEditingProfileId(profile.id);
+    setProfileEditOriginal({
+      ...profile,
+      adjustments: { ...profile.adjustments },
+      detectTags: [...profile.detectTags],
+    });
+    setSelectedId(profile.id);
+  };
+
+  const editSavedProfile = (id: string, key: string, value: number) => {
+    setProfiles((current) =>
+      current.map((profile) =>
+        profile.id === id
+          ? { ...profile, adjustments: { ...profile.adjustments, [key]: value } }
+          : profile,
+      ),
+    );
+  };
+
+  const handleSaveProfileEdits = async (profile: StyleProfile) => {
+    setBusy(`save-profile:${profile.id}`);
+    try {
+      const list = await invoke<StyleProfile[]>(Invokes.SaveStyleProfile, { profile });
+      setProfiles(list);
+      setEditingProfileId(null);
+      setProfileEditOriginal(null);
+      toast.success(t('modals.aiStyle.saved'));
+    } catch (err) {
+      toast.error(t('modals.aiStyle.saveFailed', { err: String(err) }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleCancelProfileEdits = () => {
+    if (profileEditOriginal) {
+      setProfiles((current) =>
+        current.map((profile) => (profile.id === profileEditOriginal.id ? profileEditOriginal : profile)),
+      );
+    }
+    setEditingProfileId(null);
+    setProfileEditOriginal(null);
+  };
+
   const handleSaveSuggestedProfile = async (profile: StyleProfile) => {
     const copy: StyleProfile = {
       ...profile,
@@ -1647,7 +1695,14 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
               <img
                 src={showProfileBase && profilePreview.base ? profilePreview.base : profilePreview.look}
                 alt={selectedProfile.name}
-                className="h-full w-full object-contain"
+                className="h-full w-full cursor-zoom-in object-contain"
+                onClick={() =>
+                  profilePreview &&
+                  setPreviewLightbox({
+                    src: showProfileBase && profilePreview.base ? profilePreview.base : profilePreview.look,
+                    title: selectedProfile.name,
+                  })
+                }
               />
               <div className="absolute left-2 top-2 max-w-[70%] truncate rounded bg-black/60 px-2 py-1 text-[10px] text-white/80">
                 {selectedProfile.name}
@@ -1770,6 +1825,18 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
                   {!profile.builtIn && (
                     <button
                       className="p-1 rounded hover:bg-surface text-text-secondary hover:text-accent transition-colors"
+                      title={t('modals.aiStyle.editProfile')}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleEditProfile(profile);
+                      }}
+                    >
+                      <SlidersHorizontal size={15} />
+                    </button>
+                  )}
+                  {!profile.builtIn && (
+                    <button
+                      className="p-1 rounded hover:bg-surface text-text-secondary hover:text-accent transition-colors"
                       title={t('modals.aiStyle.renameProfile')}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -1803,6 +1870,80 @@ export default function AIStyleModal({ isOpen, onClose, targetPaths, thumbnails,
           );
         })}
       </div>
+
+      {editingProfileId &&
+        (() => {
+          const profile = profiles.find((entry) => entry.id === editingProfileId);
+          if (!profile) return null;
+          const slider = (
+            key: string,
+            label: string,
+            min: number,
+            max: number,
+            step = 1,
+            fillOrigin: 'min' | 'default' = 'min',
+          ) => (
+            <Slider
+              key={key}
+              label={label}
+              min={min}
+              max={max}
+              step={step}
+              value={Number(profile.adjustments?.[key] ?? 0)}
+              defaultValue={0}
+              onChange={(event) => editSavedProfile(profile.id, key, Number(event.target.value))}
+              fillOrigin={fillOrigin}
+            />
+          );
+          return (
+            <div className="rounded-lg border border-accent bg-bg-primary p-3 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <SlidersHorizontal size={15} className="text-accent" />
+                  <Text variant={TextVariants.label}>{t('modals.aiStyle.profileEditor')}</Text>
+                </div>
+                <button
+                  type="button"
+                  className="rounded p-1 text-text-secondary hover:bg-surface"
+                  onClick={handleCancelProfileEdits}
+                  aria-label={t('modals.aiStyle.close')}
+                >
+                  <X size={15} />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {slider('contrast', t('adjustments.basic.contrast'), -60, 60, 1, 'default')}
+                {slider('brightness', t('adjustments.basic.brightness'), -5, 5, 0.1, 'default')}
+                {slider('saturation', t('adjustments.color.saturation'), -100, 40, 1, 'default')}
+                {slider('temperature', t('adjustments.color.temperature'), -40, 40, 1, 'default')}
+                {slider('highlights', t('adjustments.basic.highlights'), -80, 60)}
+                {slider('shadows', t('adjustments.basic.shadows'), -40, 60)}
+                {slider('grainAmount', t('adjustments.effects.grain'), 0, 60)}
+                {slider('vignetteAmount', t('adjustments.effects.vignette'), -60, 0)}
+              </div>
+              <Text variant={TextVariants.small} className="text-text-secondary">
+                {t('modals.aiStyle.candidateEditHint')}
+              </Text>
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" onClick={handleCancelProfileEdits} className="px-3 py-1.5">
+                  {t('modals.aiStyle.discard')}
+                </Button>
+                <Button
+                  onClick={() => void handleSaveProfileEdits(profile)}
+                  disabled={busy === `save-profile:${profile.id}`}
+                  className="flex items-center gap-1.5 px-3 py-1.5"
+                >
+                  {busy === `save-profile:${profile.id}` ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Save size={14} />
+                  )}
+                  {t('modals.aiStyle.saveProfileEdits')}
+                </Button>
+              </div>
+            </div>
+          );
+        })()}
 
       <div className="rounded-lg bg-bg-primary p-3">
         <Slider
