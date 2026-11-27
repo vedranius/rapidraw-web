@@ -1314,7 +1314,6 @@
       "apiKey": "Clé d'API",
       "apiKeyDesc": "Créez-en une dans Immich sous Paramètres du compte → Clés d'API avec ces autorisations : album.read, album.create, albumAsset.create, albumAsset.delete, asset.read, asset.view, asset.download, asset.upload, asset.update, asset.delete, stack.read, stack.create et user.read.",
       "connected": "Connecté en tant que {{user}} (Immich {{version}})",
-      "description": "Parcourez et retouchez les photos de votre serveur Immich.",
       "keyInFile": "Enregistrée dans un fichier lisible par vous seul, car aucun gestionnaire d'identifiants n'est disponible.",
       "keyInStore": "Enregistrée dans le gestionnaire d'identifiants du système.",
       "save": "Enregistrer",
@@ -1324,8 +1323,9 @@
       "test": "Tester la connexion",
       "title": "Immich",
       "working": "En cours…",
-      "tooltip": "Les originaux sont téléchargés à l'ouverture. Les retouches sont enregistrées dans Immich et sont donc identiques sur chaque ordinateur.",
-      "keyInFileTooltip": "Sous KDE, activez l'interface Secret Service dans les paramètres de KDE Wallet, puis enregistrez à nouveau."
+      "tooltip": "Parcourez et retouchez les photos de votre serveur Immich. Les originaux sont téléchargés à l'ouverture. Les retouches sont enregistrées dans Immich et sont donc identiques sur chaque ordinateur.",
+      "keyInFileTooltip": "Sous KDE, activez l'interface Secret Service dans les paramètres de KDE Wallet, puis enregistrez à nouveau.",
+      "description": "Parcourez et retouchez les photos de votre serveur Immich."
     },
     "sync": {
       "offline": "Hors ligne",
@@ -2210,6 +2210,7 @@
       "speed": "Vitesse",
       "speedEdit": {
         "adjustments": "Réglages",
+        "adjustmentsDesc": "Les réglages que A et D font défiler.",
         "gestures": {
           "doubleClick": "Double-clic pour réinitialiser",
           "drag": "Glisser sur le canevas pour ajuster",
@@ -2324,6 +2325,7 @@
         "videoTimelapses": "Timelapses",
         "videoTimelapsesDesc": "Séquences de photos développées pour les timelapses. Rendues à nouveau si nécessaire.",
         "video": "Cache vidéo",
+        "videoDesc": "Tout ce que les projets vidéo mettent en cache. La limite couvre l'ensemble.",
         "immichProjects": "Dont {{size}} conservés pour les projets vidéo."
       },
       "storageTitle": "Stockage",
@@ -2332,8 +2334,10 @@
     },
     "general": {
       "createXmp": "Créer les fichiers XMP manquants",
+      "createXmpDesc": "Écrit un fichier XMP pour les photos qui n'en ont pas, afin que d'autres applications voient vos notes, libellés de couleur et étiquettes.",
       "createXmpMissing": "Créer XMP si manquant",
       "displayEditIcon": "Afficher l'icône de retouche",
+      "displayEditIconDesc": "Marque les photos retouchées d'une icône dans la bibliothèque.",
       "enableFocusMode": "Activer le mode de concentration",
       "enableNeutralGreyCanvas": "Activer le fond gris neutre",
       "enableOsTitlebar": "Activer la barre de titre de l'OS",
@@ -2344,6 +2348,7 @@
       "folderImageCounts": "Nombre d'images dans les dossiers",
       "folderImageCountsDesc": "Affiché au survol d'un dossier dans l'arborescence des dossiers.",
       "font": "Police",
+      "fontDesc": "Police de l'interface.",
       "hideCollapsedPanels": "Masquer les panneaux réduits",
       "hideCollapsedPanelsDesc": "Les panneaux latéraux réduits disparaissent au lieu de laisser une bande étroite. Rouvrez-les depuis la barre inférieure ou avec leurs raccourcis.",
       "nativeTitlebar": "Barre de titre native",
@@ -2354,6 +2359,7 @@
       "showImageCounts": "Afficher le nombre d'images",
       "system": "Défaut du système",
       "theme": "Thème",
+      "themeDesc": "Couleurs de l'interface.",
       "title": "Paramètres généraux",
       "toolFocusMode": "Mode de concentration sur les outils",
       "toolFocusModeDesc": "Replie les autres outils d'un panneau lorsque vous en déployez un.",
@@ -2364,11 +2370,7 @@
       "uiScaleLarge": "Grande",
       "xmpSync": "Synchronisation des métadonnées XMP",
       "xmpSyncDesc": "Synchronise les notes, les étiquettes de couleur et les tags avec des fichiers annexes XMP.",
-      "showEditIcon": "Afficher sur les miniatures retouchées",
-      "createXmpDesc": "Créer automatiquement un nouveau fichier annexe XMP s'il n'en existe pas pour une image.",
-      "displayEditIconDesc": "Afficher une petite icône de curseur sur les miniatures qui ont été retouchées.",
-      "fontDesc": "Modifier la police de l'application.",
-      "themeDesc": "Modifier l'apparence et l'ergonomie de l'application."
+      "showEditIcon": "Afficher sur les miniatures retouchées"
     },
     "keybinds": {
       "actions": {
@@ -2384,7 +2386,7 @@
         "copy_adjustments": "Copier les ajustements sélectionnés",
         "copy_files": "Copier le(s) fichier(s) sélectionné(s)",
         "copy_image_path": "Copier le chemin de la ou des images sélectionnées",
-        "cycle_zoom": "Faire défiler le zoom (Ajuster, 2x Ajuster, 100%)",
+        "cycle_zoom": "Faire défiler le zoom",
         "delete_rejected": "Supprimer le(s) fichier(s) rejeté(s)",
         "delete_selected": "Supprimer le(s) fichier(s) sélectionné(s)",
         "focus_search": "Activer le champ de recherche",
@@ -2404,7 +2406,7 @@
         "rotate_left": "Pivoter de 90° à gauche",
         "rotate_right": "Pivoter de 90° à droite",
         "select_all": "Sélectionner toutes les images",
-        "show_original": "Afficher l'original (avant/après)",
+        "show_original": "Afficher l'original",
         "toggle_adjustments": "Basculer le panneau des ajustements",
         "toggle_ai": "Basculer le panneau IA",
         "toggle_analytics": "Basculer l'affichage des analyses",
@@ -2500,6 +2502,10 @@
         "video_panel_captions": "Basculer le panneau Sous-titres",
         "video_panel_mixer": "Basculer le panneau Mixeur audio"
       },
+      "tips": {
+        "cycle_zoom": "Passe par Ajuster, 2x Ajuster et 100%.",
+        "show_original": "Montre la photo avant et après vos retouches."
+      },
       "sections": {
         "editing": "Retouche",
         "library": "Bibliothèque",
@@ -2514,6 +2520,7 @@
       "videoHint": "Dans les projets vidéo, ces touches priment sur les raccourcis photo ci-dessus."
     },
     "language": "Langue",
+    "languageDesc": "Langue de l'interface.",
     "lenses": {
       "addButton": "Ajouter à mes objectifs",
       "addNew": "Ajouter un nouvel objectif",
@@ -2545,7 +2552,6 @@
           "feature3": "Une interface plus épurée et plus ciblée"
         },
         "cloud": {
-          "description": "Exécute les retouches génératives sur les serveurs RapidRAW, avec un abonnement.",
           "signedIn": {
             "active": "Abonnement Cloud Actif",
             "inactive": "Aucun abonnement actif",
@@ -2566,7 +2572,8 @@
             "unsupported": "La connexion au cloud n'est actuellement disponible que sur ordinateur."
           },
           "title": "Service Cloud",
-          "tooltip": "Mêmes résultats que l'auto-hébergement, sans configuration ni GPU puissant. Soutient aussi le projet.",
+          "tooltip": "Exécute les retouches génératives sur les serveurs RapidRAW, avec un abonnement. Mêmes résultats que l'auto-hébergement, sans configuration ni GPU puissant. Soutient aussi le projet.",
+          "description": "Exécute les retouches génératives sur les serveurs RapidRAW, avec un abonnement.",
           "feature1": "Praticité maximale, aucune configuration",
           "feature2": "Mêmes résultats que l'auto-hébergement",
           "feature3": "Aucun matériel puissant requis"
@@ -2574,13 +2581,13 @@
         "connector": {
           "address": "Adresse AI Connector",
           "addressDesc": "Adresse et port de votre AI Connector en cours d'exécution.",
-          "description": "Utilise votre propre serveur ComfyUI pour les retouches génératives et les workflows personnalisés.",
           "failed": "Échec de la connexion.",
           "success": "Connexion réussie !",
           "test": "Tester",
           "testing": "Test en cours...",
           "title": "Auto-hébergé (RapidRAW AI Connector)",
-          "tooltip": "Gratuit, mais nécessite un GPU performant et ComfyUI en cours d'exécution.",
+          "tooltip": "Utilise votre propre serveur ComfyUI pour les retouches génératives et les workflows personnalisés. Gratuit, mais nécessite un GPU performant et ComfyUI en cours d'exécution.",
+          "description": "Utilise votre propre serveur ComfyUI pour les retouches génératives et les workflows personnalisés.",
           "feature1": "Utilisez votre propre instance ComfyUI",
           "feature2": "Retouches génératives avancées gratuites",
           "feature3": "Sélection de workflow personnalisée"
@@ -2652,7 +2659,6 @@
         "noCamerasFound": "Aucun autre appareil trouvé dans le dossier ouvert.",
         "noPreset": "Aucun (neutre)",
         "preset": "Préréglage par défaut",
-        "presetDesc": "Appliqué aux photos non retouchées et utilisé par « Réinitialiser les ajustements ».",
         "presetMissing": "Le préréglage choisi a été supprimé, les photos non retouchées utilisent donc des valeurs neutres.",
         "removeCamera": "Retirer l'appareil",
         "sameAsAllCameras": "Comme tous les appareils",
@@ -2662,7 +2668,8 @@
         "sliderResetDesc": "La valeur à laquelle revient un curseur au double-clic ou en édition rapide. Les curseurs de masque reviennent toujours à leur valeur neutre.",
         "sliderResetNeutral": "Valeur neutre",
         "title": "Ajustements par défaut",
-        "presetTooltip": "Les masques, recadrages et transformations sont ignorés, car ils ne conviennent qu'à la photo sur laquelle ils ont été créés."
+        "presetTooltip": "Appliqué aux photos non retouchées et utilisé par « Réinitialiser les ajustements ». Les masques, recadrages et transformations sont ignorés, car ils ne conviennent qu'à la photo sur laquelle ils ont été créés.",
+        "presetDesc": "Appliqué aux photos non retouchées et utilisé par « Réinitialiser les ajustements »."
       },
       "display": {
         "title": "Affichage"
@@ -2685,6 +2692,7 @@
       },
       "enableLivePreviews": "Activer les aperçus en direct",
       "ffmpeg": "FFmpeg",
+      "ffmpegDesc": "Décode et encode la vidéo et l'audio. RapidRAW fournit sa propre copie.",
       "ffmpegBundledDesc": "Les vidéos utilisent FFmpeg {{version}} intégré.",
       "ffmpegMissing": "Les bibliothèques FFmpeg n'ont pas pu être chargées, les vidéos restent donc masquées.",
       "hdr": {
@@ -2728,7 +2736,9 @@
         "colorNr": "Réduction du bruit colorimétrique de base",
         "colorNrDesc": "Supprime le bruit chromatique tôt dans le traitement RAW.",
         "defaultNonRawTonemapper": "Mappeur de tons par défaut (Non-RAW)",
+        "defaultNonRawTonemapperDesc": "Mappeur de tons utilisé pour toutes les images non RAW.",
         "defaultRawTonemapper": "Mappeur de tons par défaut (RAW)",
+        "defaultRawTonemapperDesc": "Mappeur de tons utilisé pour tous les fichiers RAW.",
         "enableAppleRaw9": "Utiliser Apple RAW 9 pour les fichiers RAW",
         "enableBaselineExposure": "Appliquer l'exposition de base aux fichiers RAW",
         "enableHighlightPreservation": "Compenser les modes de préservation des hautes lumières de l'appareil",
@@ -2757,13 +2767,12 @@
           "basic": "Standard"
         },
         "tonemapperOverride": "Surcharge globale du mappeur de tons",
-        "tonemapperOverrideDesc": "Utilise un seul mappeur de tons pour toutes les images et masque le sélecteur de mappeur de tons dans le panneau des ajustements.",
-        "defaultNonRawTonemapperDesc": "Le mappeur de tons à appliquer aux images non-RAW (ex. JPEG, PNG).",
-        "defaultRawTonemapperDesc": "Le mappeur de tons à appliquer aux images RAW."
+        "tonemapperOverrideDesc": "Utilise un seul mappeur de tons pour toutes les images et masque le sélecteur de mappeur de tons dans le panneau des ajustements."
       },
       "previewRes": "Résolution de l'aperçu",
       "previewResDesc": "Taille maximale de l'aperçu. Des valeurs plus basses sont plus rapides.",
       "previewStrategy": "Stratégie de rendu de l'aperçu",
+      "previewStrategyDesc": "Taille de l'aperçu de l'éditeur : fixe pour la vitesse, ou adaptée à votre écran pour tous les détails.",
       "qualities": {
         "high": "Haute Qualité",
         "performance": "Performance"
@@ -2783,6 +2792,7 @@
       "restartRequired": "Redémarrez RapidRAW pour appliquer ces modifications.",
       "saveRelaunch": "Enregistrer & Redémarrer",
       "smallThumbnailRes": "Résolution des vignettes de la grille",
+      "smallThumbnailResDesc": "Taille des vignettes dans la grille de la bibliothèque. Plus élevée est plus nette, mais plus longue à générer.",
       "staticDesc": "Rendu à une taille fixe. Le plus rapide, idéal pour le matériel moins puissant.",
       "threads": "Threads",
       "title": "Moteur de traitement",
@@ -2794,7 +2804,6 @@
       "workerThreads": "Threads de traitement des miniatures",
       "workerThreadsDesc": "Plus de threads chargent les dossiers plus vite, mais utilisent plus de CPU et de RAM.",
       "wgpuDesc": "Affiche l'aperçu directement sur le GPU plutôt que via la vue web, pour des aperçus en direct plus rapides.",
-      "smallThumbnailResDesc": "Résolution des vignettes affichées dans la grille de la bibliothèque.",
       "thumbnailRes": "Résolution des miniatures",
       "thumbnailResDesc": "Détermine la résolution des miniatures générées dans la bibliothèque. Des valeurs plus élevées produisent des images plus nettes pendant le chargement.",
       "wgpuDescRecommended": "Contourne l'encodage du navigateur pour des aperçus en direct instantanément réactifs. Fortement recommandé pour les performances."
@@ -2813,14 +2822,14 @@
       "customList": "Liste d'étiquettes IA personnalisée",
       "customListDesc": "Si renseignée, l'étiquetage IA utilise uniquement ces étiquettes au lieu de la liste intégrée. En anglais uniquement.",
       "maxAiTags": "Maximum d'étiquettes IA",
+      "maxAiTagsDesc": "Le nombre maximal d'étiquettes que l'étiquetage IA ajoute à une photo.",
       "noCustomTags": "Aucune étiquette IA personnalisée, liste intégrée utilisée",
       "noShortcuts": "Aucun raccourci ajouté",
       "removeCustomTooltip": "Supprimer l'étiquette \"{{tag}}\"",
       "removeShortcutTooltip": "Supprimer le raccourci \"{{shortcut}}\"",
       "shortcuts": "Raccourcis de marquage",
       "shortcutsDesc": "Étiquettes proposées dans le menu contextuel d'étiquetage.",
-      "title": "Marquage",
-      "maxAiTagsDesc": "Le nombre maximum d'étiquettes à générer par image."
+      "title": "Marquage"
     },
     "thanks": {
       "description": "Un grand merci aux projets suivants qui ont été très importants dans le développement de RapidRAW :",
@@ -2854,8 +2863,7 @@
     "title": "Paramètres",
     "tooltips": {
       "goHome": "Aller à l'accueil"
-    },
-    "languageDesc": "Modifier la langue de l'application."
+    }
   },
   "tethering": {
     "aperture": "Ouverture",

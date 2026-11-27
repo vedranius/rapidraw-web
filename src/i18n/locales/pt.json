@@ -1314,7 +1314,6 @@
       "apiKey": "Chave de API",
       "apiKeyDesc": "Crie uma no Immich em Definições da conta → Chaves de API com estas permissões: album.read, album.create, albumAsset.create, albumAsset.delete, asset.read, asset.view, asset.download, asset.upload, asset.update, asset.delete, stack.read, stack.create e user.read.",
       "connected": "Ligado como {{user}} (Immich {{version}})",
-      "description": "Navegue e edite as fotos do seu servidor Immich.",
       "keyInFile": "Salva em um arquivo que só você pode ler, pois não há um armazenamento de credenciais disponível.",
       "keyInStore": "Guardada no armazenamento de credenciais do sistema.",
       "save": "Guardar",
@@ -1324,8 +1323,9 @@
       "test": "Testar ligação",
       "title": "Immich",
       "working": "A processar…",
-      "tooltip": "Os originais são baixados quando você os abre. As edições são salvas no Immich, para ficarem iguais em todos os computadores.",
-      "keyInFileTooltip": "No KDE, ative a interface Secret Service nas configurações da Carteira do KDE e salve novamente."
+      "tooltip": "Navegue e edite as fotos do seu servidor Immich. Os originais são baixados quando você os abre. As edições são salvas no Immich, para ficarem iguais em todos os computadores.",
+      "keyInFileTooltip": "No KDE, ative a interface Secret Service nas configurações da Carteira do KDE e salve novamente.",
+      "description": "Navegue e edite as fotos do seu servidor Immich."
     },
     "sync": {
       "offline": "Offline",
@@ -2209,6 +2209,7 @@
       "speed": "Velocidade",
       "speedEdit": {
         "adjustments": "Ajustes",
+        "adjustmentsDesc": "Os ajustes que A e D percorrem.",
         "gestures": {
           "doubleClick": "Clique duplo para redefinir",
           "drag": "Arraste na tela para ajustar",
@@ -2323,6 +2324,7 @@
         "videoTimelapses": "Timelapses",
         "videoTimelapsesDesc": "Sequências de fotos reveladas para timelapses. Renderizadas novamente quando necessário.",
         "video": "Cache de vídeo",
+        "videoDesc": "Tudo o que os projetos de vídeo guardam em cache. O limite vale para tudo junto.",
         "immichProjects": "Desse total, {{size}} são mantidos para projetos de vídeo."
       },
       "storageTitle": "Armazenamento",
@@ -2331,8 +2333,10 @@
     },
     "general": {
       "createXmp": "Criar Arquivos XMP Ausentes",
+      "createXmpDesc": "Grava um arquivo XMP para fotos que não têm, para que outros apps vejam suas classificações, rótulos de cor e etiquetas.",
       "createXmpMissing": "Criar XMP se ausente",
       "displayEditIcon": "Exibir Ícone de Edição",
+      "displayEditIconDesc": "Marca as fotos editadas com um ícone na biblioteca.",
       "enableFocusMode": "Ativar Modo de Foco",
       "enableNeutralGreyCanvas": "Ativar fundo cinza neutro",
       "enableOsTitlebar": "Ativar Barra de Título do SO",
@@ -2343,6 +2347,7 @@
       "folderImageCounts": "Contagens de Imagem de Pasta",
       "folderImageCountsDesc": "Exibidas ao passar o mouse sobre uma pasta na árvore de pastas.",
       "font": "Fonte",
+      "fontDesc": "Fonte da interface.",
       "hideCollapsedPanels": "Ocultar Painéis Recolhidos",
       "hideCollapsedPanelsDesc": "Painéis laterais recolhidos somem em vez de deixar uma faixa estreita. Reabra-os pela barra inferior ou com seus atalhos.",
       "nativeTitlebar": "Barra de Título Nativa",
@@ -2353,6 +2358,7 @@
       "showImageCounts": "Mostrar Contagens de Imagem",
       "system": "Padrão do Sistema",
       "theme": "Tema",
+      "themeDesc": "Cores da interface.",
       "title": "Configurações Gerais",
       "toolFocusMode": "Modo de Foco em Ferramentas",
       "toolFocusModeDesc": "Recolhe as outras ferramentas de um painel quando você expande uma.",
@@ -2363,11 +2369,7 @@
       "uiScaleLarge": "Grande",
       "xmpSync": "Sincronização de Metadados XMP",
       "xmpSyncDesc": "Sincroniza avaliações, rótulos de cor e etiquetas com arquivos sidecar XMP.",
-      "showEditIcon": "Mostrar nas miniaturas editadas",
-      "createXmpDesc": "Cria automaticamente um novo arquivo sidecar XMP se não existir um para uma imagem.",
-      "displayEditIconDesc": "Mostrar um pequeno ícone de controle deslizante em miniaturas que foram editadas.",
-      "fontDesc": "Alterar a fonte do aplicativo.",
-      "themeDesc": "Altere a aparência do aplicativo."
+      "showEditIcon": "Mostrar nas miniaturas editadas"
     },
     "keybinds": {
       "actions": {
@@ -2383,7 +2385,7 @@
         "copy_adjustments": "Copiar ajustes selecionados",
         "copy_files": "Copiar arquivo(s) selecionado(s)",
         "copy_image_path": "Copiar o caminho da(s) imagem(ns) selecionada(s)",
-        "cycle_zoom": "Alternar zoom (Caber, 2x Caber, 100%)",
+        "cycle_zoom": "Alternar zoom",
         "delete_rejected": "Excluir arquivo(s) rejeitado(s)",
         "delete_selected": "Excluir arquivo(s) selecionado(s)",
         "focus_search": "Focar o campo de pesquisa",
@@ -2403,7 +2405,7 @@
         "rotate_left": "Girar 90° no sentido anti-horário",
         "rotate_right": "Girar 90° no sentido horário",
         "select_all": "Selecionar todas as imagens",
-        "show_original": "Mostrar original (antes/depois)",
+        "show_original": "Mostrar original",
         "toggle_adjustments": "Alternar painel de Ajustes",
         "toggle_ai": "Alternar painel de IA",
         "toggle_analytics": "Alternar exibição de Análises",
@@ -2499,6 +2501,10 @@
         "video_panel_captions": "Alternar painel de Legendas",
         "video_panel_mixer": "Alternar painel do Mixer de áudio"
       },
+      "tips": {
+        "cycle_zoom": "Alterna entre Caber, 2x Caber e 100%.",
+        "show_original": "Mostra a foto antes e depois das suas edições."
+      },
       "sections": {
         "editing": "Edição",
         "library": "Biblioteca",
@@ -2513,6 +2519,7 @@
       "videoHint": "Em projetos de vídeo, estas teclas têm prioridade sobre os atalhos de foto acima."
     },
     "language": "Idioma",
+    "languageDesc": "Idioma da interface.",
     "lenses": {
       "addButton": "Adicionar às Minhas Lentes",
       "addNew": "Adicionar Nova Lente",
@@ -2544,7 +2551,6 @@
           "feature3": "Uma interface mais limpa e focada"
         },
         "cloud": {
-          "description": "Executa edições generativas nos servidores do RapidRAW, com uma assinatura.",
           "signedIn": {
             "active": "Assinatura na Nuvem Ativa",
             "inactive": "Nenhuma Assinatura Ativa",
@@ -2565,7 +2571,8 @@
             "unsupported": "O login na nuvem está atualmente disponível apenas no desktop."
           },
           "title": "Serviço na Nuvem",
-          "tooltip": "Os mesmos resultados da hospedagem própria, sem configuração nem uma GPU potente. Também apoia o projeto.",
+          "tooltip": "Executa edições generativas nos servidores do RapidRAW, com uma assinatura. Os mesmos resultados da hospedagem própria, sem configuração nem uma GPU potente. Também apoia o projeto.",
+          "description": "Executa edições generativas nos servidores do RapidRAW, com uma assinatura.",
           "feature1": "Máxima conveniência, sem configuração",
           "feature2": "Mesmos resultados da auto-hospedagem",
           "feature3": "Não é necessário hardware potente"
@@ -2573,13 +2580,13 @@
         "connector": {
           "address": "Endereço do AI Connector",
           "addressDesc": "Endereço e porta do seu AI Connector em execução.",
-          "description": "Usa seu próprio servidor ComfyUI para edições generativas e fluxos de trabalho personalizados.",
           "failed": "A conexão falhou.",
           "success": "Conexão bem-sucedida!",
           "test": "Testar",
           "testing": "Testando...",
           "title": "Hospedagem Própria (RapidRAW AI Connector)",
-          "tooltip": "Gratuito, mas requer uma GPU capaz e um ComfyUI em execução.",
+          "tooltip": "Usa seu próprio servidor ComfyUI para edições generativas e fluxos de trabalho personalizados. Gratuito, mas requer uma GPU capaz e um ComfyUI em execução.",
+          "description": "Usa seu próprio servidor ComfyUI para edições generativas e fluxos de trabalho personalizados.",
           "feature1": "Use sua própria instância ComfyUI",
           "feature2": "Edições generativas avançadas sem custo",
           "feature3": "Seleção de fluxo de trabalho personalizado"
@@ -2651,7 +2658,6 @@
         "noCamerasFound": "Nenhuma outra câmera encontrada na pasta aberta.",
         "noPreset": "Nenhuma (neutra)",
         "preset": "Predefinição padrão",
-        "presetDesc": "Aplicada às fotos não editadas e usada por “Redefinir ajustes”.",
         "presetMissing": "A predefinição selecionada foi excluída, então as fotos não editadas usam valores neutros.",
         "removeCamera": "Remover câmara",
         "sameAsAllCameras": "Igual a todas as câmaras",
@@ -2661,7 +2667,8 @@
         "sliderResetDesc": "O valor para o qual um controle deslizante volta com clique duplo ou na edição rápida. Os controles de máscara sempre voltam ao neutro.",
         "sliderResetNeutral": "Valor neutro",
         "title": "Ajustes padrão",
-        "presetTooltip": "Máscaras, cortes e transformações são ignorados, pois só servem para a foto em que foram criados."
+        "presetTooltip": "Aplicada às fotos não editadas e usada por “Redefinir ajustes”. Máscaras, cortes e transformações são ignorados, pois só servem para a foto em que foram criados.",
+        "presetDesc": "Aplicada às fotos não editadas e usada por “Redefinir ajustes”."
       },
       "display": {
         "title": "Ecrã"
@@ -2684,6 +2691,7 @@
       },
       "enableLivePreviews": "Ativar Visualizações ao Vivo",
       "ffmpeg": "FFmpeg",
+      "ffmpegDesc": "Decodifica e codifica vídeo e áudio. O RapidRAW inclui sua própria cópia.",
       "ffmpegBundledDesc": "Os vídeos usam o FFmpeg {{version}} integrado.",
       "ffmpegMissing": "Não foi possível carregar as bibliotecas do FFmpeg, então os vídeos ficam ocultos.",
       "hdr": {
@@ -2727,7 +2735,9 @@
         "colorNr": "Redução Base de Ruído de Cor",
         "colorNrDesc": "Remove o ruído de cor no início do pipeline RAW.",
         "defaultNonRawTonemapper": "Mapeador de Tons Padrão Não-RAW",
+        "defaultNonRawTonemapperDesc": "Mapeador de tons usado para todas as imagens que não são RAW.",
         "defaultRawTonemapper": "Mapeador de Tons Padrão RAW",
+        "defaultRawTonemapperDesc": "Mapeador de tons usado para todos os arquivos RAW.",
         "enableAppleRaw9": "Usar Apple RAW 9 para ficheiros RAW",
         "enableBaselineExposure": "Aplicar exposição base aos arquivos RAW",
         "enableHighlightPreservation": "Compensar os modos de preservação de realces da câmera",
@@ -2756,13 +2766,12 @@
           "basic": "Básico"
         },
         "tonemapperOverride": "Substituição Global de Mapeador de Tons",
-        "tonemapperOverrideDesc": "Usa um único mapeador de tons para todas as imagens e oculta a opção do mapeador de tons no painel de ajustes.",
-        "defaultNonRawTonemapperDesc": "O mapeador de tons a ser aplicado em imagens não-RAW (ex.: JPEG, PNG).",
-        "defaultRawTonemapperDesc": "O mapeador de tons a ser aplicado em imagens RAW."
+        "tonemapperOverrideDesc": "Usa um único mapeador de tons para todas as imagens e oculta a opção do mapeador de tons no painel de ajustes."
       },
       "previewRes": "Resolução da Visualização",
       "previewResDesc": "Tamanho máximo da visualização. Valores mais baixos são mais rápidos.",
       "previewStrategy": "Estratégia de Renderização de Visualização",
+      "previewStrategyDesc": "Como a visualização do editor é dimensionada: fixa para velocidade ou ajustada à sua tela para todos os detalhes.",
       "qualities": {
         "high": "Alta Qualidade",
         "performance": "Desempenho"
@@ -2782,6 +2791,7 @@
       "restartRequired": "Reinicie o RapidRAW para aplicar estas alterações.",
       "saveRelaunch": "Salvar e Reiniciar",
       "smallThumbnailRes": "Resolução das miniaturas da grade",
+      "smallThumbnailResDesc": "Tamanho das miniaturas na grade da biblioteca. Maior é mais nítido, mas demora mais para gerar.",
       "staticDesc": "Renderiza em um tamanho fixo. O mais rápido, ideal para hardware mais lento.",
       "threads": "Threads",
       "title": "Motor de Processamento",
@@ -2793,7 +2803,6 @@
       "workerThreads": "Threads de Processamento de Miniaturas",
       "workerThreadsDesc": "Mais threads carregam as pastas mais rápido, mas usam mais CPU e RAM.",
       "wgpuDesc": "Desenha a visualização diretamente na GPU em vez de passar pelo webview, para visualizações ao vivo mais rápidas.",
-      "smallThumbnailResDesc": "Resolução das miniaturas exibidas na grade da biblioteca.",
       "thumbnailRes": "Resolução da Miniatura",
       "thumbnailResDesc": "Determina a resolução das miniaturas da biblioteca geradas. Valores mais altos produzem imagens mais nítidas durante o carregamento.",
       "wgpuDescRecommended": "Ignora a codificação do navegador para visualizações ao vivo instantaneamente responsivas. Altamente recomendado para desempenho."
@@ -2812,14 +2821,14 @@
       "customList": "Lista de Etiquetas de IA Personalizada",
       "customListDesc": "Quando definida, a marcação por IA usa apenas estas etiquetas em vez da lista integrada. Apenas em inglês.",
       "maxAiTags": "Máximo de Etiquetas de IA",
+      "maxAiTagsDesc": "O máximo de etiquetas que a marcação por IA adiciona a uma foto.",
       "noCustomTags": "Nenhuma etiqueta de IA personalizada, usando a lista integrada",
       "noShortcuts": "Nenhum atalho adicionado",
       "removeCustomTooltip": "Remover etiqueta \"{{tag}}\"",
       "removeShortcutTooltip": "Remover atalho \"{{shortcut}}\"",
       "shortcuts": "Atalhos de Tagging",
       "shortcutsDesc": "Etiquetas oferecidas no menu de contexto de marcação.",
-      "title": "Etiquetas",
-      "maxAiTagsDesc": "O número máximo de etiquetas para gerar por imagem."
+      "title": "Etiquetas"
     },
     "thanks": {
       "description": "Um enorme obrigado aos seguintes projetos que foram muito importantes no desenvolvimento do RapidRAW:",
@@ -2853,8 +2862,7 @@
     "title": "Configurações",
     "tooltips": {
       "goHome": "Ir para Início"
-    },
-    "languageDesc": "Alterar o idioma do aplicativo."
+    }
   },
   "tethering": {
     "aperture": "Abertura",

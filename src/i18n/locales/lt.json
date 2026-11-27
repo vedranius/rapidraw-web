@@ -1402,7 +1402,6 @@
       "apiKey": "API raktas",
       "apiKeyDesc": "Sukurkite jį Immich nustatymuose: Paskyros nustatymai → API raktai su šiomis teisėmis: album.read, album.create, albumAsset.create, albumAsset.delete, asset.read, asset.view, asset.download, asset.upload, asset.update, asset.delete, stack.read, stack.create ir user.read.",
       "connected": "Prisijungta kaip {{user}} (Immich {{version}})",
-      "description": "Naršykite ir redaguokite nuotraukas savo Immich serveryje.",
       "keyInFile": "Išsaugota faile, kurį galite skaityti tik jūs, nes kredencialų saugykla nepasiekiama.",
       "keyInStore": "Išsaugota sistemos kredencialų saugykloje.",
       "save": "Išsaugoti",
@@ -1412,8 +1411,9 @@
       "test": "Tikrinti ryšį",
       "title": "Immich",
       "working": "Vykdoma…",
-      "tooltip": "Originalai atsisiunčiami juos atidarius. Pakeitimai išsaugomi Immich, todėl jie vienodi kiekviename kompiuteryje.",
-      "keyInFileTooltip": "KDE aplinkoje įjunkite „Secret Service“ sąsają KDE Wallet nustatymuose ir išsaugokite iš naujo."
+      "tooltip": "Naršykite ir redaguokite nuotraukas savo Immich serveryje. Originalai atsisiunčiami juos atidarius. Pakeitimai išsaugomi Immich, todėl jie vienodi kiekviename kompiuteryje.",
+      "keyInFileTooltip": "KDE aplinkoje įjunkite „Secret Service“ sąsają KDE Wallet nustatymuose ir išsaugokite iš naujo.",
+      "description": "Naršykite ir redaguokite nuotraukas savo Immich serveryje."
     },
     "sync": {
       "offline": "Nepasiekiamas (Offline)",
@@ -2210,6 +2210,7 @@
       "speed": "Greitis",
       "speedEdit": {
         "adjustments": "Koregavimai",
+        "adjustmentsDesc": "Koregavimai, per kuriuos pereina A ir D.",
         "gestures": {
           "doubleClick": "Dukart spustelėkite, norėdami atstatyti",
           "drag": "Vilkite ant drobės, norėdami koreguoti",
@@ -2327,6 +2328,7 @@
         "videoTimelapses": "Intervaliniai įrašai",
         "videoTimelapsesDesc": "Intervaliniams įrašams apdorotos nuotraukų sekos. Prireikus atvaizduojamos iš naujo.",
         "video": "Vaizdo podėlis",
+        "videoDesc": "Viskas, ką vaizdo projektai laiko podėlyje. Riba taikoma viskam kartu.",
         "immichProjects": "Iš to {{size}} saugoma vaizdo projektams."
       },
       "storageTitle": "Saugykla",
@@ -2335,8 +2337,10 @@
     },
     "general": {
       "createXmp": "Kurti trūkstamus XMP failus",
+      "createXmpDesc": "Sukuria XMP failą nuotraukoms, kurios jo neturi, kad kitos programos matytų įvertinimus, spalvų žymes ir žymas.",
       "createXmpMissing": "Kurti XMP, jei trūksta",
       "displayEditIcon": "Rodyti redagavimo piktogramą",
+      "displayEditIconDesc": "Bibliotekoje pažymi redaguotas nuotraukas piktograma.",
       "enableFocusMode": "Įjungti susikaupimo režimą",
       "enableNeutralGreyCanvas": "Įjungti neutraliai pilką foną",
       "enableOsTitlebar": "Įjungti OS lango antraštę",
@@ -2347,6 +2351,7 @@
       "folderImageCounts": "Nuotraukų skaičius aplankuose",
       "folderImageCountsDesc": "Rodoma užvedus pelę ant aplanko aplankų medyje.",
       "font": "Šriftas",
+      "fontDesc": "Sąsajos šriftas.",
       "hideCollapsedPanels": "Visiškai paslėpti suskleistus skydelius",
       "hideCollapsedPanelsDesc": "Suskleisti šoniniai skydeliai pasislepia, nepalikdami siauros juostos. Atidarykite juos iš apatinės juostos arba sparčiaisiais klavišais.",
       "nativeTitlebar": "Gimtoji OS lango antraštė",
@@ -2357,6 +2362,7 @@
       "showImageCounts": "Rodyti nuotraukų skaičių",
       "system": "Sistemos numatytasis",
       "theme": "Tema",
+      "themeDesc": "Sąsajos spalvos.",
       "title": "Bendrieji nustatymai",
       "toolFocusMode": "Įrankių susikaupimo režimas",
       "toolFocusModeDesc": "Išskleidus vieną įrankį skydelyje, suskleidžia kitus.",
@@ -2367,11 +2373,7 @@
       "uiScaleLarge": "Didelis",
       "xmpSync": "XMP metaduomenų sinchronizavimas",
       "xmpSyncDesc": "Sinchronizuoja įvertinimus, spalvines žymas ir žymas su XMP šalutiniais failais.",
-      "showEditIcon": "Rodyti ant redaguotų miniatiūrų",
-      "createXmpDesc": "Automatiškai sukurti naują XMP šalutinį failą, jei nuotrauka jo neturi.",
-      "displayEditIconDesc": "Rodyti mažą slankiklio piktogramą ant redaguotų nuotraukų miniatiūrų.",
-      "fontDesc": "Pakeisti programos šriftą.",
-      "themeDesc": "Pakeisti programos išvaizdą."
+      "showEditIcon": "Rodyti ant redaguotų miniatiūrų"
     },
     "keybinds": {
       "actions": {
@@ -2387,7 +2389,7 @@
         "copy_adjustments": "Kopijuoti pasirinktus koregavimus",
         "copy_files": "Kopijuoti pasirinktus failus",
         "copy_image_path": "Kopijuoti pasirinktos nuotraukos kelią",
-        "cycle_zoom": "Perjungti mastelį (Talpinti, 2x, 100%)",
+        "cycle_zoom": "Perjungti mastelį",
         "delete_rejected": "Ištrinti atmestus failus",
         "delete_selected": "Ištrinti pasirinktus failus",
         "focus_search": "Aktyvuoti paieškos laukelį",
@@ -2407,7 +2409,7 @@
         "rotate_left": "Pasukti 90° prieš laikrodžio rodyklę",
         "rotate_right": "Pasukti 90° pagal laikrodžio rodyklę",
         "select_all": "Pažymėti visas nuotraukas",
-        "show_original": "Rodyti originalą (prieš/po)",
+        "show_original": "Rodyti originalą",
         "toggle_adjustments": "Perjungti Koregavimų skydelį",
         "toggle_ai": "Perjungti DI skydelį",
         "toggle_analytics": "Perjungti analizės rodymą",
@@ -2503,6 +2505,10 @@
         "video_panel_captions": "Perjungti Subtitrų skydelį",
         "video_panel_mixer": "Perjungti Garso maišiklio skydelį"
       },
+      "tips": {
+        "cycle_zoom": "Perjungia Talpinti, 2x ir 100%.",
+        "show_original": "Rodo nuotrauką prieš redagavimą ir po jo."
+      },
       "sections": {
         "editing": "Redagavimas",
         "library": "Biblioteka",
@@ -2517,6 +2523,7 @@
       "videoHint": "Vaizdo projektuose šie klavišai turi pirmenybę prieš aukščiau esančius nuotraukų sparčiuosius klavišus."
     },
     "language": "Kalba",
+    "languageDesc": "Sąsajos kalba.",
     "lenses": {
       "addButton": "Pridėti prie mano objektyvų",
       "addNew": "Pridėti naują objektyvą",
@@ -2548,7 +2555,6 @@
           "feature3": "Švaresnė, labiau sutelkta vartotojo sąsaja"
         },
         "cloud": {
-          "description": "Su prenumerata generatyvinius pakeitimus vykdo RapidRAW serveriuose.",
           "signedIn": {
             "active": "Debesijos prenumerata aktyvi",
             "inactive": "Nėra aktyvios prenumeratos",
@@ -2569,7 +2575,8 @@
             "unsupported": "Prisijungimas prie debesijos šiuo metu pasiekiamas tik kompiuteriuose."
           },
           "title": "Debesijos paslauga",
-          "tooltip": "Tie patys rezultatai kaip nuosavame serveryje, be diegimo ir galingos GPU. Kartu paremiate projektą.",
+          "tooltip": "Su prenumerata generatyvinius pakeitimus vykdo RapidRAW serveriuose. Tie patys rezultatai kaip nuosavame serveryje, be diegimo ir galingos GPU. Kartu paremiate projektą.",
+          "description": "Su prenumerata generatyvinius pakeitimus vykdo RapidRAW serveriuose.",
           "feature1": "Maksimalus patogumas, jokio diegimo",
           "feature2": "Tokie patys rezultatai kaip ir savame serveryje",
           "feature3": "Nereikia galingos kompiuterio techninės įrangos"
@@ -2577,13 +2584,13 @@
         "connector": {
           "address": "DI jungties (AI Connector) adresas",
           "addressDesc": "Veikiančio AI Connector adresas ir prievadas.",
-          "description": "Naudoja jūsų ComfyUI serverį generatyviniams pakeitimams ir individualioms darbo eigoms.",
           "failed": "Prisijungti nepavyko.",
           "success": "Prisijungta sėkmingai!",
           "test": "Tikrinti",
           "testing": "Tikrinama...",
           "title": "Savas serveris (RapidRAW AI Connector)",
-          "tooltip": "Nemokama, bet reikia galingos GPU ir veikiančio ComfyUI.",
+          "tooltip": "Naudoja jūsų ComfyUI serverį generatyviniams pakeitimams ir individualioms darbo eigoms. Nemokama, bet reikia galingos GPU ir veikiančio ComfyUI.",
+          "description": "Naudoja jūsų ComfyUI serverį generatyviniams pakeitimams ir individualioms darbo eigoms.",
           "feature1": "Naudokite savo ComfyUI serverį",
           "feature2": "Nemokami pažangūs generatyviniai redagavimai",
           "feature3": "Individualių darbo eigų parinkimas"
@@ -2655,7 +2662,6 @@
         "noCamerasFound": "Atidarytame aplanke kitų fotoaparatų nerasta.",
         "noPreset": "Nėra (neutralu)",
         "preset": "Numatytasis šablonas",
-        "presetDesc": "Taikoma neredaguotoms nuotraukoms ir naudojama „Atstatyti koregavimus“.",
         "presetMissing": "Pasirinktas šablonas ištrintas, todėl neredaguotos nuotraukos naudoja neutralias reikšmes.",
         "removeCamera": "Pašalinti fotoaparatą",
         "sameAsAllCameras": "Kaip visiems fotoaparatams",
@@ -2665,7 +2671,8 @@
         "sliderResetDesc": "Reikšmė, į kurią grįžta slankiklis dukart spustelėjus arba greitajame redagavime. Kaukių slankikliai visada atstatomi į neutralią reikšmę.",
         "sliderResetNeutral": "Neutrali reikšmė",
         "title": "Numatytieji koregavimai",
-        "presetTooltip": "Kaukės, apkarpymai ir transformacijos praleidžiami, nes tinka tik tai nuotraukai, kurioje buvo sukurti."
+        "presetTooltip": "Taikoma neredaguotoms nuotraukoms ir naudojama „Atstatyti koregavimus“. Kaukės, apkarpymai ir transformacijos praleidžiami, nes tinka tik tai nuotraukai, kurioje buvo sukurti.",
+        "presetDesc": "Taikoma neredaguotoms nuotraukoms ir naudojama „Atstatyti koregavimus“."
       },
       "display": {
         "title": "Ekranas"
@@ -2688,6 +2695,7 @@
       },
       "enableLivePreviews": "Įjungti tiesiogines peržiūras",
       "ffmpeg": "FFmpeg",
+      "ffmpegDesc": "Dekoduoja ir koduoja vaizdo įrašus bei garsą. RapidRAW turi savo kopiją.",
       "ffmpegBundledDesc": "Vaizdo įrašai naudoja integruotą FFmpeg {{version}}.",
       "ffmpegMissing": "Nepavyko įkelti FFmpeg bibliotekų, todėl vaizdo įrašai lieka paslėpti.",
       "hdr": {
@@ -2731,7 +2739,9 @@
         "colorNr": "Bazinis spalvinio triukšmo slopinimas",
         "colorNrDesc": "Pašalina spalvinį triukšmą ankstyvame RAW apdorojimo etape.",
         "defaultNonRawTonemapper": "Numatytasis ne RAW tonų atvaizdavimas",
+        "defaultNonRawTonemapperDesc": "Tonų atvaizdavimas visiems ne RAW vaizdams.",
         "defaultRawTonemapper": "Numatytasis RAW tonų atvaizdavimas",
+        "defaultRawTonemapperDesc": "Tonų atvaizdavimas visiems RAW failams.",
         "enableAppleRaw9": "Naudoti Apple RAW 9 RAW failams",
         "enableBaselineExposure": "Taikyti bazinę ekspoziciją RAW failams",
         "enableHighlightPreservation": "Kompensuoti šviesių sričių išsaugojimo kameros režimus",
@@ -2762,13 +2772,12 @@
         "tonemapperOverride": "Visuotinis tonų atvaizdavimo nepaisymas",
         "tonemapperOverrideDesc": "Visoms nuotraukoms naudoja vieną tonų atvaizdavimą ir paslepia jo perjungiklį koregavimų skydelyje.",
         "appleRaw": "Apple RAW dekoderis",
-        "appleRawDesc": "Naudoja macOS integruotą Apple RAW variklį palaikomiems fotoaparatams; nepalaikomiems automatiškai naudojamas integruotas dekoderis. Lėtesnis už numatytąjį. Miniatiūroms įtakos neturi.",
-        "defaultNonRawTonemapperDesc": "Tonų atvaizdavimas ne RAW nuotraukoms (pvz., JPEG, PNG).",
-        "defaultRawTonemapperDesc": "Tonų atvaizdavimas RAW nuotraukoms."
+        "appleRawDesc": "Naudoja macOS integruotą Apple RAW variklį palaikomiems fotoaparatams; nepalaikomiems automatiškai naudojamas integruotas dekoderis. Lėtesnis už numatytąjį. Miniatiūroms įtakos neturi."
       },
       "previewRes": "Peržiūros raiška",
       "previewResDesc": "Maksimalus peržiūros dydis. Mažesnės reikšmės greitesnės.",
       "previewStrategy": "Peržiūros generavimo strategija",
+      "previewStrategyDesc": "Kokio dydžio redaktoriaus peržiūra: fiksuoto dėl greičio arba pritaikyto ekranui dėl visų detalių.",
       "qualities": {
         "high": "Aukšta kokybė",
         "performance": "Maksimalus našumas"
@@ -2788,6 +2797,7 @@
       "restartRequired": "Iš naujo paleiskite RapidRAW, kad pakeitimai įsigaliotų.",
       "saveRelaunch": "Išsaugoti ir paleisti iš naujo",
       "smallThumbnailRes": "Tinklelio miniatiūrų raiška",
+      "smallThumbnailResDesc": "Miniatiūrų dydis bibliotekos tinklelyje. Didesnis ryškesnis, bet ilgiau generuojamas.",
       "staticDesc": "Atvaizduoja fiksuotu dydžiu. Greičiausias ir geriausias silpnesnei įrangai.",
       "threads": "Gijos",
       "title": "Apdorojimo variklis",
@@ -2809,7 +2819,6 @@
       "multithreading": "Daugiagijis apdorojimas",
       "multithreadingDesc": "Apdoroti nuotraukas naudojant kelis CPU branduolius.",
       "multithreadingLabel": "Įjungti daugiagijį apdorojimą",
-      "smallThumbnailResDesc": "Bibliotekos tinklelyje rodomų miniatiūrų raiška.",
       "thumbnailRes": "Miniatiūrų raiška",
       "thumbnailResDesc": "Nustato generuojamų bibliotekos miniatiūrų raišką. Didesnės reikšmės užtikrina ryškesnį vaizdą įkeliant.",
       "wgpuDescRecommended": "Apeina naršyklės kodavimą momentiniam peržiūros atsakui. Labai rekomenduojama našumui."
@@ -2828,14 +2837,14 @@
       "customList": "Individualus DI žymų sąrašas",
       "customListDesc": "Jei nurodyta, DI žymėjimas naudoja tik šias žymas vietoj integruoto sąrašo. Tik anglų kalba.",
       "maxAiTags": "Maksimalus DI žymų skaičius",
+      "maxAiTagsDesc": "Daugiausia žymų, kurias DI žymėjimas prideda vienai nuotraukai.",
       "noCustomTags": "Nėra individualių DI žymų, naudojamas integruotas sąrašas",
       "noShortcuts": "Sparčiųjų žymų nepridėta",
       "removeCustomTooltip": "Pašalinti žymą „{{tag}}“",
       "removeShortcutTooltip": "Pašalinti spartųjį klavišą „{{shortcut}}“",
       "shortcuts": "Žymėjimo spartieji klavišai",
       "shortcutsDesc": "Žymos, siūlomos žymėjimo kontekstiniame meniu.",
-      "title": "Žymėjimas",
-      "maxAiTagsDesc": "Maksimalus generuojamų žymų skaičius vienai nuotraukai."
+      "title": "Žymėjimas"
     },
     "thanks": {
       "description": "Nuoširdus ačiū šiems projektams, kurie buvo be galo svarbūs kuriant RapidRAW:",
@@ -2869,8 +2878,7 @@
     "title": "Nustatymai",
     "tooltips": {
       "goHome": "Į pradžią"
-    },
-    "languageDesc": "Pasirinkite vartotojo sąsajos kalbą."
+    }
   },
   "tethering": {
     "aperture": "Diafragma",
