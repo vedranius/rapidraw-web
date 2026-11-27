@@ -48,10 +48,17 @@ jobs:
           if git merge --no-edit upstream/main; then
             git push origin HEAD:main
           else
-            git merge --abort
-            gh issue create -R "$GITHUB_REPOSITORY" -t "Upstream merge konflikt" \
-              -b "upstream/main se ne može automatski spojiti u main. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-            exit 1
+            # Locale files always conflict when upstream adds keys: merge them
+            # semantically, then continue only if no other conflict remains.
+            node rrweb/merge-locales.mjs
+            if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+              git merge --abort
+              gh issue create -R "$GITHUB_REPOSITORY" -t "Upstream merge konflikt" \
+                -b "upstream/main se ne može automatski spojiti u main. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+              exit 1
+            fi
+            git commit --no-edit
+            git push origin HEAD:main
           fi
         env: { GH_TOKEN: '${{ github.token }}' }
 
