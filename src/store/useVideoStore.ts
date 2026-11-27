@@ -80,7 +80,7 @@ import { useLibraryStore } from './useLibraryStore';
 import { useProcessStore } from './useProcessStore';
 import { useSettingsStore } from './useSettingsStore';
 import { useUIStore } from './useUIStore';
-import { pause, prepareAtPlayhead } from './videoPlayback';
+import { continueAfterSeek, isResumingAfterSeek, pause, prepareAtPlayhead } from './videoPlayback';
 import { prepareTimelapses } from './videoTimelapse';
 import { cancelTranscription } from './videoCaptions';
 import { ensureTitleRasters, isProgramView, requestProgramFrame, showsPresets } from './videoView';
@@ -120,6 +120,7 @@ interface VideoState {
   useProxies: boolean;
   snapping: boolean;
   recordKeyframes: boolean;
+  recordFrom: Ticks | null;
   loop: boolean;
   recentProjects: Array<RecentProject>;
   setVideo: (updater: Partial<VideoState> | ((state: VideoState) => Partial<VideoState>)) => void;
@@ -141,6 +142,7 @@ export const useVideoStore = create<VideoState>((set) => ({
   useProxies: true,
   snapping: true,
   recordKeyframes: false,
+  recordFrom: null,
   loop: true,
   recentProjects: [],
   setVideo: (updater) => set((state) => (typeof updater === 'function' ? updater(state) : updater)),
@@ -747,9 +749,11 @@ export const focusPlayhead = async () => {
 export const setPlayhead = (time: Ticks) => {
   const { project, isPlaying } = getVideo();
   if (!project) return;
+  const resume = isPlaying || isResumingAfterSeek();
   if (isPlaying) pause();
   setVideo({ playhead: clampPlayhead(project, time) });
   void focusPlayhead();
+  if (resume) continueAfterSeek();
 };
 
 export const stepFrames = (frames: number) => {
@@ -799,7 +803,7 @@ export const deleteSelection = () => {
 };
 
 export const saveVideoLook = (path: string, adjustments: Adjustments) => {
-  const { project, session, editorItemId, playhead, recordKeyframes, isPlaying } = getVideo();
+  const { project, session, editorItemId, playhead, recordKeyframes, recordFrom, isPlaying } = getVideo();
   if (session?.kind !== 'project' || !project) return false;
   const item = lookItem(project, editorItemId);
   const matches =
@@ -820,6 +824,7 @@ export const saveVideoLook = (path: string, adjustments: Adjustments) => {
     isPlaying ? shownTime : editedAt,
     recordKeyframes,
     frameTicks(fps) / 2,
+    recordFrom === null ? null : editorLookTime(project, item, recordFrom),
   );
   if (shown) shown.adjustments = adjustments;
   if (isSameValue(next, stored)) return true;
@@ -1032,6 +1037,7 @@ const resetSessionState = (session: VideoSession | null, project: VideoProject |
     past: [],
     future: [],
     recordKeyframes: false,
+    recordFrom: null,
   });
 };
 

@@ -29,6 +29,7 @@ export const CLIP_LOOK = 'clip';
 
 const PREPARE_DELAY_MS = 150;
 const AUDIO_START_WAIT_MS = 300;
+const SEEK_RESUME_MS = 100;
 
 type AudioStart = (offset?: number) => Promise<void>;
 
@@ -43,6 +44,9 @@ let updating = false;
 let updateQueued = false;
 let followingEdits = false;
 let updateSeq = 0;
+let resumeTimer = 0;
+let resumeWanted = false;
+let resumeHeld = false;
 
 const nextSeq = () => (updateSeq += 1);
 
@@ -187,7 +191,11 @@ const startPlayback = async () => {
   const start = nearEnd || playhead < rangeStart ? rangeStart : playhead;
   debouncedSave.flush();
   prepareAtPlayhead.cancel();
-  setVideo({ isPlaying: true, playhead: start });
+  setVideo((state) => ({
+    isPlaying: true,
+    playhead: start,
+    recordFrom: state.recordKeyframes ? start : state.recordFrom,
+  }));
   clock = null;
   clockEnd = rangeEnd;
   loopFrom = loop ? rangeStart : null;
@@ -254,7 +262,36 @@ const updatePlayback = async () => {
   }
 };
 
+const scheduleResume = () => {
+  window.clearTimeout(resumeTimer);
+  resumeTimer = 0;
+  if (!resumeWanted || resumeHeld) return;
+  resumeTimer = window.setTimeout(() => {
+    resumeTimer = 0;
+    if (!resumeWanted || resumeHeld) return;
+    resumeWanted = false;
+    const { project, playhead } = getVideo();
+    const [, end] = playbackRange();
+    if (!project || playhead >= end - frameTicks(project.settings.fps) * 1.5) return;
+    void startPlayback();
+  }, SEEK_RESUME_MS);
+};
+
+export const continueAfterSeek = () => {
+  resumeWanted = true;
+  scheduleResume();
+};
+
+export const holdSeekResume = (held: boolean) => {
+  resumeHeld = held;
+  scheduleResume();
+};
+
+export const isResumingAfterSeek = () => resumeWanted;
+
 export function pause() {
+  resumeWanted = false;
+  scheduleResume();
   if (!getVideo().isPlaying) return;
   generation += 1;
   cancelAnimationFrame(frameRequest);
@@ -275,7 +312,7 @@ export const play = () => {
   return startPlayback();
 };
 
-export const togglePlay = () => (getVideo().isPlaying ? pause() : void play());
+export const togglePlay = () => (getVideo().isPlaying || resumeWanted ? pause() : void play());
 
 export const playInToOut = () => {
   const { project } = getVideo();
