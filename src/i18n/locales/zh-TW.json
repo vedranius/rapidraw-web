@@ -152,6 +152,7 @@
       "aiUpscale": "RapidRes 2x",
       "aiUpscaleDetail": "細節",
       "blueYellow": "藍/黃",
+      "capture": "擷取",
       "centre": "置中",
       "chromaticAberration": "色差",
       "clarity": "清晰度",
@@ -325,6 +326,7 @@
       "noRating": "無評分",
       "openViewer": "在第二視窗中開啟",
       "pasteAdjustments": "貼上調整",
+      "copyPasteSettings": "複製與貼上設定…",
       "productivity": "效率",
       "rating": "評分",
       "ratingLabel_one": "{{count}} 星",
@@ -2652,7 +2654,7 @@
         "appleRaw9": "Apple RAW 9 引擎",
         "appleRaw9Desc": "使用 Apple 的 Core Image 解碼，可在神經網路引擎上降噪，但速度較慢。需要 macOS 27 和支援的相機；其他檔案使用內建解碼器。",
         "applyPreprocessing": "對非 RAW 影像應用預處理",
-        "applyPreprocessingDesc": "同時將基礎降噪與預銳化套用於 JPEG、PNG 及其他非 RAW 檔案。",
+        "applyPreprocessingDesc": "同時將基礎降噪套用於 JPEG、PNG 及其他非 RAW 檔案。",
         "baselineExposure": "基礎曝光",
         "baselineExposureAmount": "基礎量",
         "baselineExposureAmountDesc": "加到 RAW 檔案的曝光量。darktable 使用 +0.7 EV。",
@@ -2683,8 +2685,6 @@
         },
         "linearRaw": "線性 RAW 處理",
         "linearRawDesc": "修復某些 DNG 檔案中的色偏或粉紅色調。",
-        "sharpening": "基礎預銳化",
-        "sharpeningDesc": "在 RAW 處理流程早期進行輕度銳化。",
         "title": "影像預處理",
         "tonemapperOptions": {
           "agx": "AgX",
@@ -3007,7 +3007,7 @@
         "trim": "修剪"
       },
       "mute": "靜音",
-      "openInTimeline": "在時間軸中開啟",
+      "newProject": "新增專案",
       "position": "位置",
       "trimEnd": "修剪結尾，按兩下重設",
       "trimStart": "修剪開頭，按兩下重設",
@@ -3227,7 +3227,6 @@
       "mute": "靜音",
       "nextKeyframe": "下一個關鍵影格",
       "opacity": "不透明度",
-      "original": "原始",
       "positionX": "位置 X",
       "positionY": "位置 Y",
       "previousKeyframe": "上一個關鍵影格",
@@ -3368,6 +3367,24 @@
       "maskArea": "追蹤遮色片下方的區域",
       "customArea": "追蹤你在影片上放置的區域"
     },
+    "stampTracking": {
+      "title": "追蹤",
+      "spot": "修補點",
+      "spotArea": "追蹤修補點下方的區域",
+      "source": "來源",
+      "trackSpot": "追蹤修補點",
+      "trackSource": "追蹤來源",
+      "spotDone": "修補點 · {{duration}}",
+      "sourceDone": "來源 · {{duration}}",
+      "modes": {
+        "follow": "跟隨",
+        "followTip": "來源隨追蹤的修補點一起移動",
+        "fixed": "固定",
+        "fixedTip": "來源保持在畫面中的同一位置",
+        "track": "獨立追蹤",
+        "trackTip": "來源使用自己的追蹤"
+      }
+    },
     "mediaPool": {
       "addToProject": "新增至專案",
       "addToTimeline": "新增至時間軸",
@@ -3452,9 +3469,7 @@
       },
       "lost": "目標遺失。請嘗試更大的框。",
       "stabilize": "穩定",
-      "tracking": "跟隨物件",
-      "trackMotion": "選取物件",
-      "followScale": "縮放與旋轉"
+      "tracking": "跟隨物件"
     },
     "nesting": {
       "back": "返回",
@@ -3564,12 +3579,33 @@
       "progress": "正在追蹤… {{percent}}%",
       "cancel": "取消",
       "noClip": "請將播放磁頭移到影片片段上。",
-      "tracked": "已追蹤 {{duration}}。",
+      "done": "已追蹤 · {{duration}}",
       "remove": "移除",
-      "position": "位置",
+      "position": "物體",
       "planar": "平面",
-      "pinToPlane": "固定至平面",
-      "notConvex": "平面輪廓自我交叉。"
+      "positionTip": "追蹤任何對象，例如人物、臉部或物體",
+      "planarTip": "追蹤平整的表面，例如螢幕、牆面或招牌",
+      "notConvex": "平面輪廓自我交叉。",
+      "attach": {
+        "title": "附著方式",
+        "move": "移動",
+        "transform": "變形",
+        "perspective": "透視",
+        "pin": "固定",
+        "moveTip": "僅跟隨位置",
+        "transformTip": "跟隨位置、縮放與旋轉",
+        "perspectiveTip": "以透視方式跟隨平面",
+        "pinTip": "精確貼合追蹤的平面"
+      },
+      "fit": {
+        "title": "適配",
+        "fill": "填滿",
+        "fit": "符合",
+        "stretch": "延展",
+        "fillTip": "覆蓋平面並裁掉超出部分",
+        "fitTip": "在平面內顯示整個圖層",
+        "stretchTip": "將圖層延展至平面的四個角"
+      }
     },
     "transitions": {
       "blur": "模糊",
@@ -3597,7 +3633,7 @@
     "lookTarget": {
       "alsoSelected": "面板只會編輯此片段。在時間軸中使用「貼上調整」會套用到所有選取的片段。",
       "noCrop": "調整圖層無法裁切。",
-      "photoOnly": "AI 編輯僅適用於照片片段。",
+      "mediaOnly": "修飾適用於照片與影片片段。",
       "offline": "此片段的媒體已離線。"
     },
     "viewer": {

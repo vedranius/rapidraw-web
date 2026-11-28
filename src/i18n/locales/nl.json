@@ -152,6 +152,7 @@
       "aiUpscale": "RapidRes 2x",
       "aiUpscaleDetail": "Detail",
       "blueYellow": "Blauw/Geel",
+      "capture": "Opname",
       "centre": "Centrum",
       "chromaticAberration": "Chromatische aberratie",
       "clarity": "Lokaal contrast",
@@ -325,6 +326,7 @@
       "noRating": "Geen beoordeling",
       "openViewer": "Openen in tweede venster",
       "pasteAdjustments": "Aanpassingen plakken",
+      "copyPasteSettings": "Instellingen voor kopiëren en plakken…",
       "productivity": "Productiviteit",
       "rating": "Beoordeling",
       "ratingLabel_one": "{{count}} ster",
@@ -2628,7 +2630,7 @@
         "appleRaw9": "Apple RAW 9-engine",
         "appleRaw9Desc": "Decodeert met Apple's Core Image, dat ruis onderdrukt op de Neural Engine maar trager is. Vereist macOS 27 en een ondersteunde camera; andere bestanden gebruiken de ingebouwde decoder.",
         "applyPreprocessing": "Voorverwerking toepassen op niet-RAW-bestanden",
-        "applyPreprocessingDesc": "Past de basisruisonderdrukking en voorverscherping ook toe op JPEG, PNG en andere niet-RAW-bestanden.",
+        "applyPreprocessingDesc": "Past de basisruisonderdrukking ook toe op JPEG, PNG en andere niet-RAW-bestanden.",
         "baselineExposure": "Basisbelichting",
         "baselineExposureAmount": "Basiswaarde",
         "baselineExposureAmountDesc": "Belichting die aan RAW-bestanden wordt toegevoegd. darktable gebruikt +0,7 EV.",
@@ -2659,8 +2661,6 @@
         },
         "linearRaw": "Lineaire RAW-verwerking",
         "linearRawDesc": "Verhelpt kleurzwemen of een roze tint in sommige DNG-bestanden.",
-        "sharpening": "Basis voorverscherping",
-        "sharpeningDesc": "Zachte verscherping vroeg in de RAW-pijplijn.",
         "title": "Afbeeldingsvoorverwerking",
         "tonemapperOptions": {
           "agx": "AgX",
@@ -2983,7 +2983,7 @@
         "trim": "Trimmen"
       },
       "mute": "Dempen",
-      "openInTimeline": "Openen in tijdlijn",
+      "newProject": "Nieuw project",
       "position": "Positie",
       "trimEnd": "Einde trimmen, dubbelklik om te herstellen",
       "trimStart": "Begin trimmen, dubbelklik om te herstellen",
@@ -3203,7 +3203,6 @@
       "mute": "Dempen",
       "nextKeyframe": "Volgende keyframe",
       "opacity": "Dekking",
-      "original": "Origineel",
       "positionX": "Positie X",
       "positionY": "Positie Y",
       "previousKeyframe": "Vorige keyframe",
@@ -3344,6 +3343,24 @@
       "maskArea": "Het gebied onder het masker volgen",
       "customArea": "Een gebied volgen dat je op de video plaatst"
     },
+    "stampTracking": {
+      "title": "Volgen",
+      "spot": "Plek",
+      "spotArea": "Het gebied onder de plek volgen",
+      "source": "Bron",
+      "trackSpot": "Plek volgen",
+      "trackSource": "Bron volgen",
+      "spotDone": "Plek · {{duration}}",
+      "sourceDone": "Bron · {{duration}}",
+      "modes": {
+        "follow": "Meebewegen",
+        "followTip": "De bron beweegt mee met de gevolgde plek",
+        "fixed": "Vast",
+        "fixedTip": "De bron blijft op dezelfde plek in het beeld",
+        "track": "Gevolgd",
+        "trackTip": "De bron volgt een eigen track"
+      }
+    },
     "mediaPool": {
       "addToProject": "Toevoegen aan project",
       "addToTimeline": "Toevoegen aan tijdlijn",
@@ -3428,9 +3445,7 @@
       },
       "lost": "Object kwijt. Probeer een groter kader.",
       "stabilize": "Stabiliseren",
-      "tracking": "Object volgen",
-      "trackMotion": "Object selecteren",
-      "followScale": "Schaal en rotatie"
+      "tracking": "Object volgen"
     },
     "nesting": {
       "back": "Terug",
@@ -3540,12 +3555,33 @@
       "progress": "Volgen… {{percent}}%",
       "cancel": "Annuleren",
       "noClip": "Plaats de afspeelkop op een videoclip.",
-      "tracked": "{{duration}} gevolgd.",
+      "done": "Gevolgd · {{duration}}",
       "remove": "Verwijderen",
-      "position": "Positie",
-      "planar": "Planair",
-      "pinToPlane": "Vastzetten op vlak",
-      "notConvex": "De omtrek van het vlak kruist zichzelf."
+      "position": "Object",
+      "planar": "Vlak",
+      "positionTip": "Volgt alles, zoals personen, gezichten of objecten",
+      "planarTip": "Volgt een plat vlak zoals een scherm, muur of bord",
+      "notConvex": "De omtrek van het vlak kruist zichzelf.",
+      "attach": {
+        "title": "Koppeling",
+        "move": "Verplaatsen",
+        "transform": "Transformeren",
+        "perspective": "Perspectief",
+        "pin": "Vastzetten",
+        "moveTip": "Volgt alleen de positie",
+        "transformTip": "Volgt positie, schaal en rotatie",
+        "perspectiveTip": "Volgt het vlak in perspectief",
+        "pinTip": "Ligt precies op het gevolgde vlak"
+      },
+      "fit": {
+        "title": "Passen",
+        "fill": "Vullen",
+        "fit": "Passend",
+        "stretch": "Uitrekken",
+        "fillTip": "Bedekt het vlak en snijdt af wat uitsteekt",
+        "fitTip": "Toont de hele laag binnen het vlak",
+        "stretchTip": "Rekt de laag uit naar de hoeken van het vlak"
+      }
     },
     "transitions": {
       "blur": "Vervagen",
@@ -3573,7 +3609,7 @@
     "lookTarget": {
       "alsoSelected": "Panelen bewerken alleen deze clip. Aanpassingen plakken in de tijdlijn geldt voor alle geselecteerde clips.",
       "noCrop": "Aanpassingslagen kunnen niet worden bijgesneden.",
-      "photoOnly": "AI-bewerkingen werken op fotoclips.",
+      "mediaOnly": "Retoucheren werkt op foto- en videoclips.",
       "offline": "De media van deze clip zijn offline."
     },
     "viewer": {

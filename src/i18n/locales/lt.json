@@ -152,6 +152,7 @@
       "aiUpscale": "RapidRes 2x",
       "aiUpscaleDetail": "Detalumas",
       "blueYellow": "Mėlyna / Geltona",
+      "capture": "Fiksavimas",
       "centre": "Centras",
       "chromaticAberration": "Chromatinė aberacija",
       "clarity": "Aiškumas",
@@ -325,6 +326,7 @@
       "noRating": "Be įvertinimo",
       "openViewer": "Atidaryti antrame lange",
       "pasteAdjustments": "Įklijuoti koregavimus",
+      "copyPasteSettings": "Kopijavimo ir įklijavimo nustatymai…",
       "productivity": "Produktyvumas",
       "rating": "Įvertinimas",
       "ratingLabel_one": "{{count}} žvaigždutė",
@@ -2731,7 +2733,7 @@
         "appleRaw9": "Apple RAW 9 variklis",
         "appleRaw9Desc": "Dekoduoja naudojant Apple Core Image, kuris slopina triukšmą Neural Engine, bet veikia lėčiau. Reikia macOS 27 ir palaikomo fotoaparato; kiti failai naudoja integruotą dekoderį.",
         "applyPreprocessing": "Taikyti pirminį apdorojimą ne RAW failams",
-        "applyPreprocessingDesc": "Bazinį triukšmo slopinimą ir pirminį ryškinimą taiko ir JPEG, PNG bei kitiems ne RAW failams.",
+        "applyPreprocessingDesc": "Bazinį triukšmo slopinimą taiko ir JPEG, PNG bei kitiems ne RAW failams.",
         "baselineExposure": "Bazinė ekspozicija",
         "baselineExposureAmount": "Bazinė reikšmė",
         "baselineExposureAmountDesc": "RAW failams pridedama ekspozicija. „darktable“ naudoja +0.7 EV.",
@@ -2762,8 +2764,6 @@
         },
         "linearRaw": "Tiesinis RAW apdorojimas (Linear RAW)",
         "linearRawDesc": "Ištaiso spalvinius nukrypimus ar rausvą atspalvį kai kuriuose DNG failuose.",
-        "sharpening": "Bazinis pirminis ryškinimas",
-        "sharpeningDesc": "Švelnus ryškinimas ankstyvame RAW apdorojimo etape.",
         "title": "Nuotraukos pirminis apdorojimas",
         "tonemapperOptions": {
           "agx": "AgX",
@@ -3102,7 +3102,7 @@
         "trim": "Patrumpinti"
       },
       "mute": "Nutildyti",
-      "openInTimeline": "Atidaryti laiko juostoje",
+      "newProject": "Naujas projektas",
       "position": "Padėtis",
       "trimEnd": "Patrumpinti pabaigą, dukart spustelėkite, kad atstatytumėte",
       "trimStart": "Patrumpinti pradžią, dukart spustelėkite, kad atstatytumėte",
@@ -3332,7 +3332,6 @@
       "mute": "Nutildyti",
       "nextKeyframe": "Kitas raktinis kadras",
       "opacity": "Nepermatomumas",
-      "original": "Originalas",
       "positionX": "Padėtis X",
       "positionY": "Padėtis Y",
       "previousKeyframe": "Ankstesnis raktinis kadras",
@@ -3479,6 +3478,24 @@
       "maskArea": "Sekti sritį po kauke",
       "customArea": "Sekti sritį, kurią pažymite vaizde"
     },
+    "stampTracking": {
+      "title": "Sekimas",
+      "spot": "Sritis",
+      "spotArea": "Sekti sritį po retušu",
+      "source": "Šaltinis",
+      "trackSpot": "Sekti sritį",
+      "trackSource": "Sekti šaltinį",
+      "spotDone": "Sritis · {{duration}}",
+      "sourceDone": "Šaltinis · {{duration}}",
+      "modes": {
+        "follow": "Sekti kartu",
+        "followTip": "Šaltinis juda kartu su sekama sritimi",
+        "fixed": "Fiksuotas",
+        "fixedTip": "Šaltinis lieka toje pačioje kadro vietoje",
+        "track": "Sekamas",
+        "trackTip": "Šaltinis turi savo sekimą"
+      }
+    },
     "mediaPool": {
       "addToProject": "Pridėti į projektą",
       "addToTimeline": "Pridėti į laiko juostą",
@@ -3565,9 +3582,7 @@
       },
       "lost": "Objektas prarastas. Pabandykite didesnį rėmelį.",
       "stabilize": "Stabilizuoti",
-      "tracking": "Sekti objektą",
-      "trackMotion": "Pasirinkti objektą",
-      "followScale": "Mastelis ir pasukimas"
+      "tracking": "Sekti objektą"
     },
     "nesting": {
       "back": "Atgal",
@@ -3681,12 +3696,33 @@
       "progress": "Sekama… {{percent}}%",
       "cancel": "Atšaukti",
       "noClip": "Perkelkite atkūrimo galvutę virš vaizdo klipo.",
-      "tracked": "Sekta {{duration}}.",
+      "done": "Sekta · {{duration}}",
       "remove": "Pašalinti",
-      "position": "Padėtis",
-      "planar": "Plokštuminis",
-      "pinToPlane": "Prisegti prie plokštumos",
-      "notConvex": "Plokštumos kontūras kerta pats save."
+      "position": "Objektas",
+      "planar": "Paviršius",
+      "positionTip": "Seka bet ką: žmones, veidus ar daiktus",
+      "planarTip": "Seka plokščią paviršių, pvz., ekraną, sieną ar ženklą",
+      "notConvex": "Plokštumos kontūras kerta pats save.",
+      "attach": {
+        "title": "Prisegimas",
+        "move": "Perkelti",
+        "transform": "Transformuoti",
+        "perspective": "Perspektyva",
+        "pin": "Prisegti",
+        "moveTip": "Seka tik padėtį",
+        "transformTip": "Seka padėtį, mastelį ir pasukimą",
+        "perspectiveTip": "Seka paviršių perspektyvoje",
+        "pinTip": "Guli tiksliai ant sekamo paviršiaus"
+      },
+      "fit": {
+        "title": "Pritaikymas",
+        "fill": "Užpildyti",
+        "fit": "Sutalpinti",
+        "stretch": "Ištempti",
+        "fillTip": "Uždengia paviršių ir apkerpa perteklių",
+        "fitTip": "Rodo visą sluoksnį paviršiaus viduje",
+        "stretchTip": "Ištempia sluoksnį iki paviršiaus kampų"
+      }
     },
     "transitions": {
       "blur": "Suliejimas",
@@ -3714,7 +3750,7 @@
     "lookTarget": {
       "alsoSelected": "Skydeliai redaguoja tik šį klipą. Komanda „Įklijuoti koregavimus“ laiko juostoje taikoma visiems pasirinktiems klipams.",
       "noCrop": "Koregavimo sluoksnių negalima apkarpyti.",
-      "photoOnly": "DI pakeitimai veikia nuotraukų klipuose.",
+      "mediaOnly": "Retušavimas veikia nuotraukų ir vaizdo įrašų klipuose.",
       "offline": "Šio klipo medija nepasiekiama."
     },
     "viewer": {

@@ -152,6 +152,7 @@
       "aiUpscale": "RapidRes 2x",
       "aiUpscaleDetail": "Detalhe",
       "blueYellow": "Azul/Amarelo",
+      "capture": "Captura",
       "centre": "Centro",
       "chromaticAberration": "Aberração Cromática",
       "clarity": "Claridade",
@@ -325,6 +326,7 @@
       "noRating": "Sem Avaliação",
       "openViewer": "Abrir em uma segunda janela",
       "pasteAdjustments": "Colar Ajustes",
+      "copyPasteSettings": "Configurações de copiar e colar…",
       "productivity": "Produtividade",
       "rating": "Avaliação",
       "ratingLabel_one": "{{count}} Estrela",
@@ -2727,7 +2729,7 @@
         "appleRaw9": "Motor Apple RAW 9",
         "appleRaw9Desc": "Decodifica com o Core Image da Apple, que reduz o ruído no Neural Engine, mas é mais lento. Requer macOS 27 e uma câmera compatível; outros arquivos usam o decodificador integrado.",
         "applyPreprocessing": "Aplicar Pré-processamento em Não-RAWs",
-        "applyPreprocessingDesc": "Aplica também a redução de ruído base e a pré-nitidez a JPEG, PNG e outros arquivos não RAW.",
+        "applyPreprocessingDesc": "Aplica também a redução de ruído base a JPEG, PNG e outros arquivos não RAW.",
         "baselineExposure": "Exposição base",
         "baselineExposureAmount": "Valor base",
         "baselineExposureAmountDesc": "Exposição adicionada aos arquivos RAW. O darktable usa +0,7 EV.",
@@ -2758,8 +2760,6 @@
         },
         "linearRaw": "Processamento Linear RAW",
         "linearRawDesc": "Corrige tons de cor ou um tom rosado em alguns arquivos DNG.",
-        "sharpening": "Pré-nitidez Base",
-        "sharpeningDesc": "Nitidez suave no início do pipeline RAW.",
         "title": "Pré-processamento de Imagem",
         "tonemapperOptions": {
           "agx": "AgX",
@@ -3084,7 +3084,7 @@
         "trim": "Aparar"
       },
       "mute": "Silenciar",
-      "openInTimeline": "Abrir na linha do tempo",
+      "newProject": "Novo projeto",
       "position": "Posição",
       "trimEnd": "Aparar fim, clique duplo para redefinir",
       "trimStart": "Aparar início, clique duplo para redefinir",
@@ -3309,7 +3309,6 @@
       "mute": "Silenciar",
       "nextKeyframe": "Próximo quadro-chave",
       "opacity": "Opacidade",
-      "original": "Original",
       "positionX": "Posição X",
       "positionY": "Posição Y",
       "previousKeyframe": "Quadro-chave anterior",
@@ -3453,6 +3452,24 @@
       "maskArea": "Rastrear a área sob a máscara",
       "customArea": "Rastrear uma área que você posiciona no vídeo"
     },
+    "stampTracking": {
+      "title": "Rastreamento",
+      "spot": "Área",
+      "spotArea": "Rastrear a área retocada",
+      "source": "Origem",
+      "trackSpot": "Rastrear área",
+      "trackSource": "Rastrear origem",
+      "spotDone": "Área · {{duration}}",
+      "sourceDone": "Origem · {{duration}}",
+      "modes": {
+        "follow": "Seguir",
+        "followTip": "A origem se move com a área rastreada",
+        "fixed": "Fixa",
+        "fixedTip": "A origem fica no mesmo lugar do quadro",
+        "track": "Rastreada",
+        "trackTip": "A origem tem seu próprio rastreamento"
+      }
+    },
     "mediaPool": {
       "addToProject": "Adicionar ao projeto",
       "addToTimeline": "Adicionar à linha do tempo",
@@ -3538,9 +3555,7 @@
       },
       "lost": "O objeto foi perdido. Tente uma caixa maior.",
       "stabilize": "Estabilizar",
-      "tracking": "Seguir objeto",
-      "trackMotion": "Selecionar objeto",
-      "followScale": "Escala e rotação"
+      "tracking": "Seguir objeto"
     },
     "nesting": {
       "back": "Voltar",
@@ -3652,12 +3667,33 @@
       "progress": "Rastreando… {{percent}}%",
       "cancel": "Cancelar",
       "noClip": "Mova o indicador de reprodução sobre um clipe de vídeo.",
-      "tracked": "Rastreado por {{duration}}.",
+      "done": "Rastreado · {{duration}}",
       "remove": "Remover",
-      "position": "Posição",
-      "planar": "Planar",
-      "pinToPlane": "Fixar no plano",
-      "notConvex": "O contorno do plano cruza a si mesmo."
+      "position": "Objeto",
+      "planar": "Superfície",
+      "positionTip": "Rastreia qualquer coisa: pessoas, rostos ou objetos",
+      "planarTip": "Rastreia uma superfície plana como uma tela, uma parede ou uma placa",
+      "notConvex": "O contorno do plano cruza a si mesmo.",
+      "attach": {
+        "title": "Fixação",
+        "move": "Mover",
+        "transform": "Transformar",
+        "perspective": "Perspectiva",
+        "pin": "Fixar",
+        "moveTip": "Segue apenas a posição",
+        "transformTip": "Segue posição, escala e rotação",
+        "perspectiveTip": "Segue a superfície em perspectiva",
+        "pinTip": "Fica exatamente sobre a superfície rastreada"
+      },
+      "fit": {
+        "title": "Ajuste",
+        "fill": "Preencher",
+        "fit": "Encaixar",
+        "stretch": "Esticar",
+        "fillTip": "Cobre a superfície e corta o que sobra",
+        "fitTip": "Mostra a camada inteira dentro da superfície",
+        "stretchTip": "Estica a camada até os cantos da superfície"
+      }
     },
     "transitions": {
       "blur": "Desfoque",
@@ -3685,7 +3721,7 @@
     "lookTarget": {
       "alsoSelected": "Os painéis editam apenas este clipe. “Colar ajustes” na linha do tempo se aplica a todos os clipes selecionados.",
       "noCrop": "Camadas de ajuste não podem ser cortadas.",
-      "photoOnly": "Edições de IA funcionam em clipes de foto.",
+      "mediaOnly": "Retoques funcionam em clipes de foto e vídeo.",
       "offline": "A mídia deste clipe está offline."
     },
     "viewer": {

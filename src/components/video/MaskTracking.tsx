@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Invokes } from '../../types/invokes';
 import { useTranslation } from 'react-i18next';
-import { Crosshair, Pipette, Sparkles, X } from 'lucide-react';
+import type { ParseKeys } from 'i18next';
+import { Crosshair, Pipette, X } from 'lucide-react';
 import Slider from '../ui/Slider';
 import Switch from '../ui/Switch';
 import SegmentedControl from '../ui/SegmentedControl';
@@ -18,17 +19,30 @@ import {
   ColorKey,
   DEFAULT_KEY,
   KEY_PRESETS,
+  Trackable,
   TrackedContainer,
   VIDEO_AI_MASKS,
   isPlanar,
   isTrackable,
+  sameCorners,
+  SHAPE_ATTACH,
 } from '../../utils/video/maskTracking';
-import { maskTrackSpan } from '../../utils/video/edit';
+import { maskTrackCoverage, maskTrackSpan } from '../../utils/video/edit';
+import { formatDuration } from '../../utils/video/time';
+import { useShallow } from 'zustand/react/shallow';
 import { lookOf } from '../../utils/video/model';
 import { numericLeaves } from '../../utils/video/lookAnimation';
 import { useEditorLookItem, useLookKeyframes } from './inspector/LookKeyframes';
 import { ActionButton, ColorRow, IconToggle } from './inspector/InspectorControls';
-import { JobProgress, KeyframesRow, TrackKindControl, TrackedRow, Tracker } from './TrackControls';
+import {
+  AttachControl,
+  JobProgress,
+  KeyframesRow,
+  TrackJob,
+  useAttachChoice,
+  TrackKindControl,
+  Tracker,
+} from './TrackControls';
 import {
   cancelJob,
   clearTrackError,
@@ -41,6 +55,7 @@ import {
   setTrackKind,
   trackMask,
   unfollowSubMask,
+  useTrackDone,
   useVideoMotion,
   withSequences,
 } from '../../store/videoMotion';
@@ -82,8 +97,6 @@ function ShapeKeyframes({ containerId }: { containerId: string }) {
 type KeyMode = (typeof KEY_PRESETS)[number]['id'] | 'custom';
 
 type TrackArea = 'mask' | 'custom';
-
-const TRACK_AREAS: Array<TrackArea> = ['mask', 'custom'];
 
 const EyeDropperApi = (window as unknown as { EyeDropper?: new () => { open(): Promise<{ sRGBHex: string }> } })
   .EyeDropper;
@@ -196,12 +209,46 @@ const useSequencesReady = (ids: Array<string>) => {
   return ready;
 };
 
-export default function MaskTrackingControls({
+type TrackingKind = 'mask' | 'stamp';
+
+const LISTS = { mask: 'masks', stamp: 'aiPatches' } as const;
+
+const AREA_LABELS: Record<TrackingKind, { label: ParseKeys; tooltip: ParseKeys }> = {
+  mask: { label: 'video.maskTracking.mask', tooltip: 'video.maskTracking.maskArea' },
+  stamp: { label: 'video.stampTracking.spot', tooltip: 'video.stampTracking.spotArea' },
+};
+
+export const ownedUpdater =
+  <T extends Trackable>(kind: TrackingKind, id: string, updateContainer: (id: string, data: Partial<T>) => void) =>
+  (owner: string | null, patch: (latest: T) => Partial<T>) => {
+    if (!owner) return;
+    const list = LISTS[kind];
+    if (maskItem()?.id === owner) {
+      const containers = useEditorStore.getState().adjustments[list] as unknown as Array<T> | undefined;
+      const latest = containers?.find((container) => container.id === id);
+      if (latest) updateContainer(id, patch(latest));
+      return;
+    }
+    editItemLook(owner, (look) => ({
+      ...look,
+      [list]: ((look[list] ?? []) as unknown as Array<T>).map((container) =>
+        container.id === id ? { ...container, ...patch(container) } : container,
+      ),
+    }));
+  };
+
+export default function MaskTrackingControls<T extends Trackable>({
+  kind = 'mask',
   container,
   updateContainer,
+  jobs = [],
+  children,
 }: {
-  container: TrackedContainer | null | undefined;
-  updateContainer(id: string, data: Partial<TrackedContainer>): void;
+  kind?: TrackingKind;
+  container: T | null | undefined;
+  updateContainer(id: string, data: Partial<T>): void;
+  jobs?: Array<TrackJob>;
+  children?: ReactNode;
 }) {
   const { t } = useTranslation();
   const isVideo = useVideoStore((s) => s.session !== null);
@@ -217,9 +264,36 @@ export default function MaskTrackingControls({
   useEffect(() => {
     if (tracked) setTrackKind(planarTrack ? 'planar' : 'position');
   }, [container?.id, tracked, planarTrack]);
+  const span = useVideoStore(
+    useShallow((state) => {
+      const item = state.project ? maskItem() : null;
+      return item && state.project
+        ? maskTrackSpan(state.project, item, container?.track, sourceFpsOf(state.project, item))
+        : null;
+    }),
+  );
+  const coverage = useVideoStore(
+    useShallow((state) => {
+      const item = state.project ? maskItem() : null;
+      return item && state.project
+        ? maskTrackCoverage(state.project, item, container?.track, sourceFpsOf(state.project, item))
+        : null;
+    }),
+  );
+  const trackedItem = project ? maskItem() : null;
+  const done = useTrackDone(trackedItem, container?.track, coverage, {
+    changed: !sameCorners(container?.track?.area ?? null, container?.trackArea ?? null),
+    onClipBelow: trackedItem?.type === 'adjustment',
+  });
+  const attach = useAttachChoice(
+    jobKey,
+    container?.track,
+    SHAPE_ATTACH,
+    (next) =>
+      container?.track && updateContainer(container.id, { track: { ...container.track, attach: next } } as Partial<T>),
+  );
   if (!isVideo || !container) return null;
   const trackable = container.subMasks.some(isTrackable);
-  const trackedItem = project ? maskItem() : null;
   const followsFrames =
     aiSubMasks.length > 0 &&
     aiSubMasks.every((subMask) => {
@@ -228,20 +302,7 @@ export default function MaskTrackingControls({
     });
   const followsAll = followsFrames && followsPlayedFrames(container);
 
-  const updateOwned = (owner: string | null, patch: (mask: TrackedContainer) => Partial<TrackedContainer>) => {
-    if (!owner) return;
-    if (maskItem()?.id === owner) {
-      const latest = useEditorStore.getState().adjustments.masks?.find((mask) => mask.id === container.id);
-      if (latest) updateContainer(container.id, patch(latest as TrackedContainer));
-      return;
-    }
-    editItemLook(owner, (look) => ({
-      ...look,
-      masks: look.masks.map((mask) =>
-        mask.id === container.id ? { ...mask, ...patch(mask as TrackedContainer) } : mask,
-      ),
-    }));
-  };
+  const updateOwned = ownedUpdater(kind, container.id, updateContainer);
 
   const follow = async () => {
     setError(null);
@@ -250,25 +311,26 @@ export default function MaskTrackingControls({
     const owner = maskItem()?.id ?? null;
     try {
       await followAiMasks(clip.id, container, (sequences) =>
-        updateOwned(owner, (latest) => ({ subMasks: withSequences(latest.subMasks, sequences) })),
+        updateOwned(owner, (latest) => ({ subMasks: withSequences(latest.subMasks, sequences) }) as Partial<T>),
       );
     } catch (err) {
       if (!isCancelled(err)) setError(errorText(err));
     }
   };
 
-  const unfollow = () => updateContainer(container.id, { subMasks: container.subMasks.map(unfollowSubMask) });
+  const unfollow = () =>
+    updateContainer(container.id, { subMasks: container.subMasks.map(unfollowSubMask) } as Partial<T>);
 
   const track = () => {
     const owner = maskItem()?.id ?? null;
-    void trackMask(container, (track) => updateOwned(owner, () => ({ track })));
+    void trackMask(container, (track) => updateOwned(owner, () => ({ track }) as Partial<T>));
   };
 
   const setArea = (area: TrackArea) => {
     clearTrackError();
     updateContainer(container.id, {
       trackArea: area === 'custom' ? defaultTrackArea(container, useEditorStore.getState().adjustments) : null,
-    });
+    } as Partial<T>);
   };
 
   return (
@@ -276,26 +338,20 @@ export default function MaskTrackingControls({
       <div className="flex items-center gap-2">
         <Crosshair size={14} className="text-text-secondary shrink-0" />
         <Text as="span" variant={TextVariants.small} className="flex-1 font-medium text-text-primary">
-          {t('video.maskTracking.title')}
+          {t(kind === 'mask' ? 'video.maskTracking.title' : 'video.stampTracking.title')}
         </Text>
       </div>
-      <TrackedRow
-        track={container.track}
-        span={
-          trackedItem && project
-            ? maskTrackSpan(project, trackedItem, container.track, sourceFpsOf(project, trackedItem))
-            : null
-        }
-        onRemove={() => updateContainer(container.id, { track: null })}
-      />
       {trackable && (
         <div className="grid grid-cols-2 gap-2">
           <SegmentedControl
-            options={TRACK_AREAS.map((id) => ({
-              id,
-              label: t(`video.maskTracking.${id}`),
-              tooltip: t(`video.maskTracking.${id}Area`),
-            }))}
+            options={[
+              { id: 'mask' as const, label: t(AREA_LABELS[kind].label), tooltip: t(AREA_LABELS[kind].tooltip) },
+              {
+                id: 'custom' as const,
+                label: t('video.maskTracking.custom'),
+                tooltip: t('video.maskTracking.customArea'),
+              },
+            ]}
             value={container.trackArea ? 'custom' : 'mask'}
             disabled={tracking}
             onChange={setArea}
@@ -303,8 +359,28 @@ export default function MaskTrackingControls({
           <TrackKindControl disabled={tracking} />
         </div>
       )}
-      <Tracker jobKey={jobKey} disabled={!trackable} onTrack={track} />
-      <ShapeKeyframes containerId={container.id} />
+      {trackable && (
+        <AttachControl options={attach.options} value={attach.value} disabled={tracking} onChange={attach.choose} />
+      )}
+      {children}
+      <Tracker
+        jobs={[
+          {
+            key: jobKey,
+            label: jobs.length > 0 ? t('video.stampTracking.trackSpot') : undefined,
+            done: done
+              ? t(kind === 'stamp' ? 'video.stampTracking.spotDone' : 'video.tracking.done', {
+                  duration: formatDuration(span ? span[1] - span[0] : 0),
+                })
+              : null,
+            disabled: !trackable,
+            onTrack: track,
+            onRemove: tracked ? () => updateContainer(container.id, { track: null } as Partial<T>) : undefined,
+          },
+          ...jobs,
+        ]}
+      />
+      {kind === 'mask' && <ShapeKeyframes containerId={container.id} />}
       {aiSubMasks.length > 0 &&
         (followProgress !== null ? (
           <JobProgress
@@ -320,7 +396,7 @@ export default function MaskTrackingControls({
               </Text>
             )}
             <ActionButton
-              icon={followsAll ? X : Sparkles}
+              icon={followsAll ? X : undefined}
               label={followsAll ? t('video.tracking.remove') : t('video.maskTracking.aiFollow')}
               disabled={tracking}
               onClick={() => (followsAll ? unfollow() : void follow())}

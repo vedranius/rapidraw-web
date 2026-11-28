@@ -168,6 +168,7 @@ pub struct LoadedImage {
     pub as_shot: AsShot,
     pub has_gain_map: bool,
     pub source_time: Option<f64>,
+    pub footage: bool,
     pub lens_source: Option<String>,
 }
 
@@ -234,6 +235,7 @@ pub struct GpuImageEntry {
     pub haze_view: TextureView,
     pub airlight_view: TextureView,
     pub is_raw: u32,
+    pub footage: bool,
     pub width: u32,
     pub height: u32,
     pub transform_key: u64,

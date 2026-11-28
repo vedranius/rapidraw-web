@@ -1,6 +1,6 @@
 import { Mask, SubMask } from '../../types/masks';
-import { MotionTrack, Quad, TrackKey } from '../../types/video';
-import type { MaskContainer } from '../adjustments';
+import { MotionTrack, Quad, TrackAttach, TrackExits, TrackKey } from '../../types/video';
+import type { AiPatch, MaskContainer } from '../adjustments';
 import { PenPoint, penBounds, rectangleBounds } from '../maskShapes';
 import {
   Bounds,
@@ -34,12 +34,26 @@ export const KEY_PRESETS = [
 
 export const DEFAULT_KEY: ColorKey = { color: KEY_PRESETS[0].color, tolerance: 50, softness: 10, spill: 50 };
 
-export type TrackedContainer = MaskContainer & {
+export interface Trackable {
+  id: string;
+  subMasks: Array<SubMask>;
   track?: MotionTrack | null;
   trackArea?: Quad | null;
-  cutout?: boolean;
-  key?: ColorKey | null;
-};
+}
+
+export type TrackedContainer = MaskContainer &
+  Trackable & {
+    cutout?: boolean;
+    key?: ColorKey | null;
+  };
+
+export type SourceMode = 'follow' | 'fixed' | 'track';
+
+export type StampContainer = AiPatch &
+  Trackable & {
+    sourceMode?: SourceMode;
+    sourceTrack?: MotionTrack | null;
+  };
 
 export interface Similarity {
   from: { x: number; y: number };
@@ -72,10 +86,51 @@ export const resolveFollows = (entries: Array<[MotionTrack, ResolvedFollow]>) =>
 const resolvedOf = (track: MotionTrack, time: number | null) =>
   time === null ? null : (resolvedFollows.get(followKey(track)) ?? null);
 
+export const SURFACE_ATTACH: Array<TrackAttach> = ['perspective', 'pin'];
+
+export interface AttachChoices {
+  object: Array<TrackAttach>;
+  surface: Array<TrackAttach>;
+  defaults: { object: TrackAttach; surface: TrackAttach };
+}
+
+export const LAYER_ATTACH: AttachChoices = {
+  object: ['move', 'transform'],
+  surface: ['move', 'transform', 'perspective', 'pin'],
+  defaults: { object: 'move', surface: 'perspective' },
+};
+
+export const SHAPE_ATTACH: AttachChoices = {
+  object: ['move', 'transform'],
+  surface: ['move', 'transform', 'perspective'],
+  defaults: { object: 'transform', surface: 'perspective' },
+};
+
+export const chosenAttach = (
+  choices: AttachChoices,
+  surface: boolean,
+  ...candidates: Array<TrackAttach | null | undefined>
+): TrackAttach => {
+  const options = surface ? choices.surface : choices.object;
+  return (
+    candidates.find((candidate): candidate is TrackAttach => !!candidate && options.includes(candidate)) ??
+    (surface ? choices.defaults.surface : choices.defaults.object)
+  );
+};
+
 const MIN_REGION_SHARE = 0.04;
 const MAX_REGION_SHARE = 0.8;
 const LINEAR_REGION_SHARE = 0.2;
-const TRACKABLE = new Set<string>([Mask.Radial, Mask.Linear, Mask.Rectangle, Mask.Pen, Mask.Brush, Mask.Flow]);
+const TRACKABLE = new Set<string>([
+  Mask.Radial,
+  Mask.Linear,
+  Mask.Rectangle,
+  Mask.Pen,
+  Mask.Brush,
+  Mask.Flow,
+  Mask.Clone,
+  Mask.Heal,
+]);
 
 export const isTrackable = (subMask: SubMask) => TRACKABLE.has(subMask.type);
 
@@ -101,10 +156,63 @@ const poseAt = (keys: Array<TrackKey>, time: number): TrackKey => {
   };
 };
 
+const EXIT_WINDOW = 0.3;
+const EXIT_SETTLE = 0.5;
+
+const continued = (keys: Array<TrackKey>, edge: TrackKey, toward: number, time: number, aspect: number): TrackKey => {
+  const inner = poseAt(keys, Math.min(keys[keys.length - 1].time, Math.max(keys[0].time, toward)));
+  const span = edge.time - inner.time;
+  if (Math.abs(span) < 1e-6) return { ...edge, time };
+  const elapsed = time - edge.time;
+  const settled = EXIT_SETTLE * (1 - Math.exp(-Math.abs(elapsed) / EXIT_SETTLE)) * Math.sign(elapsed);
+  const rate = (atEdge: number, inside: number) => (atEdge - inside) / span;
+  const x = edge.x + rate(edge.x, inner.x) * elapsed;
+  const y = edge.y + rate(edge.y, inner.y) * elapsed;
+  const growth = Math.exp(rate(Math.log(Math.max(1e-3, edge.scale)), Math.log(Math.max(1e-3, inner.scale))) * settled);
+  const turn = rate(edge.rotation, inner.rotation) * settled;
+  const [cos, sin] = [Math.cos(turn), Math.sin(turn)];
+  const corners = edge.corners?.map(([cx, cy]) => {
+    const dx = (cx - edge.x) * aspect;
+    const dy = cy - edge.y;
+    return [x + (growth * (cos * dx - sin * dy)) / aspect, y + growth * (sin * dx + cos * dy)];
+  }) as Quad | undefined;
+  return {
+    time,
+    x,
+    y,
+    scale: edge.scale * growth,
+    rotation: edge.rotation + turn,
+    ...(corners && { corners }),
+  };
+};
+
+const poseOf = (track: MotionTrack, time: number, aspect: number): TrackKey => {
+  const { keys } = track;
+  const first = keys[0];
+  const last = keys[keys.length - 1];
+  if (time > last.time && track.exits?.end) return continued(keys, last, last.time - EXIT_WINDOW, time, aspect);
+  if (time < first.time && track.exits?.start) return continued(keys, first, first.time + EXIT_WINDOW, time, aspect);
+  return poseAt(keys, time);
+};
+
 const referenceOf = (track: MotionTrack) => track.reference ?? track.keys[0];
 
 export const isPlanar = (track: MotionTrack | null | undefined) =>
   !!track?.keys.length && !!referenceOf(track).corners && track.keys.every((key) => !!key.corners);
+
+export const frozenTrack = (track: MotionTrack, time: number, aspect: number): MotionTrack | null =>
+  track.anchor || !track.keys.length
+    ? null
+    : { ...track, keys: [{ ...poseOf(track, time, aspect), time: 0 }], exits: {} };
+
+export const referenceCorners = (track: MotionTrack | null | undefined) =>
+  track?.keys.length ? (referenceOf(track).corners ?? null) : null;
+
+export const attachOf = (track: MotionTrack | null | undefined): TrackAttach =>
+  track?.attach ?? (isPlanar(track) ? 'perspective' : 'transform');
+
+export const followsSurface = (track: MotionTrack | null | undefined) =>
+  isPlanar(track) && SURFACE_ATTACH.includes(attachOf(track));
 
 export const planeWarp = (
   track: MotionTrack | undefined | null,
@@ -112,18 +220,18 @@ export const planeWarp = (
   width: number,
   height: number,
 ): Homography | null => {
-  if (!track || time === null || !isPlanar(track)) return null;
+  if (!track || time === null || !followsSurface(track)) return null;
   if (track.anchor) return resolvedOf(track, time)?.plane ?? null;
   return quadToQuad(
     scaleQuad(referenceOf(track).corners!, width, height),
-    scaleQuad(poseAt(track.keys, time).corners!, width, height),
+    scaleQuad(poseOf(track, time, width / height).corners!, width, height),
   );
 };
 
 export const planeAt = (track: MotionTrack | undefined | null, time: number | null, width: number, height: number) => {
   if (!track || time === null || !isPlanar(track)) return null;
   if (track.anchor) return resolvedOf(track, time)?.corners ?? null;
-  return scaleQuad(poseAt(track.keys, time).corners!, width, height);
+  return scaleQuad(poseOf(track, time, width / height).corners!, width, height);
 };
 
 const between = (reference: TrackKey, pose: TrackKey, width: number, height: number): Similarity => ({
@@ -141,9 +249,20 @@ export const trackSimilarity = (
 ): Similarity | null => {
   if (!track?.keys.length || time === null) return null;
   if (track.anchor) return resolvedOf(track, time)?.similarity ?? null;
-  const similarity = between(referenceOf(track), poseAt(track.keys, time), width, height);
-  return track.positionOnly ? { ...similarity, scale: 1, angle: 0 } : similarity;
+  const similarity = between(referenceOf(track), poseOf(track, time, width / height), width, height);
+  return attachOf(track) === 'move' ? { ...similarity, scale: 1, angle: 0 } : similarity;
 };
+
+const mergedExits = (
+  existing: MotionTrack | null,
+  kept: Array<TrackKey>,
+  first: number,
+  last: number,
+  exits: TrackExits,
+): TrackExits => ({
+  start: kept.some((key) => key.time < first) ? !!existing?.exits?.start : !!exits.start,
+  end: kept.some((key) => key.time > last) ? !!existing?.exits?.end : !!exits.end,
+});
 
 export const extendTrack = (
   track: MotionTrack | null | undefined,
@@ -153,10 +272,11 @@ export const extendTrack = (
   width: number,
   height: number,
   thin: (keys: Array<TrackKey>) => Array<TrackKey>,
+  exits: TrackExits,
 ): MotionTrack => {
   const existing = track?.keys.length ? track : null;
   const base = existing
-    ? poseAt(existing.keys, startTime)
+    ? poseOf(existing, startTime, width / height)
     : { time: startTime, x: origin.x / width, y: origin.y / height, scale: 1, rotation: 0 };
   const dx = base.x * width - origin.x;
   const dy = base.y * height - origin.y;
@@ -179,6 +299,8 @@ export const extendTrack = (
   return {
     reference: existing ? referenceOf(existing) : base,
     keys: [...kept, ...keys].sort((a, b) => a.time - b.time),
+    ...(existing?.attach && { attach: existing.attach }),
+    exits: mergedExits(existing, kept, first, last, exits),
   };
 };
 
@@ -221,6 +343,7 @@ export const extendPlane = (
   width: number,
   height: number,
   thin: (keys: Array<TrackKey>) => Array<TrackKey>,
+  exits: TrackExits,
 ): MotionTrack => {
   const existing = track && isPlanar(track) ? track : null;
   const sorted = [...samples].sort((a, b) => a.time - b.time);
@@ -229,13 +352,15 @@ export const extendPlane = (
   const start = sorted.find((sample) => sample.time === startTime) ?? sorted[0];
   const reference = existing ? referenceOf(existing) : planeKeys(start.corners, [start], width, height)[0];
   const moved = existing
-    ? anchored(poseAt(existing.keys, startTime).corners!, start.corners, sorted, width, height)
+    ? anchored(poseOf(existing, startTime, width / height).corners!, start.corners, sorted, width, height)
     : sorted;
   const fresh = thin(planeKeys(reference.corners!, moved, width, height));
   const kept = existing?.keys.filter((key) => key.time < first || key.time > last) ?? [];
   return {
     reference,
     keys: planeKeys(reference.corners!, cornersOf([...kept, ...fresh].sort((a, b) => a.time - b.time)), width, height),
+    ...(existing?.attach && { attach: existing.attach }),
+    exits: mergedExits(existing, kept, first, last, exits),
   };
 };
 
@@ -280,11 +405,16 @@ const rebased = (track: MotionTrack, reference: TrackKey, width: number, height:
 
 const mergeAnchored = (head: MotionTrack, tail: MotionTrack): MotionTrack => {
   const covered = trackSpan(head)!;
+  const keys = [...head.keys, ...tail.keys.filter((key) => key.time < covered[0] || key.time > covered[1])].sort(
+    (a, b) => a.time - b.time,
+  );
   return {
     ...head,
-    keys: [...head.keys, ...tail.keys.filter((key) => key.time < covered[0] || key.time > covered[1])].sort(
-      (a, b) => a.time - b.time,
-    ),
+    keys,
+    exits: {
+      start: keys[0] === head.keys[0] ? !!head.exits?.start : !!tail.exits?.start,
+      end: keys[keys.length - 1] === head.keys[head.keys.length - 1] ? !!head.exits?.end : !!tail.exits?.end,
+    },
   };
 };
 
@@ -303,6 +433,7 @@ export const joinTracks = (
   return {
     ...head,
     keys: [...head.keys.filter((key) => key.time < boundary), ...aligned.keys.filter((key) => key.time >= boundary)],
+    exits: { start: !!head.exits?.start, end: !!tail.exits?.end },
   };
 };
 
@@ -436,6 +567,37 @@ export const mapParameters = (type: string, parameters: Parameters | undefined, 
   return parameters;
 };
 
+export interface StampWarps {
+  spot: MaskWarp | null;
+  source: MaskWarp | null;
+}
+
+export const stampWarps = (
+  container: StampContainer,
+  time: number | null,
+  width: number,
+  height: number,
+): StampWarps => {
+  const spot = maskWarp(container.track, time, width, height);
+  const mode = container.sourceMode ?? 'follow';
+  if (mode === 'fixed') return { spot, source: null };
+  return { spot, source: mode === 'track' ? maskWarp(container.sourceTrack, time, width, height) : spot };
+};
+
+const movedSource = (parameters: Parameters, warp: MaskWarp | null): Parameters => {
+  if (!warp || parameters.sourceX === undefined || parameters.sourceY === undefined) return parameters;
+  const point = warpPoint(warp, parameters.sourceX, parameters.sourceY);
+  return { ...parameters, sourceX: point.x, sourceY: point.y };
+};
+
+export const shownStamp = (type: string, parameters: Parameters, { spot, source }: StampWarps): Parameters =>
+  movedSource((spot && mapParameters(type, parameters, spot)) || parameters, source);
+
+const inverseOf = (warp: MaskWarp | null) => (warp ? invertWarp(warp) : null);
+
+export const storedStamp = (type: string, parameters: Parameters, { spot, source }: StampWarps): Parameters =>
+  shownStamp(type, parameters, { spot: inverseOf(spot), source: inverseOf(source) });
+
 export const unmapUpdate = (
   type: string,
   stored: Parameters | undefined,
@@ -527,7 +689,7 @@ export const boundsRegion = ({ left, top, right, bottom }: Bounds, width: number
   height: (bottom - top) / height,
 });
 
-export const trackAreaAt = (container: TrackedContainer, time: number | null, width: number, height: number) =>
+export const trackAreaAt = (container: Trackable, time: number | null, width: number, height: number) =>
   container.trackArea
     ? warpQuad(maskWarp(container.track, time, width, height), scaleQuad(container.trackArea, width, height))
     : null;

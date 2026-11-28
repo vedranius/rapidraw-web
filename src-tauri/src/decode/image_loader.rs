@@ -110,8 +110,7 @@ pub fn load_and_composite(
     cancel_token: Option<(Arc<AtomicUsize>, usize)>,
 ) -> Result<(DynamicImage, f32)> {
     let base_image = if is_video_file(path) {
-        crate::video::poster_frame(Path::new(path))
-            .map_err(|e| anyhow!(e))?
+        crate::video::poster_frame(Path::new(path)).map_err(|e| anyhow!(e))?
     } else {
         load_base_image_from_bytes(bytes, path, use_fast_raw_dev, settings, cancel_token)?
     };
@@ -155,8 +154,9 @@ fn prepare_reduced_base_image<'a>(
         let denoised = crate::ai::denoise::apply_ai_denoise(base_image, path, adjustments);
         crate::ai::upscale::apply_ai_upscale(base_image, denoised, path, adjustments)
     };
+    let sharpened = crate::adjustments::capture_sharpening::apply(upscaled, path, adjustments);
     let prepared = crate::adjustments::negative_conversion::apply_negative_conversion(
-        upscaled,
+        sharpened,
         is_raw_file(path),
         adjustments,
     );
@@ -176,13 +176,11 @@ pub fn load_base_image_from_bytes(
         .raw_preprocessing_color_nr
         .unwrap_or(0.5)
         .clamp(0.0, 1.0);
-    let sharpening_amount = settings.raw_preprocessing_sharpening.unwrap_or(0.35);
     let apply_to_non_raws = settings.apply_preprocessing_to_non_raws.unwrap_or(false);
     let remove_hot_pixels = settings.remove_hot_pixels.unwrap_or(true);
 
     if is_video_file(path_for_ext_check) {
-        return crate::video::poster_frame(Path::new(path_for_ext_check))
-            .map_err(|e| anyhow!(e));
+        return crate::video::poster_frame(Path::new(path_for_ext_check)).map_err(|e| anyhow!(e));
     }
 
     crate::metadata::sidecar::persist_exif_if_missing(
@@ -228,13 +226,19 @@ pub fn load_base_image_from_bytes(
                 highlight_compression,
                 linear_mode,
                 color_nr_amount,
-                sharpening_amount,
                 remove_hot_pixels,
                 cancel_token,
             )
         }) {
-            Ok(Ok(image)) => {
+            Ok(Ok((image, capture))) => {
                 record_embedded_preview(false);
+                if !use_fast_raw_dev {
+                    crate::adjustments::capture_sharpening::remember(
+                        path_for_ext_check,
+                        image.dimensions(),
+                        capture,
+                    );
+                }
                 Ok(image)
             }
             Ok(Err(e)) => {
@@ -266,7 +270,7 @@ pub fn load_base_image_from_bytes(
             crate::decode::as_shot::record_source_peak(path_for_ext_check, peak);
         }
         Ok(if apply_to_non_raws && !use_fast_raw_dev {
-            crate::decode::develop::enhance(image, color_nr_amount, sharpening_amount)
+            crate::decode::develop::enhance(image, color_nr_amount)
         } else {
             image
         })
@@ -909,8 +913,7 @@ pub fn gain_layer_for(
 
 pub fn load_display_image(bytes: &[u8], path: &str) -> Result<DynamicImage> {
     if is_video_file(path) {
-        let mut image =
-            crate::video::poster_frame(Path::new(path)).map_err(|e| anyhow!(e))?;
+        let mut image = crate::video::poster_frame(Path::new(path)).map_err(|e| anyhow!(e))?;
         apply_working_display_to_srgb(&mut image, false);
         return Ok(image);
     }
@@ -1724,6 +1727,7 @@ pub async fn load_image(
         as_shot,
         has_gain_map: !is_raw && file_has_gain_map(&source_path),
         source_time: None,
+        footage: false,
         lens_source: None,
     });
 

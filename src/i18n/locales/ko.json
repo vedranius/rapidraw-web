@@ -152,6 +152,7 @@
       "aiUpscale": "RapidRes 2x",
       "aiUpscaleDetail": "디테일",
       "blueYellow": "파랑/노랑",
+      "capture": "캡처",
       "centre": "중앙",
       "chromaticAberration": "색수차",
       "clarity": "명료도",
@@ -325,6 +326,7 @@
       "noRating": "평점 없음",
       "openViewer": "보조 창에서 열기",
       "pasteAdjustments": "조정값 붙여넣기",
+      "copyPasteSettings": "복사 및 붙여넣기 설정…",
       "productivity": "생산성",
       "rating": "평점",
       "ratingLabel_one": "{{count}}점",
@@ -2652,7 +2654,7 @@
         "appleRaw9": "Apple RAW 9 엔진",
         "appleRaw9Desc": "Apple의 Core Image로 디코딩합니다. Neural Engine에서 노이즈를 제거하지만 더 느립니다. macOS 27과 지원되는 카메라가 필요하며, 다른 파일은 내장 디코더를 사용합니다.",
         "applyPreprocessing": "RAW가 아닌 이미지에 전처리 적용",
-        "applyPreprocessingDesc": "기본 노이즈 감소와 사전 선명화를 JPEG, PNG 등 RAW가 아닌 파일에도 적용합니다.",
+        "applyPreprocessingDesc": "기본 노이즈 감소를 JPEG, PNG 등 RAW가 아닌 파일에도 적용합니다.",
         "baselineExposure": "기본 노출",
         "baselineExposureAmount": "기본량",
         "baselineExposureAmountDesc": "RAW 파일에 더하는 노출입니다. darktable은 +0.7 EV를 사용합니다.",
@@ -2683,8 +2685,6 @@
         },
         "linearRaw": "선형 RAW 처리",
         "linearRawDesc": "일부 DNG 파일의 색상 변조나 분홍빛을 수정합니다.",
-        "sharpening": "기본 사전 선명도 향상",
-        "sharpeningDesc": "RAW 파이프라인 초기에 적용되는 부드러운 선명화입니다.",
         "title": "이미지 전처리",
         "tonemapperOptions": {
           "agx": "AgX",
@@ -3007,7 +3007,7 @@
         "trim": "트리밍"
       },
       "mute": "음소거",
-      "openInTimeline": "타임라인에서 열기",
+      "newProject": "새 프로젝트",
       "position": "위치",
       "trimEnd": "끝 트리밍, 더블클릭하여 초기화",
       "trimStart": "시작 트리밍, 더블클릭하여 초기화",
@@ -3227,7 +3227,6 @@
       "mute": "음소거",
       "nextKeyframe": "다음 키프레임",
       "opacity": "불투명도",
-      "original": "원본",
       "positionX": "위치 X",
       "positionY": "위치 Y",
       "previousKeyframe": "이전 키프레임",
@@ -3368,6 +3367,24 @@
       "maskArea": "마스크 아래 영역 추적",
       "customArea": "동영상에 배치한 영역 추적"
     },
+    "stampTracking": {
+      "title": "추적",
+      "spot": "스팟",
+      "spotArea": "스팟 아래 영역 추적",
+      "source": "소스",
+      "trackSpot": "스팟 추적",
+      "trackSource": "소스 추적",
+      "spotDone": "스팟 · {{duration}}",
+      "sourceDone": "소스 · {{duration}}",
+      "modes": {
+        "follow": "따라가기",
+        "followTip": "소스가 추적된 스팟과 함께 움직입니다",
+        "fixed": "고정",
+        "fixedTip": "소스가 프레임의 같은 위치에 머뭅니다",
+        "track": "개별 추적",
+        "trackTip": "소스가 자체 추적을 따릅니다"
+      }
+    },
     "mediaPool": {
       "addToProject": "프로젝트에 추가",
       "addToTimeline": "타임라인에 추가",
@@ -3452,9 +3469,7 @@
       },
       "lost": "대상을 놓쳤습니다. 더 큰 상자를 시도해 보세요.",
       "stabilize": "안정화",
-      "tracking": "개체 추적",
-      "trackMotion": "개체 선택",
-      "followScale": "배율 및 회전"
+      "tracking": "개체 추적"
     },
     "nesting": {
       "back": "뒤로",
@@ -3564,12 +3579,33 @@
       "progress": "추적 중… {{percent}}%",
       "cancel": "취소",
       "noClip": "재생 헤드를 동영상 클립 위로 옮기세요.",
-      "tracked": "{{duration}} 동안 추적했습니다.",
+      "done": "추적됨 · {{duration}}",
       "remove": "제거",
-      "position": "위치",
+      "position": "물체",
       "planar": "평면",
-      "pinToPlane": "평면에 고정",
-      "notConvex": "평면 윤곽선이 서로 교차합니다."
+      "positionTip": "사람, 얼굴, 물체 등 무엇이든 추적합니다",
+      "planarTip": "화면, 벽, 간판 같은 평평한 면을 추적합니다",
+      "notConvex": "평면 윤곽선이 서로 교차합니다.",
+      "attach": {
+        "title": "부착 방식",
+        "move": "이동",
+        "transform": "변형",
+        "perspective": "원근",
+        "pin": "고정",
+        "moveTip": "위치만 따라갑니다",
+        "transformTip": "위치, 배율, 회전을 따라갑니다",
+        "perspectiveTip": "평면을 원근감 있게 따라갑니다",
+        "pinTip": "추적한 평면에 정확히 놓입니다"
+      },
+      "fit": {
+        "title": "맞춤",
+        "fill": "채우기",
+        "fit": "맞추기",
+        "stretch": "늘이기",
+        "fillTip": "평면을 덮고 넘치는 부분을 자릅니다",
+        "fitTip": "레이어 전체를 평면 안에 표시합니다",
+        "stretchTip": "레이어를 평면 모서리에 맞게 늘입니다"
+      }
     },
     "transitions": {
       "blur": "흐림",
@@ -3597,7 +3633,7 @@
     "lookTarget": {
       "alsoSelected": "패널에서는 이 클립만 편집합니다. 타임라인의 '조정값 붙여넣기'는 선택한 모든 클립에 적용됩니다.",
       "noCrop": "조정 레이어는 자를 수 없습니다.",
-      "photoOnly": "AI 편집은 사진 클립에서 작동합니다.",
+      "mediaOnly": "리터치는 사진 및 비디오 클립에서 작동합니다.",
       "offline": "이 클립의 미디어가 오프라인 상태입니다."
     },
     "viewer": {

@@ -152,6 +152,7 @@
       "aiUpscale": "RapidRes 2x",
       "aiUpscaleDetail": "Details",
       "blueYellow": "Blau/Gelb",
+      "capture": "Eingangsschärfe",
       "centre": "Zentriert",
       "chromaticAberration": "Chromatische Aberration",
       "clarity": "Klarheit",
@@ -325,6 +326,7 @@
       "noRating": "Keine Bewertung",
       "openViewer": "In zweitem Fenster öffnen",
       "pasteAdjustments": "Einstellungen einfügen",
+      "copyPasteSettings": "Einstellungen für Kopieren & Einfügen…",
       "productivity": "Produktivität",
       "rating": "Bewertung",
       "ratingLabel_one": "{{count}} Stern",
@@ -2652,7 +2654,7 @@
         "appleRaw9": "Apple RAW 9 Engine",
         "appleRaw9Desc": "Decodiert mit Apples Core Image, das auf der Neural Engine entrauscht, aber langsamer ist. Erfordert macOS 27 und eine unterstützte Kamera; andere Dateien nutzen den integrierten Decoder.",
         "applyPreprocessing": "Vorverarbeitung auf Nicht-RAWs anwenden",
-        "applyPreprocessingDesc": "Wendet die Basis-Rauschreduzierung und Vorschärfung auch auf JPEG, PNG und andere Nicht-RAW-Dateien an.",
+        "applyPreprocessingDesc": "Wendet die Basis-Rauschreduzierung auch auf JPEG, PNG und andere Nicht-RAW-Dateien an.",
         "baselineExposure": "Basisbelichtung",
         "baselineExposureAmount": "Basiswert",
         "baselineExposureAmountDesc": "Belichtung, die zu RAW-Dateien addiert wird. darktable verwendet +0,7 LW.",
@@ -2683,8 +2685,6 @@
         },
         "linearRaw": "Lineare RAW-Verarbeitung",
         "linearRawDesc": "Behebt Farbstiche oder einen Rosastich in einigen DNG-Dateien.",
-        "sharpening": "Basis-Vorschärfung",
-        "sharpeningDesc": "Sanfte Schärfung früh in der RAW-Pipeline.",
         "title": "Bildvorverarbeitung",
         "tonemapperOptions": {
           "agx": "AgX",
@@ -3007,7 +3007,7 @@
         "trim": "Trimmen"
       },
       "mute": "Stummschalten",
-      "openInTimeline": "In Zeitleiste öffnen",
+      "newProject": "Neues Projekt",
       "position": "Position",
       "trimEnd": "Ende trimmen, Doppelklick zum Zurücksetzen",
       "trimStart": "Anfang trimmen, Doppelklick zum Zurücksetzen",
@@ -3227,7 +3227,6 @@
       "mute": "Stummschalten",
       "nextKeyframe": "Nächster Keyframe",
       "opacity": "Deckkraft",
-      "original": "Original",
       "positionX": "Position X",
       "positionY": "Position Y",
       "previousKeyframe": "Vorheriger Keyframe",
@@ -3368,6 +3367,24 @@
       "maskArea": "Den Bereich unter der Maske tracken",
       "customArea": "Einen Bereich tracken, den du auf dem Video platzierst"
     },
+    "stampTracking": {
+      "title": "Tracking",
+      "spot": "Stelle",
+      "spotArea": "Den Bereich unter der Stelle tracken",
+      "source": "Quelle",
+      "trackSpot": "Stelle tracken",
+      "trackSource": "Quelle tracken",
+      "spotDone": "Stelle · {{duration}}",
+      "sourceDone": "Quelle · {{duration}}",
+      "modes": {
+        "follow": "Folgen",
+        "followTip": "Die Quelle bewegt sich mit der getrackten Stelle",
+        "fixed": "Fest",
+        "fixedTip": "Die Quelle bleibt an derselben Stelle im Bild",
+        "track": "Getrackt",
+        "trackTip": "Die Quelle folgt ihrem eigenen Track"
+      }
+    },
     "mediaPool": {
       "addToProject": "Zum Projekt hinzufügen",
       "addToTimeline": "Zur Zeitleiste hinzufügen",
@@ -3452,9 +3469,7 @@
       },
       "lost": "Objekt verloren. Versuche einen größeren Rahmen.",
       "stabilize": "Stabilisieren",
-      "tracking": "Objekt folgen",
-      "trackMotion": "Objekt auswählen",
-      "followScale": "Skalierung und Drehung"
+      "tracking": "Objekt folgen"
     },
     "nesting": {
       "back": "Zurück",
@@ -3564,12 +3579,33 @@
       "progress": "Tracking… {{percent}}%",
       "cancel": "Abbrechen",
       "noClip": "Bewege die Abspielposition über einen Videoclip.",
-      "tracked": "Über {{duration}} getrackt.",
+      "done": "Getrackt · {{duration}}",
       "remove": "Entfernen",
-      "position": "Position",
-      "planar": "Planar",
-      "pinToPlane": "An Ebene anheften",
-      "notConvex": "Der Umriss der Ebene überschneidet sich."
+      "position": "Objekt",
+      "planar": "Fläche",
+      "positionTip": "Trackt alles, etwa Personen, Gesichter oder Objekte",
+      "planarTip": "Trackt eine flache Fläche wie einen Bildschirm, eine Wand oder ein Schild",
+      "notConvex": "Der Umriss der Ebene überschneidet sich.",
+      "attach": {
+        "title": "Verankerung",
+        "move": "Bewegen",
+        "transform": "Transformieren",
+        "perspective": "Perspektive",
+        "pin": "Anheften",
+        "moveTip": "Folgt nur der Position",
+        "transformTip": "Folgt Position, Skalierung und Drehung",
+        "perspectiveTip": "Folgt der Fläche in Perspektive",
+        "pinTip": "Liegt genau auf der getrackten Fläche"
+      },
+      "fit": {
+        "title": "Anpassung",
+        "fill": "Füllen",
+        "fit": "Einpassen",
+        "stretch": "Strecken",
+        "fillTip": "Bedeckt die Fläche und schneidet Überstehendes ab",
+        "fitTip": "Zeigt die ganze Ebene innerhalb der Fläche",
+        "stretchTip": "Streckt die Ebene auf die Ecken der Fläche"
+      }
     },
     "transitions": {
       "blur": "Unschärfe",
@@ -3597,7 +3633,7 @@
     "lookTarget": {
       "alsoSelected": "Panels bearbeiten nur diesen Clip. „Einstellungen einfügen“ in der Zeitleiste wirkt auf alle ausgewählten Clips.",
       "noCrop": "Einstellungsebenen können nicht zugeschnitten werden.",
-      "photoOnly": "KI-Bearbeitungen funktionieren bei Foto-Clips.",
+      "mediaOnly": "Retuschen funktionieren bei Foto- und Videoclips.",
       "offline": "Die Medien dieses Clips sind offline."
     },
     "viewer": {

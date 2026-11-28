@@ -152,6 +152,7 @@
       "aiUpscale": "RapidRes 2x",
       "aiUpscaleDetail": "Detail",
       "blueYellow": "Modrá/Žlutá",
+      "capture": "Zachycení",
       "centre": "Střed",
       "chromaticAberration": "Chromatická aberace",
       "clarity": "Zřetelnost",
@@ -325,6 +326,7 @@
       "noRating": "Žádné hodnocení",
       "openViewer": "Otevřít ve druhém okně",
       "pasteAdjustments": "Vložit úpravy",
+      "copyPasteSettings": "Nastavení kopírování a vkládání…",
       "productivity": "Produktivita",
       "rating": "Hodnocení",
       "ratingLabel_one": "{{count}} hvězdička",
@@ -2776,7 +2778,7 @@
         "appleRaw9": "Apple RAW 9 Engine",
         "appleRaw9Desc": "Dekóduje pomocí Apple Core Image, který odšumuje na Neural Engine, ale je pomalejší. Vyžaduje macOS 27 a podporovaný fotoaparát; ostatní soubory používají vestavěný dekodér.",
         "applyPreprocessing": "Použít předběžné zpracování na jiné než RAW",
-        "applyPreprocessingDesc": "Použije základní redukci šumu a předostření také na JPEG, PNG a další soubory jiné než RAW.",
+        "applyPreprocessingDesc": "Použije základní redukci šumu také na JPEG, PNG a další soubory jiné než RAW.",
         "baselineExposure": "Základní expozice",
         "baselineExposureAmount": "Velikost základu",
         "baselineExposureAmountDesc": "Expozice přidaná k souborům RAW. darktable používá +0,7 EV.",
@@ -2807,8 +2809,6 @@
         },
         "linearRaw": "Lineární zpracování RAW",
         "linearRawDesc": "Opravuje barevné nádechy nebo růžový odstín v některých souborech DNG.",
-        "sharpening": "Předostření základny",
-        "sharpeningDesc": "Jemné doostření na začátku zpracování RAW.",
         "title": "Předzpracování obrazu",
         "tonemapperOptions": {
           "agx": "AgX",
@@ -3135,7 +3135,7 @@
         "trim": "Zkrátit"
       },
       "mute": "Ztlumit",
-      "openInTimeline": "Otevřít na časové ose",
+      "newProject": "Nový projekt",
       "position": "Poloha",
       "trimEnd": "Zkrátit konec, dvojklikem obnovíte",
       "trimStart": "Zkrátit začátek, dvojklikem obnovíte",
@@ -3365,7 +3365,6 @@
       "mute": "Ztlumit",
       "nextKeyframe": "Další klíčový snímek",
       "opacity": "Neprůhlednost",
-      "original": "Originál",
       "positionX": "Poloha X",
       "positionY": "Poloha Y",
       "previousKeyframe": "Předchozí klíčový snímek",
@@ -3512,6 +3511,24 @@
       "maskArea": "Sledovat oblast pod maskou",
       "customArea": "Sledovat oblast, kterou umístíte na video"
     },
+    "stampTracking": {
+      "title": "Sledování",
+      "spot": "Oblast",
+      "spotArea": "Sledovat oblast pod retuší",
+      "source": "Zdroj",
+      "trackSpot": "Sledovat oblast",
+      "trackSource": "Sledovat zdroj",
+      "spotDone": "Oblast · {{duration}}",
+      "sourceDone": "Zdroj · {{duration}}",
+      "modes": {
+        "follow": "Následovat",
+        "followTip": "Zdroj se pohybuje se sledovanou oblastí",
+        "fixed": "Pevný",
+        "fixedTip": "Zdroj zůstává na stejném místě v záběru",
+        "track": "Sledovaný",
+        "trackTip": "Zdroj má vlastní sledování"
+      }
+    },
     "mediaPool": {
       "addToProject": "Přidat do projektu",
       "addToTimeline": "Přidat na časovou osu",
@@ -3598,9 +3615,7 @@
       },
       "lost": "Objekt ztracen. Zkuste větší rámeček.",
       "stabilize": "Stabilizovat",
-      "tracking": "Sledovat objekt",
-      "trackMotion": "Vybrat objekt",
-      "followScale": "Měřítko a otočení"
+      "tracking": "Sledovat objekt"
     },
     "nesting": {
       "back": "Zpět",
@@ -3714,12 +3729,33 @@
       "progress": "Sledování… {{percent}} %",
       "cancel": "Zrušit",
       "noClip": "Přesuňte přehrávací hlavu nad video klip.",
-      "tracked": "Sledováno po dobu {{duration}}.",
+      "done": "Sledováno · {{duration}}",
       "remove": "Odebrat",
-      "position": "Poloha",
-      "planar": "Rovinné",
-      "pinToPlane": "Připnout k rovině",
-      "notConvex": "Obrys roviny protíná sám sebe."
+      "position": "Objekt",
+      "planar": "Plocha",
+      "positionTip": "Sleduje cokoli: lidi, obličeje nebo předměty",
+      "planarTip": "Sleduje rovnou plochu, např. obrazovku, zeď nebo ceduli",
+      "notConvex": "Obrys roviny protíná sám sebe.",
+      "attach": {
+        "title": "Připojení",
+        "move": "Posun",
+        "transform": "Transformace",
+        "perspective": "Perspektiva",
+        "pin": "Připnout",
+        "moveTip": "Sleduje jen polohu",
+        "transformTip": "Sleduje polohu, měřítko a otočení",
+        "perspectiveTip": "Sleduje plochu v perspektivě",
+        "pinTip": "Leží přesně na sledované ploše"
+      },
+      "fit": {
+        "title": "Přizpůsobení",
+        "fill": "Vyplnit",
+        "fit": "Přizpůsobit",
+        "stretch": "Roztáhnout",
+        "fillTip": "Pokryje plochu a ořízne přesah",
+        "fitTip": "Zobrazí celou vrstvu uvnitř plochy",
+        "stretchTip": "Roztáhne vrstvu do rohů plochy"
+      }
     },
     "transitions": {
       "blur": "Rozmazání",
@@ -3747,7 +3783,7 @@
     "lookTarget": {
       "alsoSelected": "Panely upravují jen tento klip. Příkaz Vložit úpravy na časové ose platí pro všechny vybrané klipy.",
       "noCrop": "Vrstvy úprav nelze oříznout.",
-      "photoOnly": "AI úpravy fungují u klipů z fotografií.",
+      "mediaOnly": "Retuš funguje u klipů z fotografií a videí.",
       "offline": "Médium tohoto klipu je offline."
     },
     "viewer": {

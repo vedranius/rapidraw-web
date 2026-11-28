@@ -152,6 +152,7 @@
       "aiUpscale": "RapidRes 2x",
       "aiUpscaleDetail": "Detall",
       "blueYellow": "Blau/Groc",
+      "capture": "Captura",
       "centre": "Centre",
       "chromaticAberration": "Aberració cromàtica",
       "clarity": "Claredat",
@@ -325,6 +326,7 @@
       "noRating": "Sense puntuació",
       "openViewer": "Obre en una segona finestra",
       "pasteAdjustments": "Enganxar ajustaments",
+      "copyPasteSettings": "Opcions de copiar i enganxar…",
       "productivity": "Productivitat",
       "rating": "Puntuació",
       "ratingLabel_one": "{{count}} Estrella",
@@ -2726,7 +2728,7 @@
         "appleRaw9": "Motor Apple RAW 9",
         "appleRaw9Desc": "Descodifica amb Core Image d'Apple, que redueix el soroll al Neural Engine però és més lent. Requereix macOS 27 i una càmera compatible; els altres fitxers fan servir el descodificador integrat.",
         "applyPreprocessing": "Aplicar preprocessament als No-RAW",
-        "applyPreprocessingDesc": "També aplica la reducció de soroll base i la pre-nitidesa als fitxers JPEG, PNG i altres fitxers no RAW.",
+        "applyPreprocessingDesc": "També aplica la reducció de soroll base als fitxers JPEG, PNG i altres fitxers no RAW.",
         "baselineExposure": "Exposició base",
         "baselineExposureAmount": "Quantitat base",
         "baselineExposureAmountDesc": "Exposició afegida als fitxers RAW. darktable utilitza +0,7 EV.",
@@ -2757,8 +2759,6 @@
         },
         "linearRaw": "Processament RAW lineal",
         "linearRawDesc": "Corregeix desviacions de color o un tint rosa en alguns fitxers DNG.",
-        "sharpening": "Pre-enfocament base",
-        "sharpeningDesc": "Enfocament suau al principi del processament RAW.",
         "title": "Preprocessament d'imatges",
         "tonemapperOptions": {
           "agx": "AgX",
@@ -3083,7 +3083,7 @@
         "trim": "Retallar"
       },
       "mute": "Silenciar",
-      "openInTimeline": "Obrir a la línia de temps",
+      "newProject": "Nou projecte",
       "position": "Posició",
       "trimEnd": "Retallar el final, doble clic per restablir",
       "trimStart": "Retallar l'inici, doble clic per restablir",
@@ -3308,7 +3308,6 @@
       "mute": "Silenciar",
       "nextKeyframe": "Fotograma clau següent",
       "opacity": "Opacitat",
-      "original": "Original",
       "positionX": "Posició X",
       "positionY": "Posició Y",
       "previousKeyframe": "Fotograma clau anterior",
@@ -3452,6 +3451,24 @@
       "maskArea": "Seguir la zona sota la màscara",
       "customArea": "Seguir una zona que col·loques al vídeo"
     },
+    "stampTracking": {
+      "title": "Seguiment",
+      "spot": "Zona",
+      "spotArea": "Seguir la zona retocada",
+      "source": "Origen",
+      "trackSpot": "Seguir zona",
+      "trackSource": "Seguir origen",
+      "spotDone": "Zona · {{duration}}",
+      "sourceDone": "Origen · {{duration}}",
+      "modes": {
+        "follow": "Seguir",
+        "followTip": "L'origen es mou amb la zona seguida",
+        "fixed": "Fix",
+        "fixedTip": "L'origen es queda al mateix lloc del fotograma",
+        "track": "Seguit",
+        "trackTip": "L'origen té el seu propi seguiment"
+      }
+    },
     "mediaPool": {
       "addToProject": "Afegir al projecte",
       "addToTimeline": "Afegir a la línia de temps",
@@ -3537,9 +3554,7 @@
       },
       "lost": "S'ha perdut l'objecte. Prova un requadre més gran.",
       "stabilize": "Estabilitzar",
-      "tracking": "Seguir un objecte",
-      "trackMotion": "Seleccionar un objecte",
-      "followScale": "Escala i rotació"
+      "tracking": "Seguir un objecte"
     },
     "nesting": {
       "back": "Enrere",
@@ -3651,12 +3666,33 @@
       "progress": "S'està seguint… {{percent}}%",
       "cancel": "Cancel·lar",
       "noClip": "Col·loca el capçal de reproducció sobre un clip de vídeo.",
-      "tracked": "Seguit durant {{duration}}.",
+      "done": "Seguit · {{duration}}",
       "remove": "Treure",
-      "position": "Posició",
-      "planar": "Planar",
-      "pinToPlane": "Fixar al pla",
-      "notConvex": "El contorn del pla s'encreua amb ell mateix."
+      "position": "Objecte",
+      "planar": "Superfície",
+      "positionTip": "Segueix qualsevol cosa: persones, cares o objectes",
+      "planarTip": "Segueix una superfície plana com una pantalla, una paret o un rètol",
+      "notConvex": "El contorn del pla s'encreua amb ell mateix.",
+      "attach": {
+        "title": "Ancoratge",
+        "move": "Moure",
+        "transform": "Transformar",
+        "perspective": "Perspectiva",
+        "pin": "Fixar",
+        "moveTip": "Segueix només la posició",
+        "transformTip": "Segueix posició, escala i rotació",
+        "perspectiveTip": "Segueix la superfície en perspectiva",
+        "pinTip": "Es col·loca exactament sobre la superfície seguida"
+      },
+      "fit": {
+        "title": "Ajust",
+        "fill": "Omplir",
+        "fit": "Encabir",
+        "stretch": "Estirar",
+        "fillTip": "Cobreix la superfície i retalla el que sobra",
+        "fitTip": "Mostra la capa sencera dins la superfície",
+        "stretchTip": "Estira la capa fins a les cantonades de la superfície"
+      }
     },
     "transitions": {
       "blur": "Desenfocament",
@@ -3684,7 +3720,7 @@
     "lookTarget": {
       "alsoSelected": "Els taulers només editen aquest clip. «Enganxar ajustaments» a la línia de temps s'aplica a tots els clips seleccionats.",
       "noCrop": "Les capes d'ajust no es poden retallar.",
-      "photoOnly": "Les edicions d'IA funcionen en clips de foto.",
+      "mediaOnly": "Els retocs funcionen en clips de foto i vídeo.",
       "offline": "El mitjà d'aquest clip no està disponible."
     },
     "viewer": {

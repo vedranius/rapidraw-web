@@ -45,6 +45,7 @@ import {
   addKeys,
   channelsOf,
   easeKeys,
+  isAnimatablePath,
   lookTimeOf,
   moveKeys,
   numericLeaves,
@@ -54,7 +55,7 @@ import {
   withChannelKeys,
 } from './lookAnimation';
 import { channelGroupOf } from './maskPaths';
-import { TrackedContainer, joinTracks, shiftTrack, trackSpan } from './maskTracking';
+import { StampContainer, TrackedContainer, frozenTrack, joinTracks, shiftTrack, trackSpan } from './maskTracking';
 import {
   ItemLocation,
   MAX_SPEED,
@@ -81,7 +82,7 @@ import {
   varies,
 } from './model';
 import { frameTicks, fromFrame, secondsToTicks, snapTicks, ticksToSeconds, toFrame } from './time';
-import { pinnedQuad, placementAt } from './tracking';
+import { placementAt, shownQuad } from './tracking';
 import { scaleQuad } from './planar';
 
 const MIN_ITEM_FRAMES = 2;
@@ -1555,6 +1556,7 @@ export const insertFreeze = (
   id: string,
   time: Ticks,
   hold: Ticks,
+  size: { width: number; height: number },
   sourceFps?: number,
 ): [VideoProject, string | null] => {
   const location = locateItem(project, id);
@@ -1568,8 +1570,9 @@ export const insertFreeze = (
   const before = at === item.start;
   const local = Math.min(at - item.start, item.duration - frame);
   const { width, height } = project.settings;
-  const pose = item.transform.track ? placementAt(item.transform, local, width, height) : null;
-  const pin = pose && pinnedQuad(item.transform, local, width, height);
+  const frozen = item.transform.track && frozenTrack(item.transform.track, ticksToSeconds(local), width / height);
+  const pose = item.transform.track && !frozen ? placementAt(item.transform, local, width, height) : null;
+  const pin = pose && shownQuad(item.transform, size, local, width, height);
   const {
     link: _link,
     reverse: _reverse,
@@ -1580,7 +1583,7 @@ export const insertFreeze = (
   } = mapAnimated(
     item,
     (value) => ({ value: valueAt(value, local) }),
-    () => null,
+    (track) => frozenTrack(track, ticksToSeconds(local), width / height),
   );
   const freeze: ClipItem = {
     ...still,
@@ -1592,6 +1595,7 @@ export const insertFreeze = (
           scale: { value: pose.scale },
           rotation: { value: pose.rotation },
           ...(pin && { pin: scaleQuad(pin, 1 / width, 1 / height) }),
+          ...(pin && !item.transform.pin && { pinFit: 'stretch' as const }),
         }
       : still.transform,
     id: uuidv4(),
@@ -1859,38 +1863,69 @@ const anchoredTicks = (project: VideoProject, item: TimelineItem, anchor: TrackA
     : null;
 };
 
-const spanIn = (
+type TrackTicks = ((seconds: number) => Ticks) | null;
+
+const spanIn = (item: TimelineItem, track: MotionTrack | null | undefined, toTicks: TrackTicks) =>
+  visibleSpan(item, toTicks ? trackSpan(track)?.map(toTicks) : undefined);
+
+const coverageIn = (item: TimelineItem, track: MotionTrack | null | undefined, toTicks: TrackTicks) => {
+  if (!track?.keys.length || !toTicks) return null;
+  const first = toTicks(track.keys[0].time);
+  const last = toTicks(track.keys[track.keys.length - 1].time);
+  const ascending = first <= last;
+  const exitsBefore = ascending ? track.exits?.start : track.exits?.end;
+  const exitsAfter = ascending ? track.exits?.end : track.exits?.start;
+  return visibleSpan(item, [
+    exitsBefore ? 0 : Math.min(first, last),
+    exitsAfter ? item.duration : Math.max(first, last),
+  ]);
+};
+
+const layerTicks = (project: VideoProject, track: MotionTrack | null | undefined, item: TimelineItem): TrackTicks =>
+  track?.anchor ? anchoredTicks(project, item, track.anchor) : secondsToTicks;
+
+const maskTicks = (
+  project: VideoProject,
   item: TimelineItem,
   track: MotionTrack | null | undefined,
-  toTicks: ((seconds: number) => Ticks) | null,
-) => visibleSpan(item, toTicks ? trackSpan(track)?.map(toTicks) : undefined);
+  sourceFps?: number,
+): TrackTicks =>
+  track?.anchor
+    ? anchoredTicks(project, item, track.anchor)
+    : item.type === 'clip'
+      ? (seconds: number) => sourceLocal(item, seconds, project.settings.fps, sourceFps)
+      : secondsToTicks;
 
-export const layerTrackSpan = (project: VideoProject, item: TimelineItem) => {
-  const track = 'transform' in item ? item.transform.track : null;
-  return spanIn(item, track, track?.anchor ? anchoredTicks(project, item, track.anchor) : secondsToTicks);
-};
+const layerTrackOf = (item: TimelineItem) => ('transform' in item ? item.transform.track : null);
+
+export const layerTrackSpan = (project: VideoProject, item: TimelineItem) =>
+  spanIn(item, layerTrackOf(item), layerTicks(project, layerTrackOf(item), item));
+
+export const layerTrackCoverage = (project: VideoProject, item: TimelineItem) =>
+  coverageIn(item, layerTrackOf(item), layerTicks(project, layerTrackOf(item), item));
 
 export const maskTrackSpan = (
   project: VideoProject,
   item: TimelineItem,
   track: MotionTrack | null | undefined,
   sourceFps?: number,
-) =>
-  spanIn(
-    item,
-    track,
-    track?.anchor
-      ? anchoredTicks(project, item, track.anchor)
-      : item.type === 'clip'
-        ? (seconds: number) => sourceLocal(item, seconds, project.settings.fps, sourceFps)
-        : secondsToTicks,
-  );
+) => spanIn(item, track, maskTicks(project, item, track, sourceFps));
+
+export const maskTrackCoverage = (
+  project: VideoProject,
+  item: TimelineItem,
+  track: MotionTrack | null | undefined,
+  sourceFps?: number,
+) => coverageIn(item, track, maskTicks(project, item, track, sourceFps));
 
 export const trackedSpans = (project: VideoProject, item: TimelineItem, sourceFps?: number): Array<[Ticks, Ticks]> =>
   [
     layerTrackSpan(project, item),
     ...((lookOf(project, item)?.masks ?? []) as Array<TrackedContainer>).map((container) =>
       maskTrackSpan(project, item, container.track, sourceFps),
+    ),
+    ...((lookOf(project, item)?.aiPatches ?? []) as Array<StampContainer>).flatMap((container) =>
+      [container.track, container.sourceTrack].map((track) => maskTrackSpan(project, item, track, sourceFps)),
     ),
   ].filter((span): span is [Ticks, Ticks] => span !== null);
 
@@ -1945,12 +1980,12 @@ export const groupMembers = (project: VideoProject, item: TimelineItem, refs: Ar
   });
 };
 
-const editKeys = (
+const editKeys = <K extends KeyRef>(
   project: VideoProject,
   id: string,
-  keys: Array<KeyRef>,
-  editValue: (value: Animated, key: KeyRef) => Animated,
-  editLook: (look: Adjustments, path: string, key: KeyRef) => Adjustments,
+  keys: Array<K>,
+  editValue: (value: Animated, key: K) => Animated,
+  editLook: (look: Adjustments, path: string, key: K) => Adjustments,
 ): VideoProject => {
   const item = locateItem(project, id)?.item;
   if (!item) return project;
@@ -2066,6 +2101,76 @@ export const toggleKeyframesAt = (project: VideoProject, id: string, local: Tick
     keys,
     (value, key) => toggleKeyAt(value, key.time, tolerance),
     (current, path, key) => addKeys(current, [path], key.time, tolerance),
+  );
+};
+
+export interface MarkedKeyframes {
+  itemId: string;
+  mark: KeyMark;
+}
+
+export const keyframeShiftLimit = (project: VideoProject, targets: Array<MarkedKeyframes>, delta: Ticks) =>
+  targets.reduce((limited, { itemId, mark }) => {
+    const duration = locateItem(project, itemId)?.item.duration ?? mark.time;
+    return Math.max(-mark.time, Math.min(duration - mark.time, limited));
+  }, delta);
+
+export const shiftKeyframes = (project: VideoProject, targets: Array<MarkedKeyframes>, delta: Ticks) => {
+  const shift = keyframeShiftLimit(project, targets, delta);
+  if (shift === 0) return project;
+  const moved =
+    targets.length > 1
+      ? targets.map((target) => ({
+          ...target,
+          mark: { ...target.mark, keys: target.mark.keys.filter((key) => key.channel !== SPEED_CHANNEL) },
+        }))
+      : targets;
+  return [...moved]
+    .sort((a, b) => (b.mark.time - a.mark.time) * Math.sign(shift))
+    .reduce((next, { itemId, mark }) => moveKeyframes(next, itemId, mark, mark.time + shift), project);
+};
+
+export interface CopiedKeyframe {
+  channel: string;
+  offset: Ticks;
+  key: Keyframe;
+}
+
+export const copyKeyframes = (project: VideoProject, item: TimelineItem, marks: Array<KeyMark>) => {
+  const first = Math.min(...marks.map((mark) => mark.time));
+  return marks.flatMap((mark) =>
+    mark.keys
+      .filter((ref) => ref.channel !== SPEED_CHANNEL)
+      .flatMap((ref): Array<CopiedKeyframe> => {
+        const key = channelAnimated(project, item, ref.channel)?.keys?.find((candidate) => candidate.time === ref.time);
+        return key ? [{ channel: ref.channel, offset: mark.time - first, key }] : [];
+      }),
+  );
+};
+
+const placeKey = (keys: Array<Keyframe>, key: Keyframe, tolerance: Ticks) =>
+  [...keys.filter((other) => Math.abs(other.time - key.time) > tolerance), key].sort((a, b) => a.time - b.time);
+
+export const pasteKeyframes = (project: VideoProject, id: string, copied: Array<CopiedKeyframe>, local: Ticks) => {
+  const item = locateItem(project, id)?.item;
+  if (!item) return project;
+  const fps = project.settings.fps;
+  const tolerance = frameTicks(fps) / 2;
+  const placed = copied.flatMap(({ channel, offset, key }) => {
+    const at = snapTicks(local + offset, fps);
+    if (at < 0 || at > item.duration) return [];
+    const time = lookChannelPath(channel) !== null && hasLook(item) ? lookTimeOf(item, item.start + at, fps) : at;
+    return [{ channel, time, key: { ...key, time } }];
+  });
+  return editKeys(
+    project,
+    id,
+    placed,
+    (value, ref) => ({ ...value, keys: placeKey(value.keys ?? [], ref.key, tolerance) }),
+    (look, path, ref) =>
+      isAnimatablePath(look, path)
+        ? withChannelKeys(look, path, placeKey(channelsOf(look)[path] ?? [], ref.key, tolerance))
+        : look,
   );
 };
 

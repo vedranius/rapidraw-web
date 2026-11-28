@@ -152,6 +152,7 @@
       "aiUpscale": "RapidRes 2x",
       "aiUpscaleDetail": "Détail",
       "blueYellow": "Bleu/Jaune",
+      "capture": "Capture",
       "centre": "Centre",
       "chromaticAberration": "Aberration chromatique",
       "clarity": "Clarté",
@@ -325,6 +326,7 @@
       "noRating": "Aucune note",
       "openViewer": "Ouvrir dans une seconde fenêtre",
       "pasteAdjustments": "Coller les ajustements",
+      "copyPasteSettings": "Réglages du copier-coller…",
       "productivity": "Productivité",
       "rating": "Note",
       "ratingLabel_one": "{{count}} Étoile",
@@ -2728,7 +2730,7 @@
         "appleRaw9": "Moteur Apple RAW 9",
         "appleRaw9Desc": "Décode avec Core Image d'Apple, qui débruite sur le Neural Engine mais est plus lent. Nécessite macOS 27 et un appareil pris en charge ; les autres fichiers utilisent le décodeur intégré.",
         "applyPreprocessing": "Appliquer le prétraitement aux Non-RAW",
-        "applyPreprocessingDesc": "Applique aussi la réduction du bruit de base et la pré-accentuation aux fichiers JPEG, PNG et autres fichiers non RAW.",
+        "applyPreprocessingDesc": "Applique aussi la réduction du bruit de base aux fichiers JPEG, PNG et autres fichiers non RAW.",
         "baselineExposure": "Exposition de base",
         "baselineExposureAmount": "Valeur de base",
         "baselineExposureAmountDesc": "Exposition ajoutée aux fichiers RAW. darktable utilise +0,7 IL.",
@@ -2759,8 +2761,6 @@
         },
         "linearRaw": "Traitement RAW linéaire",
         "linearRawDesc": "Corrige les dominantes de couleur ou une teinte rose dans certains fichiers DNG.",
-        "sharpening": "Pré-accentuation de base",
-        "sharpeningDesc": "Légère accentuation tôt dans le traitement RAW.",
         "title": "Prétraitement de l'image",
         "tonemapperOptions": {
           "agx": "AgX",
@@ -3085,7 +3085,7 @@
         "trim": "Rogner"
       },
       "mute": "Couper le son",
-      "openInTimeline": "Ouvrir dans la timeline",
+      "newProject": "Nouveau projet",
       "position": "Position",
       "trimEnd": "Rogner la fin, double-clic pour réinitialiser",
       "trimStart": "Rogner le début, double-clic pour réinitialiser",
@@ -3310,7 +3310,6 @@
       "mute": "Couper le son",
       "nextKeyframe": "Image clé suivante",
       "opacity": "Opacité",
-      "original": "Original",
       "positionX": "Position X",
       "positionY": "Position Y",
       "previousKeyframe": "Image clé précédente",
@@ -3454,6 +3453,24 @@
       "maskArea": "Suivre la zone sous le masque",
       "customArea": "Suivre une zone placée sur la vidéo"
     },
+    "stampTracking": {
+      "title": "Suivi",
+      "spot": "Zone",
+      "spotArea": "Suivre la zone retouchée",
+      "source": "Source",
+      "trackSpot": "Suivre la zone",
+      "trackSource": "Suivre la source",
+      "spotDone": "Zone · {{duration}}",
+      "sourceDone": "Source · {{duration}}",
+      "modes": {
+        "follow": "Suivre",
+        "followTip": "La source se déplace avec la zone suivie",
+        "fixed": "Fixe",
+        "fixedTip": "La source reste au même endroit de l'image",
+        "track": "Suivie",
+        "trackTip": "La source a son propre suivi"
+      }
+    },
     "mediaPool": {
       "addToProject": "Ajouter au projet",
       "addToTimeline": "Ajouter à la timeline",
@@ -3539,9 +3556,7 @@
       },
       "lost": "Objet perdu. Essayez un cadre plus grand.",
       "stabilize": "Stabiliser",
-      "tracking": "Suivre un objet",
-      "trackMotion": "Sélectionner un objet",
-      "followScale": "Échelle et rotation"
+      "tracking": "Suivre un objet"
     },
     "nesting": {
       "back": "Retour",
@@ -3653,12 +3668,33 @@
       "progress": "Suivi… {{percent}} %",
       "cancel": "Annuler",
       "noClip": "Placez la tête de lecture sur un clip vidéo.",
-      "tracked": "Suivi sur {{duration}}.",
+      "done": "Suivi · {{duration}}",
       "remove": "Supprimer",
-      "position": "Position",
-      "planar": "Planaire",
-      "pinToPlane": "Épingler au plan",
-      "notConvex": "Le contour du plan se croise."
+      "position": "Objet",
+      "planar": "Surface",
+      "positionTip": "Suit n'importe quoi : personnes, visages ou objets",
+      "planarTip": "Suit une surface plane comme un écran, un mur ou un panneau",
+      "notConvex": "Le contour du plan se croise.",
+      "attach": {
+        "title": "Attache",
+        "move": "Déplacer",
+        "transform": "Transformer",
+        "perspective": "Perspective",
+        "pin": "Épingler",
+        "moveTip": "Suit uniquement la position",
+        "transformTip": "Suit la position, l'échelle et la rotation",
+        "perspectiveTip": "Suit la surface en perspective",
+        "pinTip": "Se place exactement sur la surface suivie"
+      },
+      "fit": {
+        "title": "Ajustement",
+        "fill": "Remplir",
+        "fit": "Ajuster",
+        "stretch": "Étirer",
+        "fillTip": "Couvre la surface et recadre ce qui dépasse",
+        "fitTip": "Affiche le calque entier dans la surface",
+        "stretchTip": "Étire le calque jusqu'aux coins de la surface"
+      }
     },
     "transitions": {
       "blur": "Flou",
@@ -3686,7 +3722,7 @@
     "lookTarget": {
       "alsoSelected": "Les panneaux ne modifient que ce clip. « Coller les ajustements » dans la timeline s'applique à tous les clips sélectionnés.",
       "noCrop": "Les calques de réglage ne peuvent pas être recadrés.",
-      "photoOnly": "Les retouches IA fonctionnent sur les clips photo.",
+      "mediaOnly": "Les retouches fonctionnent sur les clips photo et vidéo.",
       "offline": "Le média de ce clip est hors ligne."
     },
     "viewer": {

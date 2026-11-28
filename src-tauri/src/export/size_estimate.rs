@@ -46,6 +46,8 @@ fn render_with_gain<T>(
                 id: hasher.finish(),
                 adjustments: source.adjustments,
                 transform: source.transform.clone(),
+                stamps: source.stamps.clone(),
+                footage: source.footage,
             })
         }
         None => render(source),

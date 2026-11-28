@@ -152,6 +152,7 @@
       "aiUpscale": "RapidRes 2x",
       "aiUpscaleDetail": "Detail",
       "blueYellow": "Blue/Yellow",
+      "capture": "Capture",
       "centre": "Centré",
       "chromaticAberration": "Chromatic Aberration",
       "clarity": "Clarity",
@@ -325,6 +326,7 @@
       "noRating": "No Rating",
       "openViewer": "Open in Second Window",
       "pasteAdjustments": "Paste Adjustments",
+      "copyPasteSettings": "Copy & Paste Settings…",
       "productivity": "Productivity",
       "rating": "Rating",
       "ratingLabel_one": "{{count}} Star",
@@ -2721,7 +2723,7 @@
         "appleRaw9": "Apple RAW 9 Engine",
         "appleRaw9Desc": "Decodes with Apple's Core Image, which denoises on the Neural Engine but is slower. Needs macOS 27 and a supported camera; other files use the built-in decoder.",
         "applyPreprocessing": "Apply Preprocessing to Non-RAWs",
-        "applyPreprocessingDesc": "Also applies the base noise reduction and pre-sharpening to JPEG, PNG and other non-RAW files.",
+        "applyPreprocessingDesc": "Also applies the base noise reduction to JPEG, PNG and other non-RAW files.",
         "baselineExposure": "Baseline Exposure",
         "baselineExposureAmount": "Baseline Amount",
         "baselineExposureAmountDesc": "Exposure added to RAW files. darktable uses +0.7 EV.",
@@ -2752,8 +2754,6 @@
         },
         "linearRaw": "Linear RAW Processing",
         "linearRawDesc": "Fixes color casts or a pink tint in some DNG files.",
-        "sharpening": "Base Pre-Sharpening",
-        "sharpeningDesc": "Gentle sharpening early in the RAW pipeline.",
         "title": "Image Preprocessing",
         "tonemapperOptions": {
           "agx": "AgX",
@@ -3076,7 +3076,7 @@
         "trim": "Trim"
       },
       "mute": "Mute",
-      "openInTimeline": "Open in Timeline",
+      "newProject": "New Project",
       "position": "Position",
       "trimEnd": "Trim end, double-click to reset",
       "trimStart": "Trim start, double-click to reset",
@@ -3296,7 +3296,6 @@
       "mute": "Mute",
       "nextKeyframe": "Next Keyframe",
       "opacity": "Opacity",
-      "original": "Original",
       "positionX": "Position X",
       "positionY": "Position Y",
       "previousKeyframe": "Previous Keyframe",
@@ -3437,6 +3436,24 @@
       "maskArea": "Track the area under the mask",
       "customArea": "Track an area you place on the video"
     },
+    "stampTracking": {
+      "title": "Tracking",
+      "spot": "Spot",
+      "spotArea": "Track the area under the spot",
+      "source": "Source",
+      "trackSpot": "Track Spot",
+      "trackSource": "Track Source",
+      "spotDone": "Spot · {{duration}}",
+      "sourceDone": "Source · {{duration}}",
+      "modes": {
+        "follow": "Follow",
+        "followTip": "The source moves with the tracked spot",
+        "fixed": "Fixed",
+        "fixedTip": "The source stays at the same place in the frame",
+        "track": "Tracked",
+        "trackTip": "The source follows its own track"
+      }
+    },
     "mediaPool": {
       "addToProject": "Add to Project",
       "addToTimeline": "Add to Timeline",
@@ -3521,9 +3538,7 @@
       },
       "lost": "Lost the object. Try a larger box.",
       "stabilize": "Stabilize",
-      "tracking": "Follow Object",
-      "trackMotion": "Select Object",
-      "followScale": "Scale and Rotation"
+      "tracking": "Follow Object"
     },
     "nesting": {
       "back": "Back",
@@ -3633,12 +3648,33 @@
       "progress": "Tracking… {{percent}}%",
       "cancel": "Cancel",
       "noClip": "Move the playhead over a video clip.",
-      "tracked": "Tracked for {{duration}}.",
+      "done": "Tracked · {{duration}}",
       "remove": "Remove",
-      "position": "Position",
-      "planar": "Planar",
-      "pinToPlane": "Pin to Plane",
-      "notConvex": "The plane outline crosses itself."
+      "position": "Object",
+      "planar": "Surface",
+      "positionTip": "Tracks anything, such as people, faces or objects",
+      "planarTip": "Tracks a flat surface, such as a screen, wall or sign",
+      "notConvex": "The plane outline crosses itself.",
+      "attach": {
+        "title": "Attach",
+        "move": "Move",
+        "transform": "Transform",
+        "perspective": "Perspective",
+        "pin": "Pin",
+        "moveTip": "Follows the position only",
+        "transformTip": "Follows position, scale and rotation",
+        "perspectiveTip": "Follows the surface in perspective",
+        "pinTip": "Sits exactly on the tracked surface"
+      },
+      "fit": {
+        "title": "Fit",
+        "fill": "Fill",
+        "fit": "Fit",
+        "stretch": "Stretch",
+        "fillTip": "Covers the surface and crops what overflows",
+        "fitTip": "Shows the whole layer inside the surface",
+        "stretchTip": "Stretches the layer to the surface corners"
+      }
     },
     "transitions": {
       "blur": "Blur",
@@ -3666,7 +3702,7 @@
     "lookTarget": {
       "alsoSelected": "Panels edit this clip only. Paste Adjustments in the timeline applies to all selected clips.",
       "noCrop": "Adjustment layers can't be cropped.",
-      "photoOnly": "AI edits work on photo clips.",
+      "mediaOnly": "Retouching works on photo and video clips.",
       "offline": "This clip's media is offline."
     },
     "viewer": {

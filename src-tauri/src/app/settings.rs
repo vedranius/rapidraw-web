@@ -154,6 +154,7 @@ pub fn all_available_adjustments() -> HashSet<String> {
         "clarity",
         "structure",
         "dehaze",
+        "captureSharpening",
         "sharpness",
         "sharpnessThreshold",
         "centré",
@@ -777,6 +778,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub keybinds: HashMap<String, Vec<String>>,
     #[serde(default)]
+    pub speed_edit_adjustments: Option<Vec<String>>,
+    #[serde(default)]
     pub thumbnail_worker_threads: Option<u32>,
     #[serde(default)]
     pub image_cache_size: Option<u32>,
@@ -826,8 +829,6 @@ pub struct AppSettings {
     pub folder_icons: Option<HashMap<String, String>>,
     #[serde(default)]
     pub raw_preprocessing_color_nr: Option<f32>,
-    #[serde(default)]
-    pub raw_preprocessing_sharpening: Option<f32>,
     #[serde(default)]
     pub apply_preprocessing_to_non_raws: Option<bool>,
     #[serde(default)]
@@ -1009,6 +1010,7 @@ impl Default for AppSettings {
             zoom_speed_multiplier: Some(1.0),
             zoom_photo_to_pixel_click: Some(false),
             keybinds: HashMap::new(),
+            speed_edit_adjustments: None,
             #[cfg(target_os = "android")]
             thumbnail_worker_threads: Some(2),
             #[cfg(not(target_os = "android"))]
@@ -1040,7 +1042,6 @@ impl Default for AppSettings {
             hide_collapsed_panels: Some(false),
             folder_icons: Some(HashMap::new()),
             raw_preprocessing_color_nr: Some(0.5),
-            raw_preprocessing_sharpening: Some(0.35),
             apply_preprocessing_to_non_raws: Some(false),
             use_apple_raw9: Some(false),
             remove_hot_pixels: Some(true),

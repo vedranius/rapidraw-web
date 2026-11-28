@@ -77,6 +77,7 @@ import { sequenceProject, withRevision } from '../utils/video/revisions';
 import { DEFAULT_FPS, frameTicks, secondsToTicks, snapTicks, ticksToSeconds } from '../utils/video/time';
 import { canvasToolState, debouncedSave, useEditorStore } from './useEditorStore';
 import { useLibraryStore } from './useLibraryStore';
+import { computeSortedLibrary } from '../hooks/useSortedLibrary';
 import { useProcessStore } from './useProcessStore';
 import { useSettingsStore } from './useSettingsStore';
 import { useUIStore } from './useUIStore';
@@ -497,10 +498,8 @@ const showInEditor = (
   loaded?: InstalledFrame,
 ) => {
   const editor = useEditorStore.getState();
-  if (!editorStale && editor.selectedImage?.path === path && getVideo().editorItemId === itemId) {
-    if (loaded) editor.setEditor((state) => ({ displayRevision: state.displayRevision + 1 }));
-    return;
-  }
+  if (loaded) editor.setEditor((state) => ({ displayRevision: state.displayRevision + 1 }));
+  if (!editorStale && editor.selectedImage?.path === path && getVideo().editorItemId === itemId) return;
   editorStale = false;
   flushEditorLook();
   shownLook = null;
@@ -802,8 +801,31 @@ export const deleteSelection = () => {
   setVideo({ selection: [] });
 };
 
+const editedLook = (project: VideoProject, item: ClipItem | AdjustmentItem, adjustments: Adjustments) => {
+  const { playhead, recordKeyframes, recordFrom, isPlaying } = getVideo();
+  const shown = shownLook?.itemId === item.id ? shownLook : null;
+  const stored = projectLook(project, item);
+  const shownTime = editorLookTime(project, item, playhead);
+  const editedAt = shown?.time ?? shownTime;
+  return recordLookEdit(
+    stored,
+    adjustments,
+    editedAt,
+    isPlaying ? shownTime : editedAt,
+    recordKeyframes,
+    frameTicks(project.settings.fps) / 2,
+    recordFrom === null ? null : editorLookTime(project, item, recordFrom),
+  );
+};
+
+export const liveLook = (project: VideoProject, itemId: string, adjustments: Adjustments) => {
+  const item = lookItem(project, itemId);
+  if (!item || (shownLook?.itemId === item.id && shownLook.adjustments === adjustments)) return adjustments;
+  return editedLook(project, item, adjustments);
+};
+
 export const saveVideoLook = (path: string, adjustments: Adjustments) => {
-  const { project, session, editorItemId, playhead, recordKeyframes, recordFrom, isPlaying } = getVideo();
+  const { project, session, editorItemId } = getVideo();
   if (session?.kind !== 'project' || !project) return false;
   const item = lookItem(project, editorItemId);
   const matches =
@@ -813,19 +835,8 @@ export const saveVideoLook = (path: string, adjustments: Adjustments) => {
   if (!item || !matches) return true;
   const shown = shownLook?.itemId === item.id ? shownLook : null;
   if (shown?.adjustments === adjustments) return true;
-  const fps = project.settings.fps;
   const stored = projectLook(project, item);
-  const shownTime = editorLookTime(project, item, playhead);
-  const editedAt = shown?.time ?? shownTime;
-  const next = recordLookEdit(
-    stored,
-    adjustments,
-    editedAt,
-    isPlaying ? shownTime : editedAt,
-    recordKeyframes,
-    frameTicks(fps) / 2,
-    recordFrom === null ? null : editorLookTime(project, item, recordFrom),
-  );
+  const next = editedLook(project, item, adjustments);
   if (shown) shown.adjustments = adjustments;
   if (isSameValue(next, stored)) return true;
   recordProject(assignLook(project, item.id, next)[0], `look:${item.id}`);
@@ -1092,9 +1103,8 @@ const startProject = async (session: ProjectSession, opened: VideoProject, curre
   const downloading = new Set([...originals.values()].filter((original) => original.missing).map(({ path }) => path));
   await ensureMedia(project.media.map((media) => media.path).filter((path) => !downloading.has(path)));
   if (!current()) return;
-  releaseEditor();
-  useEditorStore.getState().setEditor({ wgpuPhase: 'hidden' });
   resetSessionState(session, tidy({ ...project, name: fileStem(session.path) }));
+  handOffEditor();
   const first = mainTrack(project).items[0];
   if (first) setVideo({ selection: [first.id] });
   useUIStore.getState().enterWorkspace('video');
@@ -1311,11 +1321,19 @@ const confirmLeave = () => {
   return leavePrompt;
 };
 
+const handOffEditor = () => {
+  if (useUIStore.getState().activeView === 'editor' && useEditorStore.getState().selectedImage) {
+    editorStale = true;
+    return;
+  }
+  releaseEditor();
+  useEditorStore.getState().setEditor({ wgpuPhase: 'hidden' });
+};
+
 const enterProjectView = () => {
   if (isProjectSession()) return;
   closeVideoSession();
-  releaseEditor();
-  useEditorStore.getState().setEditor({ wgpuPhase: 'hidden' });
+  handOffEditor();
   useUIStore.getState().enterWorkspace('video');
   revealTimeline();
 };
@@ -1367,8 +1385,21 @@ export const projectMedia = (paths: Array<string>) => {
   return usable.some((path) => !isAudioPath(path)) ? usable : [];
 };
 
+const inLibraryOrder = (paths: Array<string>) => {
+  const order = new Map(
+    computeSortedLibrary(useLibraryStore.getState(), useSettingsStore.getState()).map((image, index) => [
+      image.path,
+      index,
+    ]),
+  );
+  return paths
+    .map((path, index) => ({ path, index, rank: order.get(path) ?? Number.MAX_SAFE_INTEGER }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map(({ path }) => path);
+};
+
 export const createVideoProject = async (paths: Array<string>) => {
-  const usable = projectMedia(paths);
+  const usable = projectMedia(inLibraryOrder(paths));
   if (usable.length === 0) return;
   const current = claimOpen();
   try {
@@ -1568,14 +1599,6 @@ useEditorStore.subscribe((state, prev) => {
 const syncPanelTargets = () => {
   const { project, selection, session, editorItemId } = getVideo();
   const target = session?.kind === 'project' && project ? lookTargetOf(project, selection) : null;
-  const path = useEditorStore.getState().selectedImage?.path;
-  const targetKind = target?.type === 'clip' && project ? mediaOf(project, target.media)?.kind : null;
-  const isVideoMedia =
-    session?.kind === 'project'
-      ? targetKind === 'video' || targetKind === 'sequence'
-      : session?.kind === 'clip' && !!path && isVideoPath(path);
-  const ui = useUIStore.getState();
-  if (ui.isVideoMedia !== isVideoMedia) ui.setUI({ isVideoMedia });
   if (session?.kind === 'project' && (target?.id ?? null) !== editorItemId) void focusPlayhead();
 };
 
